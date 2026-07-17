@@ -113,8 +113,8 @@ def test_portable_cli_exports_bundled_gui_runtime() -> None:
                 with patch("zyenlang.c_module.sys.platform", "linux"):
                     with patch.dict("os.environ", {}, clear=True):
                         found = configure_bundled_gui_runtime()
-                        assert found == runtime
-                        assert os.environ["ZYENLANG_RAYLIB"] == str(runtime)
+                        assert found == runtime.resolve()
+                        assert os.environ["ZYENLANG_RAYLIB"] == str(runtime.resolve())
 
 
 def main() -> int:

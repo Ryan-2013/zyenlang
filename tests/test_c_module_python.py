@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import sys
 import tempfile
 from pathlib import Path
@@ -16,6 +17,7 @@ from zyenlang.transpiler import (
 )
 from zyenlang.c_module import (
     c_compiler_command,
+    configure_bundled_gui_runtime,
     empty_native_metadata,
     gcc_command,
     native_metadata_from_zy,
@@ -101,6 +103,20 @@ def test_linux_compiler_enables_posix_api_before_headers() -> None:
     assert define_index < include_index
 
 
+def test_portable_cli_exports_bundled_gui_runtime() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        executable = Path(tmp) / "zy"
+        runtime = Path(tmp) / "libraylib.so"
+        runtime.touch()
+        with patch.object(sys, "frozen", True, create=True):
+            with patch.object(sys, "executable", str(executable)):
+                with patch("zyenlang.c_module.sys.platform", "linux"):
+                    with patch.dict("os.environ", {}, clear=True):
+                        found = configure_bundled_gui_runtime()
+                        assert found == runtime
+                        assert os.environ["ZYENLANG_RAYLIB"] == str(runtime)
+
+
 def main() -> int:
     tests = [
         test_diagnostics,
@@ -108,6 +124,7 @@ def main() -> int:
         test_platform_native_metadata,
         test_compiler_override,
         test_linux_compiler_enables_posix_api_before_headers,
+        test_portable_cli_exports_bundled_gui_runtime,
     ]
     for test in tests:
         test()

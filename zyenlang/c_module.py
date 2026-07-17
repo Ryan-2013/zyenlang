@@ -604,7 +604,28 @@ def c_compiler_command() -> list[str]:
     )
 
 
+def configure_bundled_gui_runtime() -> Path | None:
+    configured = os.environ.get("ZYENLANG_RAYLIB", "").strip()
+    if configured:
+        return Path(configured)
+    if not getattr(sys, "frozen", False):
+        return None
+
+    if sys.platform.startswith("win"):
+        filename = "raylib.dll"
+    elif sys.platform == "darwin":
+        filename = "libraylib.dylib"
+    else:
+        filename = "libraylib.so"
+    runtime = Path(sys.executable).resolve().parent / filename
+    if not runtime.is_file():
+        return None
+    os.environ["ZYENLANG_RAYLIB"] = str(runtime)
+    return runtime
+
+
 def gcc_command(meta: dict, main_c: Path, output_exe: Path) -> list[str]:
+    configure_bundled_gui_runtime()
     cmd: list[str] = c_compiler_command() + ["-std=c11", "-Wall", "-Wextra", "-Wno-unused-function"]
     if sys.platform.startswith("linux"):
         # This must precede the forced ABI include so POSIX declarations such

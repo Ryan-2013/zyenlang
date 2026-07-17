@@ -1,0 +1,120 @@
+import <std/test>;
+import <std/string>;
+import <std/c_module> as c_module;
+
+fn add(a: int, b: int) -> int {
+    return a + b;
+}
+
+fn mix(a: int, b: int = 2, c: int = 3) -> int {
+    return (a * 100) + (b * 10) + c;
+}
+
+fn pick(name: str) -> fn(int,int)->int {
+    if (name == "add") {
+        return add;
+    }
+    fn sub(a: int, b: int) -> int {
+        return a - b;
+    }
+    return sub;
+}
+
+fn make_adder(delta: int) -> fn(int)->int {
+    fn add_delta(value: int) -> int {
+        return value + delta;
+    }
+    return add_delta;
+}
+
+struct Calculator {
+    let this.value: int;
+    let this.step: int = 1;
+    let this.op: fn(int,int)->int;
+
+    fn advance(times: int = 1) -> int {
+        set this.value += this.step * times;
+        return this.op(this.value, 0);
+    }
+}
+
+struct NativeMath {
+    let this.source: c_module.Module = c_module.load("native_math.zlcm.h");
+
+    fn add(a: int, b: int) -> int {
+        return this.source.add(a, b);
+    }
+}
+
+fn main() -> int {
+    let t: TestStats = test.new_stats("current syntax smoke");
+
+    let value: int = 1;
+    set value += 2;
+    set value *= 3;
+    t.eq_int("let and set", value, 9);
+    const label: str = "ZyenLang";
+    t.eq_str("const", label, "ZyenLang");
+    t.eq_str("f-string", f"value={value}", "value=9");
+
+    t.eq_int("named args", add(b: 22, a: 20), 42);
+    t.eq_int("default args", mix(1, c: 9), 129);
+    t.eq_int("returned fn chain", pick("sub")(50, 8), 42);
+    t.eq_int("closure chain", make_adder(2)(40), 42);
+    let optional: fn(int,int)->int = None;
+    t.check("fn None", optional == None);
+    set optional = add;
+    t.eq_int("fn assignment", optional(20, 22), 42);
+
+    let calculator: Calculator = Calculator { value: 38, op: add };
+    t.eq_int("struct default and method", calculator.advance(times: 4), 42);
+
+    let loop_total: int = 0;
+    for (let i = 0; i < 6; set i += 1) {
+        if (i == 2) {
+            continue;
+        }
+        if (i == 5) {
+            break;
+        }
+        set loop_total += i;
+    }
+    t.eq_int("if for break continue", loop_total, 8);
+
+    let values: List = [10, "hello", true];
+    let first: int = (int)values.get(0);
+    t.eq_int("List cast", first, 10);
+    values.set(0, 42);
+    t.eq_int("List set", (int)values.get(0), 42);
+
+    let stack_value: int = 12;
+    let borrowed: ptr<int> = &stack_value;
+    let opaque: ptr<void> = borrowed;
+    t.eq_int("borrow and void cast", *((ptr<int>)opaque), 12);
+
+    let *owned: ptr<int> = 40;
+    let alias: ptr<int> = owned;
+    set *alias += 2;
+    t.eq_int("owned alias", *owned, 42);
+
+    let *chain: ptr<ptr<int>> = 42;
+    let inner = *chain;
+    t.eq_int("nested owned ptr", *inner, 42);
+
+    let lazy: ptr<int> = None;
+    set *lazy = 42;
+    t.eq_int("lazy ptr cell", *lazy, 42);
+
+    let *text_cell: ptr<str> = "hello";
+    let erased_text: ptr<void> = text_cell;
+    t.eq_str("ptr str cast", *((ptr<str>)erased_text), "hello");
+    t.eq_str("substring", string.substring(*text_cell, 1, 4), "ello");
+
+    let native: c_module.Module = c_module.load("native_math.zlcm.h");
+    t.eq_int("c_module local", native.add(b: 22, a: 20), 42);
+    let facade: NativeMath = NativeMath {};
+    t.eq_int("c_module facade", facade.add(20, 22), 42);
+
+    values.clear();
+    return t.summary();
+}

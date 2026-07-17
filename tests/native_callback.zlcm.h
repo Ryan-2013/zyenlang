@@ -1,0 +1,18 @@
+ZLC_MODULE(native_callback)
+ZLC_HEADER("native_callback.h")
+ZLC_SOURCE("native_callback.c")
+
+ZLC_STRUCT(NativeCallbackBox, ZLC_FIELD(callback, fn(int)->int))
+
+ZLC_FN(set_callback, zlcm_callback_set, void, ZLC_PARAM(callback, fn(int)->int))
+ZLC_FN(clear_callback, zlcm_callback_clear, void)
+ZLC_FN(invoke, zlcm_callback_invoke, int, ZLC_PARAM(value, int))
+ZLC_FN(echo, zlcm_callback_echo, fn(int)->int, ZLC_PARAM(callback, fn(int)->int))
+ZLC_FN(make_box, zlcm_callback_make_box, NativeCallbackBox, ZLC_PARAM(callback, fn(int)->int))
+ZLC_FN(call_box, zlcm_callback_call_box, int, ZLC_PARAM(box, NativeCallbackBox), ZLC_PARAM(value, int))
+ZLC_FN(reset_drop_count, zlcm_arc_reset_drop_count, void)
+ZLC_FN(drop_count, zlcm_arc_drop_count, int)
+ZLC_FN(make_owned, zlcm_arc_make_owned, ZL_ptr<int>, ZLC_PARAM(value, int))
+ZLC_FN(make_borrowed, zlcm_arc_make_borrowed, ZL_ptr<int>, ZLC_PARAM(value, int))
+ZLC_FN(read_pointer, zlcm_arc_read_pointer, int, ZLC_PARAM(value, ZL_ptr<int>))
+ZLC_FN(assign_pointer, zlcm_arc_assign_pointer, void, ZLC_PARAM(slot, ZL_ptr<ZL_ptr<int>>), ZLC_PARAM(value, ZL_ptr<int>))

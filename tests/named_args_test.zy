@@ -1,0 +1,29 @@
+import <std/test>;
+
+fn add(a: int, b: int) -> int {
+    return a + b;
+}
+
+fn mix(a: int, b: int = 2, c: int = 3) -> int {
+    return (a * 100) + (b * 10) + c;
+}
+
+struct Box {
+    let this.value: int;
+
+    fn add(delta: int, scale: int = 1) -> int {
+        return this.value + (delta * scale);
+    }
+}
+
+fn main() -> int {
+    let t: TestStats = test.new_stats("named args");
+    t.eq_int("direct reorder", add(b: 10, a: 5), 15);
+    t.eq_int("direct positional", add(5, 10), 15);
+    t.eq_int("mixed with default", mix(1, c: 9), 129);
+    t.eq_int("mixed named tail", mix(1, b: 4, c: 5), 145);
+    let box: Box = Box { value: 10 };
+    t.eq_int("method reorder", box.add(scale: 3, delta: 4), 22);
+    t.eq_int("method default", box.add(5), 15);
+    return t.summary();
+}

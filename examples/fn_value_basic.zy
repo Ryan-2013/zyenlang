@@ -1,0 +1,69 @@
+// ZEP-0010: first-class function values.
+// Named functions and nested-function closures share the same fn value ABI.
+
+fn add(a: int, b: int) -> int {
+    return a + b;
+}
+
+fn sub(a: int, b: int) -> int {
+    return a - b;
+}
+
+// fn type as a parameter type.
+fn apply(op: fn(int,int)->int, x: int, y: int) -> int {
+    return op(x, y);
+}
+
+// fn type as a return type. The returned value is a named fn pointer,
+// not a synthesized closure.
+fn pick(name: str) -> fn(int,int)->int {
+    if (name == "add") {
+        return add;
+    }
+    return sub;
+}
+
+fn make_adder(delta: int) -> fn(int)->int {
+    fn add_delta(value: int) -> int {
+        return value + delta;
+    }
+    return add_delta;
+}
+
+// Struct field of fn type — the "closure replacement" pattern.
+struct Reducer {
+    let this.op: fn(int,int)->int;
+    let this.seed: int;
+
+    fn run(values: List) -> int {
+        let acc: int = this.seed;
+        for (let i = 0; i < values.len(); set i += 1) {
+            let v: int = (int)values.get(i);
+            set acc = this.op(acc, v);
+        }
+        return acc;
+    }
+}
+
+fn main() -> int {
+    let r1: int = apply(add, 3, 4);
+    print(r1);                                   // 7
+
+    let f: fn(int,int)->int = pick("sub");
+    let r2: int = f(10, 3);
+    print(r2);                                   // 7
+    print(pick("sub")(10, 3));                  // 7
+    print(make_adder(2)(40));                    // 42
+
+    let empty: fn(int)->int = None;
+    if (empty == None) {
+        print("empty callback");
+    }
+
+    let xs: List = [1, 2, 3, 4];
+    let red: Reducer = Reducer { op: add, seed: 0 };
+    let total: int = red.run(xs);
+    print(total);                                // 10
+
+    return 0;
+}

@@ -1,0 +1,67 @@
+import <std/test>;
+
+fn add(a: int, b: int) -> int {
+    return a + b;
+}
+
+fn sub(a: int, b: int) -> int {
+    return a - b;
+}
+
+fn pick(name: str) -> fn(int,int)->int {
+    if (name == "add") {
+        return add;
+    }
+    return sub;
+}
+
+fn make_adder(delta: int) -> fn(int)->int {
+    fn apply_delta(value: int) -> int {
+        return value + delta;
+    }
+    return apply_delta;
+}
+
+fn make_picker() -> fn(str)->fn(int,int)->int {
+    fn choose(name: str) -> fn(int,int)->int {
+        if (name == "add") {
+            return add;
+        }
+        return sub;
+    }
+    return choose;
+}
+
+struct Picker {
+    let this.calls: int;
+
+    fn choose() -> fn(int,int)->int {
+        set this.calls += 1;
+        return add;
+    }
+}
+
+struct FnFactory {
+    let this.make: fn(str)->fn(int,int)->int;
+}
+
+fn main() -> int {
+    let t: TestStats = test.new_stats("fn call chains");
+    t.eq_int("returned fn direct call", pick("sub")(10, 3), 7);
+    t.eq_int("closure direct call", make_adder(2)(40), 42);
+    t.eq_int("multi-level returned fn", make_picker()("sub")(50, 8), 42);
+    let staged: fn(str)->fn(int,int)->int = make_picker();
+    t.eq_int("nested explicit fn type", staged("sub")(50, 8), 42);
+    let factory: FnFactory = FnFactory { make: staged };
+    t.eq_int("fn field returned fn", factory.make("sub")(50, 8), 42);
+    let picker: Picker = Picker { calls: 0 };
+    t.eq_int("method returned fn", picker.choose()(20, 22), 42);
+    t.eq_int("callee evaluated once", picker.calls, 1);
+    let empty: fn(int,int)->int = None;
+    t.check("fn None equality", empty == None);
+    t.check("owned fn None comparison", make_adder(1) != None);
+    set empty = add;
+    t.check("fn assigned non-None", empty != None);
+    t.eq_int("fn after None", empty(20, 22), 42);
+    return t.summary();
+}

@@ -1,0 +1,20 @@
+import <std/test>;
+
+fn main() -> int {
+    let t: TestStats = test.new_stats("nested owned pointer initialization");
+    let *ptr1: ptr<int> = 10;
+
+    let *ptr2: ptr<ptr> = ptr1;
+    let loaded2: ptr<int> = *ptr2;
+    t.eq_int("existing ptr in untyped slot", *loaded2, 10);
+
+    let *ptr3: ptr<ptr<int>> = 10;
+    let loaded3 = *ptr3;
+    t.eq_int("recursive scalar initialization", *loaded3, 10);
+
+    let *ptr4: ptr<ptr<ptr<int>>> = 42;
+    let loaded4a = *ptr4;
+    let loaded4b = *loaded4a;
+    t.eq_int("deep recursive initialization", *loaded4b, 42);
+    return t.summary();
+}

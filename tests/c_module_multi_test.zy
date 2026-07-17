@@ -1,0 +1,13 @@
+import <std/test>;
+import <std/c_module> as cm;
+
+fn main() -> int {
+    let t: TestStats = test.new_stats("c_module multiple templates");
+    let first: cm.Module = cm.load("c_module_a/shared.zlcm.h");
+    let first_again: cm.Module = cm.load("c_module_a/shared.zlcm.h");
+    let second: cm.Module = cm.load("c_module_b/shared.zlcm.h");
+    t.eq_int("first template", first.increment(41), 42);
+    t.eq_int("same template reused", first_again.increment(9), 10);
+    t.eq_int("same module name no collision", second.twice(21), 42);
+    return t.summary();
+}

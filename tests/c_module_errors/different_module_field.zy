@@ -1,0 +1,11 @@
+import <std/c_module> as c_module;
+
+struct Holder {
+    let this.source: c_module.Module = c_module.load("../c_module_a/shared.zlcm.h");
+}
+
+fn main() -> int {
+    let second: c_module.Module = c_module.load("../c_module_b/shared.zlcm.h");
+    let holder: Holder = Holder { source: second };
+    return 0;
+}

@@ -1,4 +1,4 @@
-# ZyenLang v0.1.49 Spec Snapshot
+# ZyenLang v0.1.50-rc.1 Spec Snapshot
 
 ## 語言定位
 
@@ -217,6 +217,7 @@ zy check main.zy
 zy run main.zy
 zy build main.zy -o main.c
 zy build main.zy -o main.exe
+zy c-module gen native.zlcm.h
 ```
 
 ## v0.1.49 parser and stdlib update
@@ -285,6 +286,21 @@ f(10, 2);
 f(10, 2, "custom");
 ```
 
+Calls may also use named arguments. Named arguments are reordered by parameter
+name before type wrapping and default completion:
+
+```zy
+f(label: "ok", a: 10, b: 20);
+f(10, label: "ok");
+```
+
+Rules:
+
+- positional arguments may appear before named arguments;
+- positional arguments may not appear after a named argument;
+- duplicate or unknown named arguments are compile errors;
+- missing non-default arguments are compile errors.
+
 A non-default parameter may not follow a default parameter.
 
 ### Function declarations
@@ -304,3 +320,51 @@ The declaration contributes to the compiler signature table and to call-site def
 ### Implementation notes
 
 The compiler stores each function as a `FunctionDef` with ordered `params`, a `defaults` map, and declaration/definition state. During expression transformation, direct calls and struct-method calls are completed with missing default expressions before argument type wrapping. C output remains plain C: defaults are not emitted into C signatures; they are expanded at ZyenLang call sites.
+
+## v0.1.49 Native C module bridge
+
+`zy c-module gen path/to/Module.zlcm.h` reads a small c_module template header
+and generates a typed ZyenLang wrapper. This is not a C-to-ZyenLang translator:
+the template names the C functions, ZyenLang-visible names, supported primitive
+types, native headers, sources, include dirs, lib dirs, libs, and flags.
+
+Generated wrappers carry native metadata comments:
+
+```zy
+// c_headers: Module.h
+// c_sources: Module.c
+// c_libs: raylib, opengl32, gdi32, winmm
+```
+
+`zy build main.zy -o app.exe`, `zy build main.zy --exe app.exe`, and `zy run
+main.zy` scan the imported `.zy` graph for that metadata, then pass the original
+C compatibility sources and native link flags to gcc. `import <c_module>;`
+exposes small helpers such as `c_module.gen(...)` and `c_module.build_app(...)`.
+
+## ABI v2 function values, ARC, and native modules (supersedes older notes)
+
+This section supersedes the older pointer layout and offline-wrapper wording
+above.
+
+- `fn(P...)->R` is a first-class structural type. Any fn-typed expression is
+  callable, including chained calls such as `pick("sub")(10, 3)`.
+- Function values may be `None`. Equality with `None` is supported and calling
+  `None` produces a checked runtime error.
+- Named functions, nested-function closures, fields, and c_module callbacks all
+  use `ZL_Function { call, env, owner, signature }`.
+- Owned pointers use `ZL_ptr { addr, type_name, mem_id, owned, owner }`.
+  Closure environments and owned pointers are managed by compiler-inserted
+  atomic ARC. Parameters are borrowed and managed returns transfer ownership.
+- `ptr<T>` converts implicitly to `ptr<void>`; the reverse conversion and
+  concrete pointer reinterpretation require explicit casts. `ptr<void>` cannot
+  be dereferenced.
+- Native modules are loaded with `import <std/c_module> as c_module;` followed
+  by a dependent declaration initialized by `c_module.load("file.zlcm.h")`.
+  Normal check, run, and build paths generate the hidden wrapper in memory and
+  never invoke the optional offline Python wrapper generator.
+- `.zlcm.h` types include `ZL_List`, nested `ZL_ptr<T>`, declared
+  `ZLC_STRUCT` values, and `fn(...) -> T` callbacks. Compatibility-layer C code
+  saves callbacks with `zl_fn_assign` and clears them with `zl_fn_clear`.
+
+See `docs/ZEP-0010-function-values.md`, `docs/ZEP-0013-closures.md`, and
+`docs/arc_callback_abi.md` for the normative ABI v2 details.

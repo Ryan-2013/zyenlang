@@ -1,0 +1,67 @@
+import <std/test>;
+
+// ZEP-0013: closures with captured outer-scope state.
+// Captures are copied into a heap-allocated env at construction.
+
+// (1) capture an int param.
+fn make_adder(delta: int) -> fn(int)->int {
+    fn adder(x: int) -> int {
+        return x + delta;
+    }
+    return adder;
+}
+
+// (2) capture multiple values, including a fn-typed param.
+fn make_loop(f: fn(int,int,int)->int, rounds: int) -> fn(int)->int {
+    fn looper(k: int) -> int {
+        let acc: int = 0;
+        for (let i = 0; i <= rounds; set i += 1) {
+            set acc += f(i, i, k);
+        }
+        return acc;
+    }
+    return looper;
+}
+
+// (3) capture is read-only inside the closure (write here mutates local copy,
+// outer caller's variable is untouched).
+fn make_counter_starter(start: int) -> fn(int)->int {
+    fn step(by: int) -> int {
+        set start += by;
+        return start;
+    }
+    return step;
+}
+
+// (4) two closures from the same factory have independent envs.
+fn add3(a: int, b: int, c: int) -> int {
+    return a + b + c;
+}
+
+fn main() -> int {
+    let t: TestStats = test.new_stats("ZEP-0013 closures");
+
+    let inc: fn(int)->int = make_adder(1);
+    t.eq_int("inc(10)", inc(10), 11);
+
+    let plus100: fn(int)->int = make_adder(100);
+    t.eq_int("plus100(7)", plus100(7), 107);
+    t.eq_int("inc still 11", inc(10), 11);
+
+    let loop3: fn(int)->int = make_loop(add3, 3);
+    t.eq_int("loop3(5)", loop3(5), 32);
+    let loop1: fn(int)->int = make_loop(add3, 1);
+    t.eq_int("loop1(5)", loop1(5), 12);
+
+    // Captures are read-only (each call sees the SAME captured snapshot;
+    // mutation inside the closure mutates a per-call local copy only, never
+    // the env). So c1(1)=11 and c1(2)=12, NOT 13. For mutable closure state,
+    // use a struct with a fn-typed field (ZEP-0010/ZEP-0011 pattern).
+    let c1: fn(int)->int = make_counter_starter(10);
+    let c2: fn(int)->int = make_counter_starter(10);
+    t.eq_int("c1 first", c1(1), 11);
+    t.eq_int("c1 second (read-only capture)", c1(2), 12);
+    t.eq_int("c2 first independent", c2(5), 15);
+
+    return t.summary();
+}

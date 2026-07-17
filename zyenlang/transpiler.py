@@ -11,6 +11,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Set
 
+from . import c_module as native_c_module
+
 
 class ZyenError(Exception):
     pass
@@ -44,9 +46,25 @@ class TranspileContext:
     ptr_targets: Dict[str, str] = field(default_factory=dict)
     list_refs: Set[str] = field(default_factory=set)
     scope_stack: List[Set[str]] = field(default_factory=list)
+    # Managed locals owned by each lexical scope. Function parameters and
+    # lifted capture snapshots are borrowed and are intentionally absent.
+    owned_scope_stack: List[List[Tuple[str, str]]] = field(default_factory=list)
     current_function: Optional[str] = None
+    current_return_type: str = "void"
     loop_depth: int = 0
     auto_ptr_counter: int = 0
+    managed_temp_counter: int = 0
+    # ZEP-0010: fn-typed values map normalized signature → C typedef name
+    fn_typedefs: Dict[str, str] = field(default_factory=dict)
+    # ZEP-0013: lambda-lifted nested fns, keyed by inner name within each outer fn.
+    # Each value is a dict with keys: outer, inner, lifted_name, env_struct,
+    # captures (list of (name, ztype)), params (Dict), ret_type (str),
+    # body_lines (List[(line_no, line)]).
+    lifted_fns: List[dict] = field(default_factory=list)
+    lifted_fn_index: Dict[Tuple[str, str], int] = field(default_factory=dict)
+    c_module_types: Dict[str, str] = field(default_factory=dict)
+    external_structs: Set[str] = field(default_factory=set)
+    native_function_types: Dict[str, str] = field(default_factory=dict)
 
 
 BUILTIN_TYPES = {"int", "float", "bool", "str", "ptr", "void", "List"}
@@ -54,15 +72,24 @@ INTERNAL_TYPES = {"Any"}
 INT_MIN = -2147483648
 INT_MAX = 2147483647
 
+# Regex for a type position, used in struct fields and let/const declarations.
+# Accepts: int, str, ptr<int>, mod.Car, ptr<mod.T>, AND fn(int,int)->int.
+# The fn-type variant tolerates one level of parens inside (`[^()]*`); deeper
+# nesting (`fn(fn(int)->int)->int`) is intentionally out of scope for v0.1.49.
+_TYPE_FN_RX = r"fn\s*\((?:[^()]|\([^()]*\))*\)\s*(?:->\s*[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)?(?:\s*<\s*[^=;]+\s*>)?)?"
+_TYPE_SIMPLE_RX = r"[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)?(?:\s*<\s*[^=;]+\s*>)?"
+TYPE_RX = f"(?:{_TYPE_FN_RX}|{_TYPE_SIMPLE_RX})"
 
+#int 類型 分詞器
 def is_int_literal(expr: str) -> bool:
     return re.match(r"^-?\d+$", expr.strip()) is not None
 
 
+#int 類型 分詞器
 def parse_int_literal(expr: str) -> int:
     return int(expr.strip())
 
-
+#檢查int大小
 def check_int_literal_range(expr: str, line_no: int, target_type: str = "int") -> None:
     """Reject integer literals that cannot fit ZyenLang's current int."""
     if target_type != "int":
@@ -76,7 +103,7 @@ def check_int_literal_range(expr: str, line_no: int, target_type: str = "int") -
             f"(allowed {INT_MIN}..{INT_MAX}); use str for huge numbers for now"
         )
 
-
+#檢查int大小
 def assert_expr_literals_fit(expr: str, ctx: "TranspileContext", line_no: int, expected_type: str = "") -> None:
     """Small static guard against obvious int overflow in declarations/returns/sets."""
     raw = expr.strip()
@@ -91,7 +118,7 @@ def assert_expr_literals_fit(expr: str, ctx: "TranspileContext", line_no: int, e
                 if is_int_literal(item):
                     check_int_literal_range(item, line_no, "int")
 
-
+#去除注釋
 def strip_comment(line: str) -> str:
     in_str = False
     escaped = False
@@ -106,7 +133,8 @@ def strip_comment(line: str) -> str:
             escaped = False
     return line
 
-
+#跨行合併：如果一個語句寫在多行（如長函數定義或多行括號），它會將這些行合併成一條邏輯語句
+#}esle{     這漾句子的處理
 def clean_lines(source: str) -> List[Tuple[int, str]]:
     """Convert physical source lines into parser-ready logical lines.
 
@@ -239,13 +267,17 @@ def split_args(text: str) -> List[str]:
     depth = 0
     in_str = False
     escaped = False
+    # NOTE: `<` and `>` intentionally do NOT count toward depth. They appear as
+    # comparison operators (`a < b`) and inside the `->` of fn types
+    # (`fn(int)->int`); treating them as brackets would break both cases.
+    # Multi-arg generics (`Dict<int,str>`) are not in v0.1.49, so this is safe.
     for ch in text:
         if ch == '"' and not escaped:
             in_str = not in_str
         elif not in_str:
-            if ch in "({[<":
+            if ch in "({[":
                 depth += 1
-            elif ch in ")}]>":
+            elif ch in ")}]":
                 depth -= 1
             elif ch == "," and depth == 0:
                 item = "".join(cur).strip()
@@ -263,6 +295,102 @@ def split_args(text: str) -> List[str]:
     return args
 
 
+def parse_type_prefix(text: str, start: int = 0) -> Tuple[str, int]:
+    """Parse one recursive Zyen type and return (canonical_type, end_index)."""
+    i = start
+    while i < len(text) and text[i].isspace():
+        i += 1
+    if text.startswith("fn", i) and (i + 2 == len(text) or not (text[i + 2].isalnum() or text[i + 2] == "_")):
+        i += 2
+        while i < len(text) and text[i].isspace():
+            i += 1
+        if i >= len(text) or text[i] != "(":
+            raise ZyenError("expected `(` after `fn` in function type")
+        i += 1
+        params: List[str] = []
+        while True:
+            while i < len(text) and text[i].isspace():
+                i += 1
+            if i < len(text) and text[i] == ")":
+                i += 1
+                break
+            param, i = parse_type_prefix(text, i)
+            params.append(param)
+            while i < len(text) and text[i].isspace():
+                i += 1
+            if i < len(text) and text[i] == ",":
+                i += 1
+                continue
+            if i < len(text) and text[i] == ")":
+                i += 1
+                break
+            raise ZyenError("expected `,` or `)` in function type")
+        while i < len(text) and text[i].isspace():
+            i += 1
+        if not text.startswith("->", i):
+            raise ZyenError("function type needs `-> return_type`")
+        ret_type, i = parse_type_prefix(text, i + 2)
+        return f"fn({','.join(params)})->{ret_type}", i
+
+    ident = re.match(r"[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)?", text[i:])
+    if not ident:
+        raise ZyenError(f"expected a type near `{text[i:].strip()}`")
+    base = ident.group(0)
+    i += len(base)
+    while i < len(text) and text[i].isspace():
+        i += 1
+    if i < len(text) and text[i] == "<":
+        inner, i = parse_type_prefix(text, i + 1)
+        while i < len(text) and text[i].isspace():
+            i += 1
+        if i >= len(text) or text[i] != ">":
+            raise ZyenError(f"unclosed generic type `{base}<...>`")
+        i += 1
+        return f"{base}<{inner}>", i
+    return base, i
+
+
+def parse_variable_declaration_syntax(line: str, *, trailing_semicolon: bool, owned_pointer: bool = False) -> Optional[Tuple[str, str, Optional[str], Optional[str]]]:
+    source = line.strip()
+    if trailing_semicolon:
+        if not source.endswith(";"):
+            return None
+        source = source[:-1].rstrip()
+    star = r"\*\s*" if owned_pointer else ""
+    match = re.match(rf"(let|const)\s+{star}([A-Za-z_]\w*)\b", source)
+    if not match:
+        return None
+    kind, name = match.group(1), match.group(2)
+    rest = source[match.end():].strip()
+    explicit_type: Optional[str] = None
+    if rest.startswith(":"):
+        explicit_type, end = parse_type_prefix(rest, 1)
+        rest = rest[end:].strip()
+    if not rest:
+        return kind, name, explicit_type, None
+    if not rest.startswith("="):
+        return None
+    expr = rest[1:].strip()
+    if not expr:
+        return None
+    return kind, name, explicit_type, expr
+
+
+def parse_struct_field_line(line: str) -> Optional[Tuple[str, str, Optional[str]]]:
+    match = re.match(r"let\s+this\.([A-Za-z_]\w*)\s*:\s*", line)
+    if not match or not line.rstrip().endswith(";"):
+        return None
+    body = line[match.end():].rstrip()
+    body = body[:-1].rstrip()
+    field_type, end = parse_type_prefix(body)
+    rest = body[end:].strip()
+    if not rest:
+        return match.group(1), field_type, None
+    if rest.startswith("=") and rest[1:].strip():
+        return match.group(1), field_type, rest[1:].strip()
+    raise ZyenError(f"invalid struct field declaration `{line}`")
+
+
 def _struct_default_init(struct_name: str, ctx: "TranspileContext") -> str:
     """Emit a C99 designated initializer that applies declared field defaults.
 
@@ -275,7 +403,11 @@ def _struct_default_init(struct_name: str, ctx: "TranspileContext") -> str:
         return f"({struct_name}){{0}}"
     parts = []
     for field_name, default_expr in struct.defaults.items():
-        value = transform_expr(default_expr, ctx)
+        field_type = struct.fields.get(field_name, "")
+        coerced = coerce_named_fn_to_fnval(default_expr, field_type, ctx)
+        value = coerced if coerced is not None else transform_expr(default_expr, ctx)
+        if type_has_managed_value(field_type, ctx) and not expression_produces_owned_value(default_expr, ctx):
+            value = retain_expr_for_type(value, field_type, ctx)
         parts.append(f".{field_name} = {value}")
     return f"({struct_name}){{ " + ", ".join(parts) + " }"
 
@@ -290,6 +422,11 @@ def _strip_module_prefix_type(ztype: str) -> str:
     if not ztype:
         return ztype
     ztype = ztype.replace(" ", "")
+    if ztype.startswith("fn("):
+        params, ret_type = parse_fn_type(ztype)
+        stripped_params = [_strip_module_prefix_type(param) for param in params]
+        stripped_ret = _strip_module_prefix_type(ret_type)
+        return f"fn({','.join(stripped_params)})->{stripped_ret}"
     m = re.match(r"^([A-Za-z_]\w*)<(.+)>$", ztype)
     if m:
         inner = _strip_module_prefix_type(m.group(2))
@@ -300,23 +437,158 @@ def _strip_module_prefix_type(ztype: str) -> str:
 
 
 def ztype_base(ztype: str) -> str:
-    ztype = ztype.strip()
-    m = re.match(r"ptr\s*<\s*([A-Za-z_]\w*)\s*>", ztype)
-    if m:
+    ztype = ztype.strip().replace(" ", "")
+    if _generic_inner_type(ztype, "ptr") is not None:
         return "ptr"
     return ztype
 
 
 def ptr_inner_type(ztype: str) -> Optional[str]:
-    m = re.match(r"ptr\s*<\s*([A-Za-z_]\w*)\s*>", ztype.strip())
-    if m:
-        return m.group(1)
-    return None
+    return _generic_inner_type(ztype.strip().replace(" ", ""), "ptr")
+
+
+def _generic_inner_type(ztype: str, outer: str) -> Optional[str]:
+    prefix = outer + "<"
+    if not ztype.startswith(prefix) or not ztype.endswith(">"):
+        return None
+    depth = 0
+    for index, ch in enumerate(ztype[len(outer):], start=len(outer)):
+        if ch == "<":
+            depth += 1
+        elif ch == ">":
+            depth -= 1
+            if depth == 0 and index != len(ztype) - 1:
+                return None
+            if depth < 0:
+                return None
+    if depth != 0:
+        return None
+    inner = ztype[len(prefix):-1]
+    return inner or None
+
+
+def is_fn_type(ztype: str) -> bool:
+    """ZEP-0010: detect `fn(...)->T` type expressions."""
+    s = ztype.strip().replace(" ", "")
+    return s.startswith("fn(")
+
+
+def parse_fn_type(ztype: str) -> Tuple[List[str], str]:
+    """ZEP-0010: parse `fn(int,int)->int` into ([param types], ret type)."""
+    s = ztype.strip().replace(" ", "")
+    if not s.startswith("fn("):
+        raise ZyenError(f"not a fn type: `{ztype}`")
+    open_i = 2
+    depth = 0
+    close_i = -1
+    for i in range(open_i, len(s)):
+        if s[i] == "(":
+            depth += 1
+        elif s[i] == ")":
+            depth -= 1
+            if depth == 0:
+                close_i = i
+                break
+    if close_i < 0:
+        raise ZyenError(f"unclosed `fn(` in `{ztype}`")
+    params_str = s[open_i + 1:close_i]
+    rest = s[close_i + 1:]
+    if rest == "" or rest == "->void":
+        ret_type = "void"
+    elif rest.startswith("->"):
+        ret_type = rest[2:]
+        if not ret_type:
+            raise ZyenError(f"missing return type after `->` in `{ztype}`")
+    else:
+        raise ZyenError(f"expected `->T` after `fn(...)`, got `{rest}` in `{ztype}`")
+    param_types = split_args(params_str) if params_str else []
+    for p in param_types:
+        if ":" in p:
+            raise ZyenError(
+                f"fn type parameter cannot have a name; write `fn(int,int)->int` not `fn(a:int,b:int)->int`, got `{p}` in `{ztype}`"
+            )
+    return param_types, ret_type
+
+
+def fn_typedef_name(ztype: str) -> str:
+    """Stable C identifier for a fn type. `fn(int,int)->int` -> `ZL_fn_int_int_to_int`."""
+    param_types, ret_type = parse_fn_type(ztype)
+
+    def slug(x: str) -> str:
+        return (
+            x.replace(" ", "")
+            .replace("->", "_to_")  # MUST come before single '>' replacement
+            .replace("<", "_of_")
+            .replace(">", "")
+            .replace(",", "_")
+            .replace("(", "_lp_")
+            .replace(")", "_rp_")
+        )
+
+    p = "_".join(slug(x) for x in param_types) if param_types else "void"
+    return f"ZL_fn_{p}_to_{slug(ret_type)}"
+
+
+def fn_call_helper_name(ztype: str) -> str:
+    return "zl_fn_call_" + fn_typedef_name(ztype)[len("ZL_fn_"):]
+
+
+def fn_owned_call_helper_name(ztype: str) -> str:
+    return fn_call_helper_name(ztype) + "_owned"
+
+
+def fn_call_variant_name(ztype: str, owned_args_mask: int, owns_callee: bool) -> str:
+    name = fn_call_helper_name(ztype)
+    if owned_args_mask:
+        name += f"_args_{owned_args_mask}"
+    if owns_callee:
+        name += "_owned"
+    return name
+
+
+def owned_argument_mask(args: List[str], param_types: List[str], ctx: "TranspileContext") -> int:
+    mask = 0
+    for index, (arg, param_type) in enumerate(zip(args, param_types)):
+        if type_has_managed_value(param_type, ctx) and expression_produces_owned_value(arg, ctx):
+            mask |= 1 << index
+    return mask
+
+
+def direct_owned_args_wrapper_name(target: str, mask: int) -> str:
+    return f"{target}_zl_owned_args_{mask}"
+
+
+def fn_call_pointer_name(ztype: str) -> str:
+    return "ZL_call_" + fn_typedef_name(ztype)[len("ZL_fn_"):]
+
+
+def register_fn_typedef(ctx: "TranspileContext", ztype: str) -> str:
+    """Record a fn type so a typedef is emitted in the C prelude. Returns its C name."""
+    name = fn_typedef_name(ztype)
+    if name not in ctx.fn_typedefs:
+        ctx.fn_typedefs[name] = ztype.strip().replace(" ", "")
+        param_types, ret_type = parse_fn_type(ztype)
+        for pt in param_types:
+            if is_fn_type(pt):
+                register_fn_typedef(ctx, pt)
+        if is_fn_type(ret_type):
+            register_fn_typedef(ctx, ret_type)
+    return name
 
 
 def validate_user_type(ztype: str, line_no: int, context: str = "type") -> None:
     """Reject user-facing use of Any and bare ptr where a concrete target is required."""
     t = ztype.strip().replace(" ", "")
+    if is_fn_type(t):
+        try:
+            param_types, ret_type = parse_fn_type(t)
+        except ZyenError as e:
+            raise ZyenError(f"line {line_no}: invalid fn type `{ztype}`: {e}")
+        for pt in param_types:
+            validate_user_type(pt, line_no, "fn type parameter")
+        if ret_type != "void":
+            validate_user_type(ret_type, line_no, "fn return type")
+        return
     if t == "Any" or ptr_inner_type(t) == "Any":
         raise ZyenError(f"line {line_no}: `Any` is internal to List; use a concrete type such as int/float/bool/str/ptr<T>/List")
 
@@ -326,21 +598,61 @@ def ensure_assignable(expected_type: str, actual_type: str, line_no: int, what: 
     actual = actual_type.replace(" ", "")
     eb = ztype_base(expected)
     ab = ztype_base(actual)
+    location = f"line {line_no}: " if line_no > 0 else ""
     if eb == "Any":
         return  # internal List cell storage only
     if ab == "Any":
-        raise ZyenError(f"line {line_no}: List values are dynamic; cast explicitly before {what}, e.g. `(int)value` or `(str)value`")
+        raise ZyenError(f"{location}List values are dynamic; cast explicitly before {what}, e.g. `(int)value` or `(str)value`")
+    if is_fn_type(expected) and actual == "none":
+        return
+    if eb == "ptr" and ab == "ptr":
+        expected_inner = ptr_inner_type(expected)
+        actual_inner = ptr_inner_type(actual)
+        if expected_inner in {None, "void"} or actual_inner is None or expected_inner == actual_inner:
+            return
+        raise ZyenError(
+            f"{location}pointer type mismatch in {what}: expected `{expected_type}`, got `{actual_type}`; "
+            f"use an explicit `({expected_type})value` cast"
+        )
     if eb == ab:
         return
     if eb == "float" and ab == "int":
         return
-    if eb == "ptr" and ab in {"ptr", "none"}:
+    if eb == "ptr" and ab == "none":
         return
-    raise ZyenError(f"line {line_no}: type mismatch in {what}: expected `{expected_type}`, got `{actual_type}`")
+    raise ZyenError(f"{location}type mismatch in {what}: expected `{expected_type}`, got `{actual_type}`")
+
+
+def display_ztype(ztype: str, ctx: "TranspileContext") -> str:
+    label = ctx.c_module_types.get(ztype.replace(" ", ""))
+    if label is not None:
+        return f'c_module.Module({json.dumps(label)})'
+    return ztype
+
+
+def ensure_c_module_assignable(
+    expected_type: str,
+    actual_type: str,
+    ctx: "TranspileContext",
+    line_no: int,
+    what: str,
+) -> None:
+    expected = expected_type.replace(" ", "")
+    actual = actual_type.replace(" ", "")
+    if expected not in ctx.c_module_types and actual not in ctx.c_module_types:
+        return
+    if expected != actual:
+        location = f"line {line_no}: " if line_no > 0 else ""
+        raise ZyenError(
+            f"{location}type mismatch in {what}: expected `{display_ztype(expected, ctx)}`, "
+            f"got `{display_ztype(actual, ctx)}`"
+        )
 
 
 def c_type(ztype: str) -> str:
     ztype = ztype.strip()
+    if is_fn_type(ztype):
+        return "ZL_Function"
     pm = re.match(r"ptrstruct\s*<\s*([A-Za-z_]\w*)\s*>", ztype)
     if pm:
         return f"{pm.group(1)}*"
@@ -359,7 +671,8 @@ def c_type(ztype: str) -> str:
 
 
 def type_name_for_runtime(ztype: str) -> str:
-    return ztype_base(ztype)
+    normalized = ztype.strip().replace(" ", "")
+    return normalized if ztype_base(normalized) == "ptr" else ztype_base(normalized)
 
 
 def is_none_literal(expr: str) -> bool:
@@ -433,6 +746,42 @@ def parse_params(text: str, line_no: int) -> Tuple[Dict[str, str], Dict[str, str
         if default_expr:
             defaults[name] = default_expr
     return params, defaults
+
+
+def parse_fn_header_line(line: str) -> Optional[Tuple[str, str, str, str]]:
+    """Parse a `fn NAME(...) -> T {` or `fn NAME(...) -> T;` header.
+
+    Returns (name, params_text, ret_type, kind) where kind is 'defn' or 'decl'.
+    Manual scan instead of regex because params or return type may contain
+    parentheses (`fn(int,int)->int`).
+    """
+    m = re.match(r"fn\s+([A-Za-z_]\w*)\s*\(", line)
+    if not m:
+        return None
+    name = m.group(1)
+    open_i = m.end() - 1
+    close_i = find_matching_paren(line, open_i)
+    if close_i < 0:
+        return None
+    params_text = line[open_i + 1:close_i]
+    rest = line[close_i + 1:].strip()
+    if rest.startswith("->"):
+        body = rest[2:].strip()
+        if body.endswith("{"):
+            ret_type = body[:-1].strip()
+            kind = "defn"
+        elif body.endswith(";"):
+            ret_type = body[:-1].strip()
+            kind = "decl"
+        else:
+            return None
+    elif rest == "{":
+        ret_type, kind = "void", "defn"
+    elif rest == ";":
+        ret_type, kind = "void", "decl"
+    else:
+        return None
+    return name, params_text, ret_type.replace(" ", ""), kind
 
 
 def params_compatible(a: FunctionDef, b: FunctionDef) -> bool:
@@ -509,11 +858,10 @@ def collect_signatures(lines: List[Tuple[int, str]]) -> TranspileContext:
                 # optional trailing default expression:
                 #     let this.name: type;
                 #     let this.name: type = expr;   (ZEP-0006)
-                fm_field = re.match(r"let\s+this\.([A-Za-z_]\w*)\s*:\s*([A-Za-z_]\w*(?:\s*<\s*[A-Za-z_]\w*\s*>)?)\s*(?:=\s*(.+?))?\s*;\s*$", f_line)
-                if fm_field:
-                    field_name = fm_field.group(1)
-                    field_type = fm_field.group(2).replace(" ", "")
-                    default_expr = fm_field.group(3)
+                parsed_field = parse_struct_field_line(f_line)
+                if parsed_field:
+                    field_name, field_type, default_expr = parsed_field
+                    field_type = _strip_module_prefix_type(field_type)
                     validate_user_type(field_type, f_no, "struct field")
                     fields[field_name] = field_type
                     if default_expr is not None:
@@ -522,11 +870,10 @@ def collect_signatures(lines: List[Tuple[int, str]]) -> TranspileContext:
                     continue
                 if re.match(r"(?:let\s+)?[A-Za-z_]\w*\s*:\s*[A-Za-z_]\w*(?:\s*<\s*[A-Za-z_]\w*\s*>)?\s*(?:=\s*.+?)?\s*;\s*$", f_line):
                     raise ZyenError(f"line {f_no}: struct field must use `let this.name: type;` or `let this.name: type = default;`, for example `let this.list_len: int;`")
-                fm_method = re.match(r"fn\s+([A-Za-z_]\w*)\s*\((.*)\)\s*(?:->\s*([A-Za-z_]\w*(?:\s*<\s*[A-Za-z_]\w*\s*>)?))?\s*\{\s*$", f_line)
-                if fm_method:
-                    method_name = fm_method.group(1)
-                    params, defaults = parse_params(fm_method.group(2), f_no)
-                    ret_type = (fm_method.group(3) or "void").replace(" ", "")
+                parsed_method = parse_fn_header_line(f_line)
+                if parsed_method and parsed_method[3] == "defn":
+                    method_name, params_text, ret_type, _kind = parsed_method
+                    params, defaults = parse_params(params_text, f_no)
                     validate_user_type(ret_type, f_no, "return type")
                     methods[method_name] = FunctionDef(name=method_name, ret_type=ret_type, params=params, defaults=defaults, defined=True, defined_line=f_no)
                     c_params = {"this": f"ptrstruct<{struct_name}>"}
@@ -543,25 +890,28 @@ def collect_signatures(lines: List[Tuple[int, str]]) -> TranspileContext:
             i += 1
             continue
 
-        # Explicit top-level function declaration / prototype.
-        #     fn add(a: int, b: int = 1) -> int;
-        fm_decl = re.match(r"fn\s+([A-Za-z_]\w*)\s*\((.*)\)\s*(?:->\s*([A-Za-z_]\w*(?:\s*<\s*[A-Za-z_]\w*\s*>)?))?\s*;\s*$", line)
-        if fm_decl:
-            name = fm_decl.group(1)
-            params, defaults = parse_params(fm_decl.group(2), line_no)
-            ret_type = (fm_decl.group(3) or "void").replace(" ", "")
+        # Explicit top-level function declaration / prototype, or definition header.
+        # Both `fn add(a: int) -> int;` and `fn add(a: int) -> int {` go through
+        # parse_fn_header_line so the return type can itself be `fn(...)->T`.
+        parsed = parse_fn_header_line(line)
+        if parsed:
+            name, params_text, ret_type, kind = parsed
+            params, defaults = parse_params(params_text, line_no)
             validate_user_type(ret_type, line_no, "return type")
-            merge_function_signature(ctx, FunctionDef(name=name, ret_type=ret_type, params=params, defaults=defaults, defined=False, declared_line=line_no), line_no, False)
-            i += 1
-            continue
-
-        fm = re.match(r"fn\s+([A-Za-z_]\w*)\s*\((.*)\)\s*(?:->\s*([A-Za-z_]\w*(?:\s*<\s*[A-Za-z_]\w*\s*>)?))?\s*\{\s*$", line)
-        if fm:
-            name = fm.group(1)
-            params, defaults = parse_params(fm.group(2), line_no)
-            ret_type = (fm.group(3) or "void").replace(" ", "")
-            validate_user_type(ret_type, line_no, "return type")
-            merge_function_signature(ctx, FunctionDef(name=name, ret_type=ret_type, params=params, defaults=defaults, defined=True, defined_line=line_no), line_no, True)
+            merge_function_signature(
+                ctx,
+                FunctionDef(
+                    name=name,
+                    ret_type=ret_type,
+                    params=params,
+                    defaults=defaults,
+                    defined=(kind == "defn"),
+                    declared_line=(line_no if kind == "decl" else 0),
+                    defined_line=(line_no if kind == "defn" else 0),
+                ),
+                line_no,
+                kind == "defn",
+            )
         i += 1
 
     for name, fn in ctx.functions.items():
@@ -591,14 +941,32 @@ def convert_struct_literal(expr: str, ctx: TranspileContext) -> str:
                 field_name, value = item.split(":", 1)
                 field_name = field_name.strip()
                 provided.add(field_name)
-                value = transform_expr(value.strip(), ctx)
-                parts.append(f".{field_name} = {value}")
+                raw_val = value.strip()
+                field_type = struct.fields.get(field_name, "")
+                if field_type:
+                    ensure_c_module_assignable(
+                        field_type,
+                        infer_type(raw_val, ctx),
+                        ctx,
+                        0,
+                        f"struct field `{typ}.{field_name}`",
+                    )
+                # ZEP-0013: fn-typed struct field accepts bare named-fn → fat value.
+                coerced = coerce_named_fn_to_fnval(raw_val, field_type, ctx)
+                value_c = coerced if coerced is not None else transform_expr(raw_val, ctx)
+                if field_type and type_has_managed_value(field_type, ctx) and not expression_produces_owned_value(raw_val, ctx):
+                    value_c = retain_expr_for_type(value_c, field_type, ctx)
+                parts.append(f".{field_name} = {value_c}")
         # ZEP-0006: fill in declared defaults for any field the literal didn't
         # provide. C99 still zero-fills the rest, so fields with no default
         # keep their previous behaviour.
         for field_name, default_expr in struct.defaults.items():
             if field_name not in provided:
-                value = transform_expr(default_expr, ctx)
+                field_type = struct.fields.get(field_name, "")
+                coerced = coerce_named_fn_to_fnval(default_expr, field_type, ctx)
+                value = coerced if coerced is not None else transform_expr(default_expr, ctx)
+                if type_has_managed_value(field_type, ctx) and not expression_produces_owned_value(default_expr, ctx):
+                    value = retain_expr_for_type(value, field_type, ctx)
                 parts.append(f".{field_name} = {value}")
         if not parts:
             return f"({typ}){{0}}"
@@ -649,7 +1017,26 @@ def list_receiver_c(receiver: str, ctx: TranspileContext) -> str:
     return "&" + transform_field_access(recv, ctx)
 
 
+def coerce_named_fn_to_fnval(arg: str, expected_type: str, ctx: "TranspileContext") -> Optional[str]:
+    """ZEP-0013: if `expected_type` is a fn type and `arg` is a bare named
+    top-level fn reference, return the fat-value constant `<name>_zlfnval`.
+    Otherwise return None and let normal expression transform handle it.
+    """
+    if not is_fn_type(expected_type):
+        return None
+    bare = arg.strip()
+    if re.fullmatch(r"[A-Za-z_]\w*", bare) and bare in ctx.functions:
+        fn = ctx.functions[bare]
+        actual_type = f"fn({','.join(fn.params.values())})->{fn.ret_type}"
+        ensure_assignable(expected_type, actual_type, 0, "function argument")
+        return f"{bare}_zlfnval"
+    return None
+
+
 def wrap_arg_for_expected(arg: str, expected_type: str, ctx: TranspileContext) -> str:
+    fnval = coerce_named_fn_to_fnval(arg, expected_type, ctx)
+    if fnval is not None:
+        return fnval
     expected = expected_type.replace(" ", "")
     expected_base = ztype_base(expected)
     actual = infer_type(arg, ctx)
@@ -668,11 +1055,15 @@ def wrap_arg_for_expected(arg: str, expected_type: str, ctx: TranspileContext) -
         return list_receiver_c(arg, ctx)
 
     if expected != "Any":
+        if is_fn_type(expected) or ztype_base(expected) == "ptr" or expected in ctx.structs:
+            ensure_assignable(expected, actual, 0, "function argument")
         return transform_expr(arg, ctx)
 
     transformed = transform_expr(arg, ctx)
     if base == "Any":
         return transformed
+    if is_fn_type(actual):
+        raise ZyenError("List does not accept function values yet; store the callback in a struct field")
     if base == "float":
         return f"zl_any_float({transformed})"
     if base == "bool":
@@ -680,27 +1071,90 @@ def wrap_arg_for_expected(arg: str, expected_type: str, ctx: TranspileContext) -
     if base == "str":
         return f"zl_any_str({transformed})"
     if base == "ptr":
-        return f"zl_any_ptr({transformed})"
+        helper = "zl_any_ptr_take" if expression_produces_owned_value(arg, ctx) else "zl_any_ptr"
+        return f"{helper}({transformed})"
     if base == "List":
         return f"zl_any_list({list_receiver_c(arg, ctx)})"
     return f"zl_any_int({transformed})"
 
 
 
+def split_named_call_arg(arg: str) -> Optional[Tuple[str, str]]:
+    """Return (name, value) for a top-level `name: value` call argument."""
+    depth = 0
+    in_str = False
+    escaped = False
+    for idx, ch in enumerate(arg):
+        if ch == '"' and not escaped:
+            in_str = not in_str
+        elif not in_str:
+            if ch in "({[":
+                depth += 1
+            elif ch in ")}]":
+                depth -= 1
+            elif ch == ":" and depth == 0:
+                name = arg[:idx].strip()
+                value = arg[idx + 1:].strip()
+                if re.fullmatch(r"[A-Za-z_]\w*", name):
+                    if not value:
+                        raise ZyenError(f"named argument `{name}` is missing a value")
+                    return name, value
+                return None
+        escaped = ch == "\\" and not escaped
+        if ch != "\\":
+            escaped = False
+    return None
+
+
 def complete_args_with_defaults(args: List[str], fn: FunctionDef, call_name: str) -> List[str]:
     param_items = list(fn.params.items())
+    param_names = [name for name, _typ in param_items]
     required = len([p for p, _t in param_items if p not in fn.defaults])
     total = len(param_items)
-    if len(args) < required or len(args) > total:
-        if required == total:
-            raise ZyenError(f"function `{call_name}` expects {total} args, got {len(args)}")
-        raise ZyenError(f"function `{call_name}` expects {required}..{total} args, got {len(args)}")
-    completed = list(args)
-    for pname, _ptype in param_items[len(args):]:
+    completed: List[Optional[str]] = [None] * total
+    used: Set[str] = set()
+    positional_index = 0
+    seen_named = False
+
+    for arg in args:
+        named = split_named_call_arg(arg)
+        if named is None:
+            if seen_named:
+                raise ZyenError(f"function `{call_name}` positional argument cannot follow named argument")
+            if positional_index >= total:
+                if required == total:
+                    raise ZyenError(f"function `{call_name}` expects {total} args, got {len(args)}")
+                raise ZyenError(f"function `{call_name}` expects {required}..{total} args, got {len(args)}")
+            pname = param_names[positional_index]
+            completed[positional_index] = arg
+            used.add(pname)
+            positional_index += 1
+            continue
+
+        seen_named = True
+        pname, value = named
+        if pname not in fn.params:
+            raise ZyenError(f"function `{call_name}` has no parameter `{pname}`")
+        if pname in used:
+            raise ZyenError(f"function `{call_name}` got duplicate argument `{pname}`")
+        index = param_names.index(pname)
+        completed[index] = value
+        used.add(pname)
+
+    for index, (pname, _ptype) in enumerate(param_items):
+        if completed[index] is not None:
+            continue
         if pname not in fn.defaults:
             raise ZyenError(f"function `{call_name}` missing required argument `{pname}`")
-        completed.append(fn.defaults[pname])
-    return completed
+        completed[index] = fn.defaults[pname]
+    if len(args) < required or len(args) > total:
+        # Keep the old arity wording for pure positional calls; named calls have
+        # already produced the more specific missing/extra/unknown errors above.
+        if not any(split_named_call_arg(arg) is not None for arg in args):
+            if required == total:
+                raise ZyenError(f"function `{call_name}` expects {total} args, got {len(args)}")
+            raise ZyenError(f"function `{call_name}` expects {required}..{total} args, got {len(args)}")
+    return [arg for arg in completed if arg is not None]
 
 def find_matching_paren(text: str, open_i: int) -> int:
     depth = 0
@@ -721,6 +1175,64 @@ def find_matching_paren(text: str, open_i: int) -> int:
         if ch != "\\":
             escaped = False
     return -1
+
+
+def split_trailing_call(text: str) -> Optional[Tuple[str, str]]:
+    """Split an expression ending in a postfix call into (callee, args)."""
+    source = text.strip()
+    if not source.endswith(")"):
+        return None
+    stack: List[int] = []
+    pairs: Dict[int, int] = {}
+    in_str = False
+    escaped = False
+    for index, ch in enumerate(source):
+        if ch == '"' and not escaped:
+            in_str = not in_str
+        elif not in_str:
+            if ch == "(":
+                stack.append(index)
+            elif ch == ")":
+                if not stack:
+                    return None
+                pairs[index] = stack.pop()
+        escaped = ch == "\\" and not escaped
+        if ch != "\\":
+            escaped = False
+    if stack or len(source) - 1 not in pairs:
+        return None
+    open_i = pairs[len(source) - 1]
+    callee = source[:open_i].strip()
+    if not callee:
+        return None
+    return callee, source[open_i + 1:-1]
+
+
+def c_fn_value_call(value_c: str, fn_type: str, args: List[str], ctx: TranspileContext, call_name: str, owns_callee: bool = False) -> str:
+    param_types, _ret_type = parse_fn_type(fn_type)
+    if any(split_named_call_arg(arg) is not None for arg in args):
+        raise ZyenError(f"function value `{call_name}` accepts positional arguments only")
+    if len(args) != len(param_types):
+        raise ZyenError(f"function value `{call_name}` expects {len(param_types)} args, got {len(args)}")
+    converted = [wrap_arg_for_expected(arg, expected, ctx) for arg, expected in zip(args, param_types)]
+    suffix = ", " + ", ".join(converted) if converted else ""
+    helper = fn_call_variant_name(fn_type, owned_argument_mask(args, param_types, ctx), owns_callee)
+    return f"{helper}({value_c}{suffix})"
+
+
+def transform_postfix_fn_call(expr: str, ctx: TranspileContext) -> str:
+    trailing = split_trailing_call(expr)
+    if trailing is None:
+        return expr
+    callee, arg_text = trailing
+    if re.fullmatch(r"[A-Za-z_]\w*", callee) and callee in ctx.functions:
+        return expr
+    callee_type = infer_type(callee, ctx)
+    if not is_fn_type(callee_type):
+        return expr
+    args = split_args(arg_text) if arg_text.strip() else []
+    callee_c = transform_expr(callee, ctx)
+    return c_fn_value_call(callee_c, callee_type, args, ctx, callee, expression_produces_owned_value(callee, ctx))
 
 
 def receiver_start(text: str, dot_i: int) -> int:
@@ -815,25 +1327,45 @@ def transform_method_calls(expr: str, ctx: TranspileContext) -> str:
 
         elif obj_type in ctx.structs:
             struct = ctx.structs[obj_type]
-            if method not in struct.methods:
-                raise ZyenError(f"unknown method `{method}` for struct `{obj_type}`")
-            fn = struct.methods[method]
-            args = complete_args_with_defaults(args, fn, f"{obj_type}.{method}")
-            converted = [wrap_arg_for_expected(arg, param_type, ctx) for arg, (_param_name, param_type) in zip(args, fn.params.items())]
-            rest = ", " + ", ".join(converted) if converted else ""
-            repl = f"{obj_type}_{method}(&{transform_field_access(obj, ctx)}{rest})"
+            # ZEP-0013: fn-typed field is a fat value; call dispatches through .call/.env.
+            if method in struct.fields and is_fn_type(struct.fields[method]):
+                field_type = struct.fields[method]
+                base = f"{transform_field_access(obj, ctx)}.{method}"
+                repl = c_fn_value_call(base, field_type, args, ctx, f"{obj}.{method}")
+            elif method not in struct.methods:
+                raise ZyenError(f"unknown method `{method}` for struct `{display_ztype(obj_type, ctx)}`")
+            else:
+                fn = struct.methods[method]
+                args = complete_args_with_defaults(args, fn, f"{obj_type}.{method}")
+                param_types = list(fn.params.values())
+                converted = [wrap_arg_for_expected(arg, param_type, ctx) for arg, param_type in zip(args, param_types)]
+                owned_mask = owned_argument_mask(args, param_types, ctx) << 1
+                rest = ", " + ", ".join(converted) if converted else ""
+                target = f"{obj_type}_{method}"
+                call_name = direct_owned_args_wrapper_name(target, owned_mask) if owned_mask else target
+                repl = f"{call_name}(&{transform_field_access(obj, ctx)}{rest})"
 
         else:
             owner = ptrstruct_inner_type(obj_type) if obj_type else None
             if owner in ctx.structs:
                 struct = ctx.structs[owner]
-                if method not in struct.methods:
-                    raise ZyenError(f"unknown method `{method}` for struct `{owner}`")
-                fn = struct.methods[method]
-                args = complete_args_with_defaults(args, fn, f"{owner}.{method}")
-                converted = [wrap_arg_for_expected(arg, param_type, ctx) for arg, (_param_name, param_type) in zip(args, fn.params.items())]
-                rest = ", " + ", ".join(converted) if converted else ""
-                repl = f"{owner}_{method}({transform_field_access(obj, ctx)}{rest})"
+                # ZEP-0013: fn-typed field call on `this` is a fat dispatch.
+                if method in struct.fields and is_fn_type(struct.fields[method]):
+                    field_type = struct.fields[method]
+                    base = f"{transform_field_access(obj, ctx)}->{method}"
+                    repl = c_fn_value_call(base, field_type, args, ctx, f"{obj}.{method}")
+                elif method not in struct.methods:
+                    raise ZyenError(f"unknown method `{method}` for struct `{display_ztype(owner, ctx)}`")
+                else:
+                    fn = struct.methods[method]
+                    args = complete_args_with_defaults(args, fn, f"{owner}.{method}")
+                    param_types = list(fn.params.values())
+                    converted = [wrap_arg_for_expected(arg, param_type, ctx) for arg, param_type in zip(args, param_types)]
+                    owned_mask = owned_argument_mask(args, param_types, ctx) << 1
+                    rest = ", " + ", ".join(converted) if converted else ""
+                    target = f"{owner}_{method}"
+                    call_name = direct_owned_args_wrapper_name(target, owned_mask) if owned_mask else target
+                    repl = f"{call_name}({transform_field_access(obj, ctx)}{rest})"
 
         if repl is None:
             # Not a Zyen object method; preserve original text and continue after it.
@@ -877,7 +1409,44 @@ def transform_function_calls(expr: str, ctx: TranspileContext) -> str:
             i = open_i + 1
             continue
         prev = expr[name_start - 1] if name_start > 0 else ""
-        if prev == "." or name not in ctx.functions:
+        if prev == ".":
+            out.append(expr[i:open_i + 1])
+            i = open_i + 1
+            continue
+        # ZEP-0013: call through a fn-typed local/param `f(args)` → fat dispatch.
+        if name not in ctx.functions:
+            sym_type = ctx.symbols.get(name)
+            if sym_type and is_fn_type(sym_type):
+                close_i = find_matching_paren(expr, open_i)
+                if close_i < 0:
+                    out.append(expr[i:])
+                    break
+                chain_end = close_i
+                cursor = close_i + 1
+                while cursor < len(expr):
+                    while cursor < len(expr) and expr[cursor].isspace():
+                        cursor += 1
+                    if cursor >= len(expr) or expr[cursor] != "(":
+                        break
+                    next_close = find_matching_paren(expr, cursor)
+                    if next_close < 0:
+                        break
+                    chain_end = next_close
+                    cursor = next_close + 1
+                if chain_end > close_i:
+                    chain_text = expr[name_start:chain_end + 1]
+                    out.append(expr[i:name_start])
+                    out.append(transform_postfix_fn_call(chain_text, ctx))
+                    changed = True
+                    i = chain_end + 1
+                    continue
+                arg_text = expr[open_i + 1:close_i]
+                raw_args = split_args(arg_text) if arg_text.strip() else []
+                out.append(expr[i:name_start])
+                out.append(c_fn_value_call(name, sym_type, raw_args, ctx, name))
+                changed = True
+                i = close_i + 1
+                continue
             out.append(expr[i:open_i + 1])
             i = open_i + 1
             continue
@@ -888,9 +1457,12 @@ def transform_function_calls(expr: str, ctx: TranspileContext) -> str:
         args = split_args(expr[open_i + 1:close_i])
         fn = ctx.functions[name]
         args = complete_args_with_defaults(args, fn, name)
-        converted = [wrap_arg_for_expected(arg, ptype, ctx) for arg, (_pname, ptype) in zip(args, fn.params.items())]
+        param_types = list(fn.params.values())
+        converted = [wrap_arg_for_expected(arg, ptype, ctx) for arg, ptype in zip(args, param_types)]
+        owned_mask = owned_argument_mask(args, param_types, ctx)
+        call_name = direct_owned_args_wrapper_name(name, owned_mask) if owned_mask else name
         out.append(expr[i:name_start])
-        out.append(f"{name}(" + ", ".join(converted) + ")")
+        out.append(f"{call_name}(" + ", ".join(converted) + ")")
         changed = True
         i = close_i + 1
     return "".join(out) if changed else expr
@@ -908,15 +1480,53 @@ def is_cast_expr(expr: str) -> Optional[Tuple[str, str]]:
     We only treat it as a cast when the entire expression starts with a known
     type cast. Normal parentheses such as `(a + b)` are handled elsewhere.
     """
-    m = re.match(r"^\(\s*(int|float|bool|str|ptr|char)\s*\)\s*(.+)$", expr.strip())
-    if not m:
+    source = expr.strip()
+    if not source.startswith("("):
         return None
-    return m.group(1), m.group(2).strip()
+    close_i = find_matching_paren(source, 0)
+    if close_i < 0 or close_i == len(source) - 1:
+        return None
+    target = source[1:close_i].strip().replace(" ", "")
+    if target not in {"int", "float", "bool", "str", "ptr", "char"} and ptr_inner_type(target) is None:
+        return None
+    return target, source[close_i + 1:].strip()
+
+
+def reject_malformed_pointer_cast(expr: str) -> None:
+    """Reject `(ptr<T>value)` before it leaks through as invalid C.
+
+    The canonical C-like spelling is `(ptr<T>)value`. Parenthesized pointer
+    comparisons such as `(ptr<int> == value)` are not mistaken for casts.
+    """
+    source = expr.strip()
+    mask = string_mask(source)
+    for index, ch in enumerate(source):
+        if ch != "(" or mask[index]:
+            continue
+        close_i = find_matching_paren(source, index)
+        if close_i < 0:
+            continue
+        content = source[index + 1:close_i]
+        try:
+            target, type_end = parse_type_prefix(content)
+        except ZyenError:
+            continue
+        if ztype_base(target) != "ptr":
+            continue
+        remainder = content[type_end:].strip()
+        if remainder and re.match(r'^(?:[A-Za-z_]\w*|\d|"|&|\*|\()', remainder):
+            bad = source[index:close_i + 1]
+            raise ZyenError(
+                f"malformed pointer cast `{bad}`; write `({target}){remainder}` "
+                f"(for dereference: `*(({target}){remainder})`)"
+            )
 
 
 def c_cast_expr(target_type: str, inner: str, ctx: TranspileContext) -> str:
     source_type = infer_type(inner, ctx)
     source_base = ztype_base(source_type)
+    if is_fn_type(source_type):
+        raise ZyenError("function values cannot be cast; use the exact fn(...) -> T signature")
     inner_c = transform_expr(inner, ctx)
 
     if target_type == "Any":
@@ -972,14 +1582,78 @@ def c_cast_expr(target_type: str, inner: str, ctx: TranspileContext) -> str:
     if target_type == "char":
         return f"zl_char_to_str({transform_expr(inner, ctx)})"
 
-    if target_type == "ptr":
+    if ztype_base(target_type) == "ptr":
         if source_base == "Any":
             return f"zl_cast_ptr_any({inner_c})"
         if source_base == "ptr":
             return inner_c
-        return 'zl_none_ptr("void")'
+        raise ZyenError(f"cannot cast `{source_type}` to `{target_type}`; pointer casts require another ptr value")
 
     return inner_c
+
+
+def strip_outer_parens(expr: str) -> str:
+    source = expr.strip()
+    while source.startswith("("):
+        close_i = find_matching_paren(source, 0)
+        if close_i != len(source) - 1:
+            break
+        source = source[1:-1].strip()
+    return source
+
+
+def deref_info(expr: str, ctx: TranspileContext) -> Optional[Tuple[str, str, str]]:
+    """Return (pointer C expression, pointee type, diagnostic label)."""
+    raw = expr.strip()
+    if not raw.startswith("*"):
+        return None
+    pointer_expr = strip_outer_parens(raw[1:].strip())
+    cast = is_cast_expr(pointer_expr)
+    if cast and ztype_base(cast[0]) == "ptr":
+        target = ptr_inner_type(cast[0])
+        if not target:
+            return None
+        inner = cast[1]
+        return transform_expr(inner, ctx), target, inner
+    if re.fullmatch(r"[A-Za-z_]\w*", pointer_expr) and pointer_expr in ctx.ptr_targets:
+        return pointer_expr, ctx.ptr_targets[pointer_expr], pointer_expr
+    return None
+
+
+def transform_special_equality(expr: str, ctx: TranspileContext) -> Optional[str]:
+    source = expr.strip()
+    mask = string_mask(source)
+    depth = 0
+    for index in range(len(source) - 1):
+        if mask[index]:
+            continue
+        ch = source[index]
+        if ch in "([{":
+            depth += 1
+            continue
+        if ch in ")]}":
+            depth -= 1
+            continue
+        op = source[index:index + 2]
+        if depth != 0 or op not in {"==", "!="}:
+            continue
+        left = source[:index].strip()
+        right = source[index + 2:].strip()
+        left_type = infer_type(left, ctx)
+        right_type = infer_type(right, ctx)
+        if ztype_base(left_type) == "str" and ztype_base(right_type) == "str":
+            comparison = f"strcmp({transform_expr(left, ctx)}, {transform_expr(right, ctx)})"
+            return f"({comparison} {'==' if op == '==' else '!='} 0)"
+        if is_fn_type(left_type) and right_type == "none":
+            helper = "zl_fn_is_none_owned" if expression_produces_owned_value(left, ctx) else "zl_fn_is_none"
+            test = f"{helper}({transform_expr(left, ctx)})"
+            return test if op == "==" else f"(!{test})"
+        if left_type == "none" and is_fn_type(right_type):
+            helper = "zl_fn_is_none_owned" if expression_produces_owned_value(right, ctx) else "zl_fn_is_none"
+            test = f"{helper}({transform_expr(right, ctx)})"
+            return test if op == "==" else f"(!{test})"
+        return None
+    return None
 
 def transform_field_access(expr: str, ctx: TranspileContext) -> str:
     # Convert method-body field access on `this`: this.x -> this->x
@@ -1382,11 +2056,22 @@ def replace_fstrings_in_expr(expr: str, ctx: TranspileContext) -> str:
 
 def transform_expr(expr: str, ctx: TranspileContext) -> str:
     expr = expr.strip()
+    reject_malformed_pointer_cast(expr)
     if is_fstring_expr(expr):
         return transform_fstring(expr, ctx)
     cast = is_cast_expr(expr)
     if cast:
         return c_cast_expr(cast[0], cast[1], ctx)
+    special_equality = transform_special_equality(expr, ctx)
+    if special_equality is not None:
+        return special_equality
+    deref = deref_info(expr, ctx)
+    if deref is not None:
+        pointer_c, target_type, label = deref
+        if target_type == "void":
+            raise ZyenError(f"cannot dereference `ptr<void>` `{label}`; cast it to a concrete ptr<T> first")
+        return f"(*({c_type(target_type)}*)zl_ptr_checked_addr({pointer_c}, \"{label}\"))"
+    expr = transform_postfix_fn_call(expr, ctx)
     expr = convert_struct_literal(expr, ctx)
     expr = replace_fstrings_in_expr(expr, ctx)
     # String concat must run before object/method rewriting, so expressions like
@@ -1421,6 +2106,7 @@ def parse_array_literal(expr: str, ctx: TranspileContext, line_no: int) -> Tuple
 
 def infer_type(expr: str, ctx: TranspileContext) -> str:
     expr = expr.strip()
+    reject_malformed_pointer_cast(expr)
     raw = expr
     if is_fstring_expr(raw):
         return "str"
@@ -1428,6 +2114,13 @@ def infer_type(expr: str, ctx: TranspileContext) -> str:
     cast = is_cast_expr(raw)
     if cast:
         return "str" if cast[0] == "char" else cast[0]
+    trailing_call = split_trailing_call(raw)
+    if trailing_call is not None:
+        callee, _arg_text = trailing_call
+        callee_type = infer_type(callee, ctx)
+        if is_fn_type(callee_type):
+            _params, ret_type = parse_fn_type(callee_type)
+            return ret_type
     # Remove outer parentheses for simple cases.
     while raw.startswith("(") and raw.endswith(")"):
         raw = raw[1:-1].strip()
@@ -1460,6 +2153,11 @@ def infer_type(expr: str, ctx: TranspileContext) -> str:
     dm = re.match(r"^\*\s*([A-Za-z_]\w*)$", raw)
     if dm:
         return ctx.ptr_targets.get(dm.group(1), "int")
+    if raw.startswith("*"):
+        pointer_expr = strip_outer_parens(raw[1:].strip())
+        pointer_cast = is_cast_expr(pointer_expr)
+        if pointer_cast and ztype_base(pointer_cast[0]) == "ptr":
+            return ptr_inner_type(pointer_cast[0]) or "void"
     im = re.match(r"^([A-Za-z_]\w*)\s*\[.*\]$", raw)
     if im and im.group(1) in ctx.ptr_targets:
         return ctx.ptr_targets.get(im.group(1), "int")
@@ -1481,11 +2179,21 @@ def infer_type(expr: str, ctx: TranspileContext) -> str:
                 "append_ptr": "ptr",
                 "pop": "Any",
             }.get(method, "int")
-        if obj_type in ctx.structs and method in ctx.structs[obj_type].methods:
-            return ctx.structs[obj_type].methods[method].ret_type
+        if obj_type in ctx.structs:
+            struct = ctx.structs[obj_type]
+            if method in struct.fields and is_fn_type(struct.fields[method]):
+                _params, ret_type = parse_fn_type(struct.fields[method])
+                return ret_type
+            if method in struct.methods:
+                return struct.methods[method].ret_type
         owner = ptrstruct_inner_type(obj_type) if obj_type else None
-        if owner in ctx.structs and method in ctx.structs[owner].methods:
-            return ctx.structs[owner].methods[method].ret_type
+        if owner in ctx.structs:
+            struct = ctx.structs[owner]
+            if method in struct.fields and is_fn_type(struct.fields[method]):
+                _params, ret_type = parse_fn_type(struct.fields[method])
+                return ret_type
+            if method in struct.methods:
+                return struct.methods[method].ret_type
     fm = re.match(r"^([A-Za-z_]\w*)\.([A-Za-z_]\w*)$", raw)
     if fm:
         var, field = fm.group(1), fm.group(2)
@@ -1498,8 +2206,40 @@ def infer_type(expr: str, ctx: TranspileContext) -> str:
     call = re.match(r"^([A-Za-z_]\w*)\s*\(.*\)$", raw)
     if call and call.group(1) in ctx.functions:
         return ctx.functions[call.group(1)].ret_type
+    if call and call.group(1) in ctx.native_function_types:
+        _native_params, native_ret = parse_fn_type(ctx.native_function_types[call.group(1)])
+        return native_ret
+    if call:
+        runtime_returns = {
+            "zl_mem_alloc_int": "ptr<int>",
+            "zl_mem_alloc_float": "ptr<float>",
+            "zl_mem_alloc_bool": "ptr<bool>",
+            "zl_mem_alloc_str": "ptr<str>",
+            "zl_mem_alloc_any": "ptr<Any>",
+        }
+        if call.group(1) in runtime_returns:
+            return runtime_returns[call.group(1)]
+    if call:
+        # ZEP-0010: call through a fn-typed local variable.
+        callee = call.group(1)
+        var_type = ctx.symbols.get(callee)
+        if var_type and is_fn_type(var_type):
+            _ps, ret = parse_fn_type(var_type)
+            return ret
     if raw in ctx.symbols:
-        return ctx.symbols[raw]
+        symbol_type = ctx.symbols[raw]
+        if ztype_base(symbol_type) == "ptr" and raw in ctx.ptr_targets:
+            return f"ptr<{ctx.ptr_targets[raw]}>"
+        return symbol_type
+    generated_fnval = re.fullmatch(r"([A-Za-z_]\w*)_zlfnval", raw)
+    if generated_fnval and generated_fnval.group(1) in ctx.functions:
+        fn = ctx.functions[generated_fnval.group(1)]
+        return f"fn({','.join(fn.params.values())})->{fn.ret_type}"
+    # ZEP-0010: bare named-function reference is an fn-typed value.
+    if raw in ctx.functions:
+        fn = ctx.functions[raw]
+        param_types = list(fn.params.values())
+        return f"fn({','.join(param_types)})->{fn.ret_type}"
     if any(op in raw for op in ["==", "!=", "<=", ">=", "<", ">", "&&", "||"]):
         return "bool"
     # Try top-level arithmetic before falling back to the dot heuristic:
@@ -1508,6 +2248,12 @@ def infer_type(expr: str, ctx: TranspileContext) -> str:
     arith_pieces = _split_top_level_arith(raw)
     if arith_pieces is not None and len(arith_pieces) >= 2:
         operand_types = [infer_type(piece, ctx) for piece in arith_pieces]
+        if any(ztype_base(operand_type) == "ptr" for operand_type in operand_types):
+            raise ZyenError(
+                f"pointer arithmetic is not supported for managed `ZL_ptr` in `{raw}`; "
+                "keep the same address when casting, use typed indexing for an actual array, "
+                "or adapt raw pointer arithmetic inside the C compatibility layer"
+            )
         if all(t == "int" for t in operand_types):
             return "int"
         if any(t == "float" for t in operand_types) and all(t in {"int", "float"} for t in operand_types):
@@ -1523,6 +2269,9 @@ def infer_type(expr: str, ctx: TranspileContext) -> str:
 def c_print(expr: str, ctx: TranspileContext) -> str:
     raw_expr = expr.strip()
     typ = infer_type(raw_expr, ctx)
+    dm = re.match(r"^\*\s*([A-Za-z_]\w*)$", raw_expr)
+    if dm and ctx.ptr_targets.get(dm.group(1)) == "void":
+        raise ZyenError(f"cannot dereference `ptr<void>` `{dm.group(1)}`; cast it to a concrete ptr<T> first")
     if typ == "void":
         raise ZyenError("cannot print a void value")
     if is_none_literal(raw_expr):
@@ -1538,6 +2287,8 @@ def c_print(expr: str, ctx: TranspileContext) -> str:
             if base == "List":
                 list_arg = cexpr if re.match(r"^[A-Za-z_]\w*$", raw_expr) and raw_expr in ctx.list_refs else "&" + cexpr
                 return f'zl_print_list({list_arg});'
+            if base == "ptr":
+                return f"zl_print_ptr_value({cexpr}, false);"
             fmt = "%g" if base == "float" else "%s" if base == "str" else "%s" if base == "bool" else "%d"
             if base == "str":
                 value_expr = cexpr
@@ -1557,7 +2308,8 @@ def c_print(expr: str, ctx: TranspileContext) -> str:
     if base == "bool":
         return f'printf("%s\\n", ({cexpr}) ? "true" : "false");'
     if base == "ptr":
-        return f'if ({cexpr}.addr == NULL) printf("None\\n"); else if (!zl_ptr_is_valid({cexpr})) printf("Freed\\n"); else printf("%p\\n", (void*){cexpr}.addr);'
+        release_after = "true" if expression_produces_owned_value(raw_expr, ctx) else "false"
+        return f"zl_print_ptr_value({cexpr}, {release_after});"
     if base == "List":
         list_arg = cexpr if re.match(r"^[A-Za-z_]\w*$", raw_expr) and raw_expr in ctx.list_refs else "&" + cexpr
         return f'zl_print_list({list_arg});'
@@ -1567,7 +2319,127 @@ def c_print(expr: str, ctx: TranspileContext) -> str:
 
 
 
-def declare_symbol(ctx: TranspileContext, name: str, typ: str, line_no: int, ptr_target: Optional[str] = None, is_const: bool = False, is_list_ref: bool = False) -> None:
+def type_has_managed_value(ztype: str, ctx: TranspileContext, seen: Optional[Set[str]] = None) -> bool:
+    normalized = ztype.replace(" ", "")
+    if is_fn_type(normalized) or ztype_base(normalized) == "ptr":
+        return True
+    if normalized not in ctx.structs:
+        return False
+    visited = set() if seen is None else set(seen)
+    if normalized in visited:
+        return False
+    visited.add(normalized)
+    return any(type_has_managed_value(field_type, ctx, visited) for field_type in ctx.structs[normalized].fields.values())
+
+
+def managed_struct_helper_name(ztype: str, suffix: str) -> str:
+    return f"{re.sub(r'[^A-Za-z0-9_]', '_', ztype)}_zl_{suffix}"
+
+
+def retain_expr_for_type(expr_c: str, ztype: str, ctx: TranspileContext) -> str:
+    if is_fn_type(ztype):
+        return f"zl_fn_retain({expr_c})"
+    if ztype_base(ztype) == "ptr":
+        return f"zl_ptr_retain({expr_c})"
+    if ztype in ctx.structs and type_has_managed_value(ztype, ctx):
+        return f"{managed_struct_helper_name(ztype, 'retain_value')}({expr_c})"
+    return expr_c
+
+
+def release_statement_for_type(expr_c: str, ztype: str, ctx: TranspileContext) -> Optional[str]:
+    if is_fn_type(ztype):
+        return f"zl_fn_release({expr_c});"
+    if ztype_base(ztype) == "ptr":
+        return f"zl_ptr_release({expr_c});"
+    if ztype in ctx.structs and type_has_managed_value(ztype, ctx):
+        return f"{managed_struct_helper_name(ztype, 'release')}(&{expr_c});"
+    return None
+
+
+def cell_drop_function_for_type(ztype: str, ctx: TranspileContext) -> Optional[str]:
+    if is_fn_type(ztype):
+        return "zl_mem_drop_fn_cell"
+    if ztype_base(ztype) == "ptr":
+        return "zl_mem_drop_ptr_cell"
+    if ztype in ctx.structs and type_has_managed_value(ztype, ctx):
+        return managed_struct_helper_name(ztype, "drop_cell")
+    return None
+
+
+def managed_cell_alloc_expr(ztype: str, ctx: TranspileContext) -> str:
+    ctyp = c_type(ztype)
+    runtime_type = type_name_for_runtime(ztype)
+    drop = cell_drop_function_for_type(ztype, ctx)
+    if drop:
+        return f'zl_mem_alloc_cell_drop(sizeof({ctyp}), "{runtime_type}", {drop})'
+    return f'zl_mem_alloc_cell(sizeof({ctyp}), "{runtime_type}")'
+
+
+def build_recursive_owned_ptr_value(expected_type: str, expr: str, name: str, ctx: TranspileContext, line_no: int) -> Tuple[List[str], str]:
+    """Build a value for a managed cell, allocating nested ptr layers as needed."""
+    actual_type = infer_type(expr, ctx)
+    try:
+        ensure_assignable(expected_type, actual_type, line_no, f"initializing `*{name}`")
+    except ZyenError:
+        inner_type = ptr_inner_type(expected_type)
+        if inner_type is None or ztype_base(actual_type) == "ptr":
+            raise
+        inner_lines, inner_value = build_recursive_owned_ptr_value(inner_type, expr, name, ctx, line_no)
+        ctx.auto_ptr_counter += 1
+        hidden = f"__zy_ptr_{name}_nested_{ctx.auto_ptr_counter}"
+        lines = list(inner_lines)
+        lines.append(f"ptr {hidden} = {managed_cell_alloc_expr(inner_type, ctx)};")
+        lines.append(f"(*({c_type(inner_type)}*){hidden}.addr) = {inner_value};")
+        return lines, hidden
+
+    assert_expr_literals_fit(expr, ctx, line_no, expected_type)
+    value_c = wrap_arg_for_expected(expr, "Any", ctx) if ztype_base(expected_type) == "Any" else transform_expr(expr, ctx)
+    if type_has_managed_value(expected_type, ctx) and not expression_produces_owned_value(expr, ctx):
+        value_c = retain_expr_for_type(value_c, expected_type, ctx)
+    return [], value_c
+
+
+def scope_cleanup_lines(entries: List[Tuple[str, str]], ctx: TranspileContext) -> List[str]:
+    lines: List[str] = []
+    for name, ztype in reversed(entries):
+        statement = release_statement_for_type(name, ztype, ctx)
+        if statement:
+            lines.append(statement)
+    return lines
+
+
+def all_owned_cleanup_lines(ctx: TranspileContext) -> List[str]:
+    lines: List[str] = []
+    for entries in reversed(ctx.owned_scope_stack):
+        lines.extend(scope_cleanup_lines(entries, ctx))
+    return lines
+
+
+def expression_produces_owned_value(expr: str, ctx: TranspileContext) -> bool:
+    """Whether a managed expression follows the owned-return convention."""
+    raw = strip_outer_parens(expr.strip())
+    cast = is_cast_expr(raw)
+    if cast:
+        if ztype_base(cast[0]) == "ptr" and re.search(r"\.pop\s*\([^)]*\)\s*$", cast[1]):
+            return True
+        return expression_produces_owned_value(cast[1], ctx)
+    if re.match(r"^(?:[A-Za-z_]\w*\.)?[A-Z][A-Za-z_]\w*\s*\{", raw):
+        return True
+    trailing = split_trailing_call(raw)
+    if trailing is None:
+        return False
+    callee, _args = trailing
+    if re.fullmatch(r"[A-Za-z_]\w*", callee) and callee in ctx.functions:
+        return type_has_managed_value(ctx.functions[callee].ret_type, ctx)
+    callee_type = infer_type(callee, ctx)
+    if is_fn_type(callee_type):
+        _params, ret_type = parse_fn_type(callee_type)
+        return type_has_managed_value(ret_type, ctx)
+    result_type = infer_type(raw, ctx)
+    return type_has_managed_value(result_type, ctx)
+
+
+def declare_symbol(ctx: TranspileContext, name: str, typ: str, line_no: int, ptr_target: Optional[str] = None, is_const: bool = False, is_list_ref: bool = False, owns_value: bool = True) -> None:
     if not ctx.scope_stack:
         ctx.scope_stack = [set()]
     current = ctx.scope_stack[-1]
@@ -1581,21 +2453,29 @@ def declare_symbol(ctx: TranspileContext, name: str, typ: str, line_no: int, ptr
         ctx.consts.add(name)
     if is_list_ref:
         ctx.list_refs.add(name)
+    managed_type = f"ptr<{ptr_target}>" if ztype_base(typ) == "ptr" and ptr_target else typ
+    if owns_value and type_has_managed_value(managed_type, ctx):
+        if not ctx.owned_scope_stack:
+            ctx.owned_scope_stack = [[]]
+        ctx.owned_scope_stack[-1].append((name, managed_type))
 
 
 def push_scope(ctx: TranspileContext) -> None:
     ctx.scope_stack.append(set())
+    ctx.owned_scope_stack.append([])
 
 
-def pop_scope(ctx: TranspileContext) -> None:
+def pop_scope(ctx: TranspileContext) -> List[Tuple[str, str]]:
     if not ctx.scope_stack:
-        return
+        return []
     names = ctx.scope_stack.pop()
+    owned = ctx.owned_scope_stack.pop() if ctx.owned_scope_stack else []
     for name in names:
         ctx.symbols.pop(name, None)
         ctx.ptr_targets.pop(name, None)
         ctx.consts.discard(name)
         ctx.list_refs.discard(name)
+    return owned
 
 def parse_owned_ptr_decl(line: str, ctx: TranspileContext, line_no: int, trailing_semicolon: bool = True) -> Optional[str]:
     """Parse pointer declarations with dereference initialization.
@@ -1614,15 +2494,14 @@ def parse_owned_ptr_decl(line: str, ctx: TranspileContext, line_no: int, trailin
     then `a` is None, identical to `let a: ptr<int>;`.
     """
     ending = ";" if trailing_semicolon else ""
-
-    none_pattern = r"(let|const)\s+\*\s*([A-Za-z_]\w*)\s*:\s*([A-Za-z_]\w*(?:\s*<\s*[A-Za-z_]\w*\s*>)?)"
-    if trailing_semicolon:
-        none_pattern += r";\s*$"
-    else:
-        none_pattern += r"\s*$"
-    nm = re.match(none_pattern, line)
-    if nm:
-        kind, name, explicit_type = nm.group(1), nm.group(2), nm.group(3).replace(" ", "")
+    parsed = parse_variable_declaration_syntax(line, trailing_semicolon=trailing_semicolon, owned_pointer=True)
+    if parsed is None:
+        return None
+    kind, name, explicit_type, expr = parsed
+    explicit_type = _strip_module_prefix_type(explicit_type) if explicit_type else None
+    if expr is None:
+        if not explicit_type:
+            raise ZyenError(f"line {line_no}: `let *{name};` needs a concrete `ptr<T>` type")
         if explicit_type.startswith("prt"):
             raise ZyenError(f"line {line_no}: unknown type `{explicit_type}`; did you mean `ptr`?")
         validate_user_type(explicit_type, line_no, "ptr declaration")
@@ -1634,18 +2513,6 @@ def parse_owned_ptr_decl(line: str, ctx: TranspileContext, line_no: int, trailin
         declare_symbol(ctx, name, "ptr", line_no, ptr_target=target_type, is_const=(kind == "const"))
         prefix = "const " if kind == "const" else ""
         return f'{prefix}ptr {name} = zl_none_ptr("{type_name_for_runtime(target_type)}"){ending}'
-
-    pattern = r"(let|const)\s+\*\s*([A-Za-z_]\w*)\s*(?::\s*([A-Za-z_]\w*(?:\s*<\s*[A-Za-z_]\w*\s*>)?))?\s*=\s*(.*)"
-    if trailing_semicolon:
-        pattern += r";\s*$"
-    else:
-        pattern += r"\s*$"
-    m = re.match(pattern, line)
-    if not m:
-        return None
-
-    kind, name, explicit_type, expr = m.group(1), m.group(2), m.group(3), m.group(4).strip()
-    explicit_type = explicit_type.replace(" ", "") if explicit_type else None
     if is_none_literal(expr):
         raise ZyenError(f"line {line_no}: `let *{name} ... = None;` has no location to write; use `let {name}: ptr<T>;` or `let {name}: ptr<T> = None;`")
 
@@ -1666,14 +2533,12 @@ def parse_owned_ptr_decl(line: str, ctx: TranspileContext, line_no: int, trailin
     else:
         target_type = infer_type(expr, ctx)
 
-    ensure_assignable(target_type, infer_type(expr, ctx), line_no, f"initializing `*{name}`")
-    assert_expr_literals_fit(expr, ctx, line_no, target_type)
     hidden_name = f"__zy_ptr_{name}"
-    rhs_c = wrap_arg_for_expected(expr, "Any", ctx) if ztype_base(target_type) == "Any" else transform_expr(expr, ctx)
-    storage_c = (
-        f"ptr {hidden_name} = zl_mem_alloc_cell(sizeof({c_type(target_type)}), \"{type_name_for_runtime(target_type)}\");\n"
-        f"(*({c_type(target_type)}*){hidden_name}.addr) = {rhs_c};"
-    )
+    nested_lines, stored_rhs = build_recursive_owned_ptr_value(target_type, expr, name, ctx, line_no)
+    storage_lines = list(nested_lines)
+    storage_lines.append(f"ptr {hidden_name} = {managed_cell_alloc_expr(target_type, ctx)};")
+    storage_lines.append(f"(*({c_type(target_type)}*){hidden_name}.addr) = {stored_rhs};")
+    storage_c = "\n".join(storage_lines)
     expr_c = hidden_name
 
     declare_symbol(ctx, name, "ptr", line_no, ptr_target=target_type, is_const=(kind == "const"))
@@ -1686,18 +2551,18 @@ def parse_var_decl(line: str, ctx: TranspileContext, line_no: int, trailing_semi
     if owned is not None:
         return owned
     ending = ";" if trailing_semicolon else ""
+    parsed = parse_variable_declaration_syntax(line, trailing_semicolon=trailing_semicolon)
+    if parsed is None:
+        raise ZyenError(f"line {line_no}: invalid declaration, expected `let name = value;` or `let name: type = value;`")
+    kind, name, explicit_type, expr = parsed
+    explicit_type = _strip_module_prefix_type(explicit_type) if explicit_type else None
 
     # Pointer variables may be declared first. They default to None.
     # Example: `let a: ptr<int>;` -> ptr a = None
-    decl_only = r"(let|const)\s+([A-Za-z_]\w*)\s*:\s*([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)?(?:\s*<\s*[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)?\s*>)?)"
-    if trailing_semicolon:
-        decl_only += r";\s*$"
-    else:
-        decl_only += r"\s*$"
-    dm = re.match(decl_only, line)
-    if dm:
-        kind, name, explicit_type = dm.group(1), dm.group(2), dm.group(3).replace(" ", "")
-        explicit_type = _strip_module_prefix_type(explicit_type)
+    # ZEP-0010: also accepts fn types like `let f: fn(int)->int;` (defaults to NULL).
+    if expr is None:
+        if not explicit_type:
+            raise ZyenError(f"line {line_no}: declaration `{name}` needs a type or initializer")
         if ctx.scope_stack and name in ctx.scope_stack[-1]:
             raise ZyenError(f"line {line_no}: variable `{name}` is already declared in this scope; use a new name or `set {name} = ...;`")
         if kind == "const":
@@ -1705,6 +2570,12 @@ def parse_var_decl(line: str, ctx: TranspileContext, line_no: int, trailing_semi
         if explicit_type.startswith("prt"):
             raise ZyenError(f"line {line_no}: unknown type `{explicit_type}`; did you mean `ptr`?")
         validate_user_type(explicit_type, line_no, "declaration")
+        # ZEP-0010 / ZEP-0013: fn-typed declaration without initializer
+        # defaults to a zero fat value (call=NULL, env=NULL).
+        if is_fn_type(explicit_type):
+            register_fn_typedef(ctx, explicit_type)
+            declare_symbol(ctx, name, explicit_type, line_no)
+            return f"{c_type(explicit_type)} {name} = zl_fn_none({json.dumps(explicit_type)}){ending}"
         base_type = ztype_base(explicit_type)
 
         if base_type == "ptr":
@@ -1732,18 +2603,6 @@ def parse_var_decl(line: str, ctx: TranspileContext, line_no: int, trailing_semi
 
         raise ZyenError(f"line {line_no}: declaration without value is not supported for `{explicit_type}`")
 
-    pattern = r"(let|const)\s+([A-Za-z_]\w*)\s*(?::\s*([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)?(?:\s*<\s*[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)?\s*>)?))?\s*=\s*(.*)"
-    if trailing_semicolon:
-        pattern += r";\s*$"
-    else:
-        pattern += r"\s*$"
-    m = re.match(pattern, line)
-    if not m:
-        raise ZyenError(f"line {line_no}: invalid declaration, expected `let name = value;` or `let name: type = value;`")
-    kind, name, explicit_type, expr = m.group(1), m.group(2), m.group(3), m.group(4).strip()
-    explicit_type = explicit_type.replace(" ", "") if explicit_type else None
-    if explicit_type:
-        explicit_type = _strip_module_prefix_type(explicit_type)
     if ctx.scope_stack and name in ctx.scope_stack[-1]:
         raise ZyenError(f"line {line_no}: variable `{name}` is already declared in this scope; use a new name or `set {name} = ...;`")
 
@@ -1771,11 +2630,18 @@ def parse_var_decl(line: str, ctx: TranspileContext, line_no: int, trailing_semi
         raise ZyenError(f"line {line_no}: unknown type `{explicit_type}`; did you mean `ptr`?")
     if explicit_type:
         validate_user_type(explicit_type, line_no, "declaration")
+        if is_fn_type(explicit_type):
+            register_fn_typedef(ctx, explicit_type)
     ptr_target = ptr_inner_type(explicit_type) if explicit_type else None
     if explicit_type:
         typ = ztype_base(explicit_type)
     else:
         typ = infer_type(expr, ctx)
+        if is_fn_type(typ):
+            register_fn_typedef(ctx, typ)
+    if ztype_base(typ) == "ptr":
+        ptr_target = ptr_target or ptr_inner_type(typ)
+        typ = "ptr"
 
     if is_array_literal(expr):
         if explicit_type and ztype_base(explicit_type) != "List":
@@ -1789,14 +2655,18 @@ def parse_var_decl(line: str, ctx: TranspileContext, line_no: int, trailing_semi
             lines.append(f"zl_list_append(&{name}, {wrap_arg_for_expected(value, 'Any', ctx)});")
         return "\n".join(lines)
     if is_none_literal(expr):
-        if typ not in {"ptr", "none"}:
-            raise ZyenError(f"line {line_no}: None can only be assigned to ptr variables in v0.1")
-        typ = "ptr"
-        if not ptr_target:
-            raise ZyenError(f"line {line_no}: None ptr needs a concrete type, e.g. `let p: ptr<int> = None;`")
-        target_type = ptr_target
-        ptr_target = target_type
-        expr_c = f'zl_none_ptr("{type_name_for_runtime(target_type)}")'
+        if explicit_type and is_fn_type(explicit_type):
+            typ = explicit_type
+            expr_c = f"zl_fn_none({json.dumps(explicit_type)})"
+        else:
+            if typ not in {"ptr", "none"}:
+                raise ZyenError(f"line {line_no}: None can only be assigned to ptr or fn variables")
+            typ = "ptr"
+            if not ptr_target:
+                raise ZyenError(f"line {line_no}: None ptr needs a concrete type, e.g. `let p: ptr<int> = None;`")
+            target_type = ptr_target
+            ptr_target = target_type
+            expr_c = f'zl_none_ptr("{type_name_for_runtime(target_type)}")'
     elif typ == "ptr" and expr.startswith("&"):
         target_var = expr[1:].strip()
         target_type = ptr_target or ctx.symbols.get(target_var, "void")
@@ -1814,9 +2684,20 @@ def parse_var_decl(line: str, ctx: TranspileContext, line_no: int, trailing_semi
         if typ == "Any" and not explicit_type:
             raise ZyenError(f"line {line_no}: dynamic List value cannot be stored without a concrete cast; use `(int)`, `(str)`, `(bool)`, `(float)`, or print it directly")
         if explicit_type:
+            ensure_c_module_assignable(
+                explicit_type,
+                infer_type(expr, ctx),
+                ctx,
+                line_no,
+                f"declaration of `{name}`",
+            )
             ensure_assignable(explicit_type, infer_type(expr, ctx), line_no, f"declaration of `{name}`")
         assert_expr_literals_fit(expr, ctx, line_no, typ)
-        expr_c = transform_expr(expr, ctx)
+        # ZEP-0013: bare named-fn RHS coerces to fat value.
+        coerced_fn = coerce_named_fn_to_fnval(expr, explicit_type or "", ctx) if explicit_type else None
+        if coerced_fn is None and explicit_type is None and is_fn_type(typ):
+            coerced_fn = coerce_named_fn_to_fnval(expr, typ, ctx)
+        expr_c = coerced_fn if coerced_fn is not None else transform_expr(expr, ctx)
 
     # If a ptr variable is initialized from an address, another ptr, or List.ptr(),
     # track the target type for later `*p` operations.
@@ -1827,6 +2708,12 @@ def parse_var_decl(line: str, ctx: TranspileContext, line_no: int, trailing_semi
             ptr_target = ctx.ptr_targets.get(expr, "void")
         elif re.match(r"^[A-Za-z_]\w*\.(ptr|append_ptr)\s*\(", expr):
             ptr_target = "Any"  # internal List cell
+    managed_decl_type = f"ptr<{ptr_target}>" if ztype_base(typ) == "ptr" and ptr_target else typ
+    initializer_is_owned = expression_produces_owned_value(expr, ctx)
+    if typ in ctx.structs and expr == typ:
+        initializer_is_owned = True
+    if type_has_managed_value(managed_decl_type, ctx) and not initializer_is_owned:
+        expr_c = retain_expr_for_type(expr_c, managed_decl_type, ctx)
     declare_symbol(ctx, name, typ, line_no, ptr_target=ptr_target, is_const=(kind == "const"))
     decl_type = c_type(typ)
     # Avoid invalid C like `const const char* z = ...` when Zyen `const`
@@ -1852,13 +2739,13 @@ def ptr_constructor_expr(expr: str) -> Optional[str]:
     expr = expr.strip()
     if expr == "ptr":
         return "__bare_ptr__"
-    m = re.match(r"^ptr\s*<\s*([A-Za-z_]\w*)\s*>$", expr)
-    if m:
-        return m.group(1)
+    inner = ptr_inner_type(expr.replace(" ", ""))
+    if inner is not None:
+        return inner
     return None
 
 
-def auto_storage_for_deref(name: str, target_type: str, rhs_c: str, ctx: TranspileContext) -> str:
+def auto_storage_for_deref(name: str, target_type: str, rhs_c: str, rhs_is_owned: bool, ctx: TranspileContext) -> str:
     """Emit lazy storage for assigning through an empty pointer.
 
     This implements the intentionally simple Zyen rule:
@@ -1872,11 +2759,9 @@ def auto_storage_for_deref(name: str, target_type: str, rhs_c: str, ctx: Transpi
     ctx.auto_ptr_counter += 1
     hidden = f"__zy_auto_ptr_{name}_{ctx.auto_ptr_counter}"
     ctyp = c_type(target_type)
-    runtime_type = type_name_for_runtime(target_type)
-    return (
-        f"if (!zl_ptr_is_valid({name})) {{ {name} = zl_mem_alloc_cell(sizeof({ctyp}), \"{runtime_type}\"); }}\n"
-        f"(*({ctyp}*)zl_ptr_checked_addr({name}, \"{name}\")) = {rhs_c};"
-    )
+    lhs_c = f"(*({ctyp}*)zl_ptr_checked_addr({name}, \"{name}\"))"
+    assignment = managed_assignment_c(lhs_c, target_type, rhs_c, rhs_is_owned, ctx)
+    return f"if ({name}.addr == NULL) {{ {name} = {managed_cell_alloc_expr(target_type, ctx)}; }}\n{assignment}"
 
 
 
@@ -1927,6 +2812,22 @@ def c_compound_assignment(lhs: str, op: str, rhs: str, ctx: TranspileContext, li
 
     raise ZyenError(f"line {line_no}: compound assignment is not supported for `{lhs_type}`")
 
+
+def managed_assignment_c(lhs_c: str, lhs_type: str, rhs_c: str, rhs_is_owned: bool, ctx: TranspileContext) -> str:
+    if not type_has_managed_value(lhs_type, ctx):
+        return f"{lhs_c} = {rhs_c};"
+    if not rhs_is_owned:
+        if is_fn_type(lhs_type):
+            return f"zl_fn_assign(&{lhs_c}, {rhs_c});"
+        if ztype_base(lhs_type) == "ptr":
+            return f"zl_ptr_assign(&{lhs_c}, {rhs_c});"
+        return f"{managed_struct_helper_name(lhs_type, 'assign')}(&{lhs_c}, {rhs_c});"
+
+    ctx.managed_temp_counter += 1
+    temp = f"__zl_move_{ctx.managed_temp_counter}"
+    release = release_statement_for_type(lhs_c, lhs_type, ctx)
+    return f"{c_type(lhs_type)} {temp} = {rhs_c};\n{release}\n{lhs_c} = {temp};"
+
 def parse_set(line: str, ctx: TranspileContext, line_no: int) -> str:
     cm = re.match(r"set\s+(.+?)\s*(\+=|-=|\*=|/=)\s*(.*);\s*$", line)
     if cm:
@@ -1939,16 +2840,26 @@ def parse_set(line: str, ctx: TranspileContext, line_no: int) -> str:
     if const_name in ctx.consts:
         raise ZyenError(f"line {line_no}: cannot modify const `{const_name}`")
 
+    if re.fullmatch(r"[A-Za-z_]\w*", lhs):
+        fn_type = ctx.symbols.get(lhs, "")
+        if is_fn_type(fn_type):
+            if is_none_literal(rhs):
+                return f"zl_fn_clear(&{lhs});"
+            ensure_assignable(fn_type, infer_type(rhs, ctx), line_no, f"assignment to `{lhs}`")
+            coerced = coerce_named_fn_to_fnval(rhs, fn_type, ctx)
+            rhs_c = coerced if coerced is not None else transform_expr(rhs, ctx)
+            return managed_assignment_c(lhs, fn_type, rhs_c, expression_produces_owned_value(rhs, ctx), ctx)
+
     # Pointer assignment: None or address assignment.
     if re.match(r"^[A-Za-z_]\w*$", lhs) and ctx.symbols.get(lhs) == "ptr":
         target_type = ctx.ptr_targets.get(lhs, "void")
         if is_none_literal(rhs):
-            return f'{lhs} = zl_none_ptr("{type_name_for_runtime(target_type)}");'
+            return f'zl_ptr_release({lhs});\n{lhs} = zl_none_ptr("{type_name_for_runtime(target_type)}");'
         if rhs.startswith("&"):
             target_var = rhs[1:].strip()
             target_type = ctx.symbols.get(target_var, target_type)
             ctx.ptr_targets[lhs] = target_type
-            return f'{lhs} = zl_ptr(&{target_var}, "{type_name_for_runtime(target_type)}");'
+            return f'zl_ptr_assign(&{lhs}, zl_ptr(&{target_var}, "{type_name_for_runtime(target_type)}"));'
 
     # Dereference assignment. If the pointer is None, Zyen lazily creates one
     # hidden cell for it. This makes this intuitive pattern valid:
@@ -1964,7 +2875,17 @@ def parse_set(line: str, ctx: TranspileContext, line_no: int) -> str:
         ensure_assignable(target_type, rhs_type, line_no, f"assignment to `*{name}`")
         assert_expr_literals_fit(rhs, ctx, line_no, target_type)
         rhs_c = wrap_arg_for_expected(rhs, "Any", ctx) if ztype_base(target_type) == "Any" else transform_expr(rhs, ctx)
-        return auto_storage_for_deref(name, target_type, rhs_c, ctx)
+        return auto_storage_for_deref(name, target_type, rhs_c, expression_produces_owned_value(rhs, ctx), ctx)
+
+    typed_deref = deref_info(lhs, ctx)
+    if typed_deref is not None:
+        pointer_c, target_type, label = typed_deref
+        if target_type == "void":
+            raise ZyenError(f"line {line_no}: cannot assign through `ptr<void>`; cast `{label}` to a concrete ptr<T> first")
+        ensure_assignable(target_type, infer_type(rhs, ctx), line_no, f"assignment through `{lhs}`")
+        rhs_c = wrap_arg_for_expected(rhs, "Any", ctx) if ztype_base(target_type) == "Any" else transform_expr(rhs, ctx)
+        lhs_c = f"(*({c_type(target_type)}*)zl_ptr_checked_addr({pointer_c}, \"{label}\"))"
+        return managed_assignment_c(lhs_c, target_type, rhs_c, expression_produces_owned_value(rhs, ctx), ctx)
 
     if lhs.startswith("*"):
         name = lhs[1:].strip()
@@ -1972,7 +2893,14 @@ def parse_set(line: str, ctx: TranspileContext, line_no: int) -> str:
 
     expected = ctx.symbols.get(const_name, "")
     assert_expr_literals_fit(rhs, ctx, line_no, expected)
-    return f"{transform_expr(lhs, ctx)} = {transform_expr(rhs, ctx)};"
+    lhs_type = infer_type(lhs, ctx)
+    rhs_type = infer_type(rhs, ctx)
+    ensure_c_module_assignable(lhs_type, rhs_type, ctx, line_no, f"assignment to `{lhs}`")
+    # ZEP-0013: bare named-fn RHS on fn-typed LHS coerces to fat value.
+    lhs_type = infer_type(lhs, ctx)
+    coerced_fn = coerce_named_fn_to_fnval(rhs, lhs_type, ctx) if lhs_type else None
+    rhs_c = coerced_fn if coerced_fn is not None else transform_expr(rhs, ctx)
+    return managed_assignment_c(transform_expr(lhs, ctx), lhs_type, rhs_c, expression_produces_owned_value(rhs, ctx), ctx)
 
 
 def parse_for(line: str, ctx: TranspileContext, line_no: int) -> str:
@@ -2019,7 +2947,30 @@ def transform_statement(line: str, ctx: TranspileContext, line_no: int) -> str:
         if not m:
             raise ZyenError(f"line {line_no}: return statement must end with `;`")
         expr = (m.group(1) or "").strip()
-        return "return;" if not expr else f"return {transform_expr(expr, ctx)};"
+        if not expr:
+            cleanup = all_owned_cleanup_lines(ctx)
+            return "\n".join(cleanup + ["return;"])
+        # ZEP-0013: bare named-fn returned where ret type is fn type → fat value.
+        ret_type = ctx.current_return_type
+        if ztype_base(ret_type) == "ptr" and re.fullmatch(r"&\s*[A-Za-z_]\w*", expr):
+            raise ZyenError(f"line {line_no}: cannot return a pointer to local stack storage")
+        actual_type = infer_type(expr, ctx)
+        # The legacy scalar inference pass intentionally falls back to int for
+        # some valid unary/module expressions. Managed returns need exact
+        # ownership and ABI information, so enforce those here without
+        # regressing existing scalar programs.
+        if type_has_managed_value(ret_type, ctx) or ret_type in ctx.structs:
+            ensure_assignable(ret_type, actual_type, line_no, "return value")
+        coerced_fn = coerce_named_fn_to_fnval(expr, ret_type, ctx) if ret_type else None
+        value_c = coerced_fn if coerced_fn is not None else transform_expr(expr, ctx)
+        if type_has_managed_value(ret_type, ctx) and not expression_produces_owned_value(expr, ctx):
+            value_c = retain_expr_for_type(value_c, ret_type, ctx)
+        cleanup = all_owned_cleanup_lines(ctx)
+        if not cleanup:
+            return f"return {value_c};"
+        ctx.managed_temp_counter += 1
+        temp = f"__zl_return_{ctx.managed_temp_counter}"
+        return "\n".join([f"{c_type(ret_type)} {temp} = {value_c};"] + cleanup + [f"return {temp};"])
     pm = re.match(r"print\s*\((.*)\)\s*;\s*$", line)
     if pm:
         return c_print(pm.group(1), ctx)
@@ -2052,13 +3003,461 @@ def c_function_signature(name: str, ret_type: str, params: Dict[str, str]) -> st
     return f"{c_type(ret_type)} {name}({param_c})"
 
 
+def emit_struct_forward_decls(ctx: TranspileContext) -> List[str]:
+    """Emit `typedef struct X X;` for every struct.
+
+    These let fn typedefs reference struct types whose full layout (with maybe
+    fn-typed fields) is emitted later.
+    """
+    out: List[str] = []
+    for struct in ctx.structs.values():
+        if struct.name in ctx.external_structs:
+            continue
+        out.append(f"typedef struct {struct.name} {struct.name};")
+    if out:
+        out.append("")
+    return out
+
+
 def emit_struct_defs(ctx: TranspileContext) -> List[str]:
     out: List[str] = []
     for struct in ctx.structs.values():
-        out.append(f"typedef struct {struct.name} {{")
+        if struct.name in ctx.external_structs:
+            continue
+        out.append(f"struct {struct.name} {{")
         for field_name, field_type in struct.fields.items():
             out.append(f"    {c_type(field_type)} {field_name};")
-        out.append(f"}} {struct.name};")
+        out.append(f"}};")
+        out.append("")
+    return out
+
+
+def emit_struct_management(ctx: TranspileContext) -> List[str]:
+    """Emit recursive ARC helpers for structs that contain managed fields."""
+    managed = [struct for struct in ctx.structs.values() if type_has_managed_value(struct.name, ctx)]
+    if not managed:
+        return []
+    out: List[str] = []
+    for struct in managed:
+        retain_name = managed_struct_helper_name(struct.name, "retain_value")
+        release_name = managed_struct_helper_name(struct.name, "release")
+        assign_name = managed_struct_helper_name(struct.name, "assign")
+        drop_name = managed_struct_helper_name(struct.name, "drop_cell")
+        out.append(f"static inline {struct.name} {retain_name}({struct.name} value);")
+        out.append(f"static inline void {release_name}({struct.name}* value);")
+        out.append(f"static inline void {assign_name}({struct.name}* target, {struct.name} value);")
+        out.append(f"static inline void {drop_name}(void* payload);")
+    out.append("")
+    for struct in managed:
+        retain_name = managed_struct_helper_name(struct.name, "retain_value")
+        release_name = managed_struct_helper_name(struct.name, "release")
+        assign_name = managed_struct_helper_name(struct.name, "assign")
+        drop_name = managed_struct_helper_name(struct.name, "drop_cell")
+        out.append(f"static inline {struct.name} {retain_name}({struct.name} value) {{")
+        for field_name, field_type in struct.fields.items():
+            if type_has_managed_value(field_type, ctx):
+                out.append(f"    value.{field_name} = {retain_expr_for_type(f'value.{field_name}', field_type, ctx)};")
+        out.append("    return value;")
+        out.append("}")
+        out.append(f"static inline void {release_name}({struct.name}* value) {{")
+        out.append("    if (!value) return;")
+        for field_name, field_type in reversed(list(struct.fields.items())):
+            statement = release_statement_for_type(f"value->{field_name}", field_type, ctx)
+            if statement:
+                out.append(f"    {statement}")
+        out.append(f"    *value = ({struct.name}){{0}};")
+        out.append("}")
+        out.append(f"static inline void {assign_name}({struct.name}* target, {struct.name} value) {{")
+        out.append("    if (!target) return;")
+        out.append(f"    {struct.name} retained = {retain_name}(value);")
+        out.append(f"    {release_name}(target);")
+        out.append("    *target = retained;")
+        out.append("}")
+        out.append(f"static inline void {drop_name}(void* payload) {{")
+        out.append("    if (!payload) return;")
+        out.append(f"    {release_name}(({struct.name}*)payload);")
+        out.append("    free(payload);")
+        out.append("}")
+        out.append("")
+    return out
+
+
+_ZL_KEYWORDS_FOR_CAPTURE = {
+    "if", "else", "for", "let", "set", "return", "true", "false", "this",
+    "int", "float", "bool", "str", "ptr", "void", "None", "const", "break",
+    "continue", "print", "pass", "stop", "fn", "struct", "import", "as",
+    "char", "List", "Any", "ptrstruct", "sizeof", "NULL", "main",
+}
+
+
+def scan_nested_fns(ctx: TranspileContext, lines: List[Tuple[int, str]]) -> None:
+    """ZEP-0013 pre-pass: discover every nested `fn` definition, compute
+    captures by scope analysis, and register a lifted top-level fn for it.
+
+    Run AFTER collect_signatures (we need ctx.functions populated) and BEFORE
+    collect_fn_typedefs so the lifted typedef is known to the emit pipeline.
+    """
+    i = 0
+    while i < len(lines):
+        line_no, line = lines[i]
+        parsed = parse_fn_header_line(line)
+        if not (parsed and parsed[3] == "defn"):
+            i += 1
+            continue
+        outer_name = parsed[0]
+        outer_params_text = parsed[1]
+        try:
+            outer_params, _ = parse_params(outer_params_text, line_no)
+        except ZyenError:
+            i += 1
+            continue
+        scope: Dict[str, str] = dict(outer_params)
+        i += 1
+        depth = 1
+        while i < len(lines) and depth > 0:
+            ln_no, l = lines[i]
+            inner_parsed = parse_fn_header_line(l)
+            is_nested_defn = bool(inner_parsed and inner_parsed[3] == "defn")
+            if is_nested_defn:
+                inner_name, inner_params_text, inner_ret, _ = inner_parsed
+                inner_params, _ = parse_params(inner_params_text, ln_no)
+                # Collect inner body lines from header through matching `}`.
+                body_lines: List[Tuple[int, str]] = [(ln_no, l)]
+                inner_depth = l.count("{") - l.count("}")
+                j = i + 1
+                while j < len(lines) and inner_depth > 0:
+                    body_lines.append(lines[j])
+                    inner_depth += lines[j][1].count("{") - lines[j][1].count("}")
+                    j += 1
+                # Capture analysis: identifiers used in body that resolve to
+                # the outer scope but aren't bound inside the inner fn.
+                inner_local_bindings = set(inner_params.keys())
+                for _bn, bl in body_lines[1:]:
+                    for m_let in re.finditer(r"\blet\s+([A-Za-z_]\w*)\b", bl):
+                        inner_local_bindings.add(m_let.group(1))
+                    for m_for in re.finditer(r"\bfor\s*\(\s*let\s+([A-Za-z_]\w*)\b", bl):
+                        inner_local_bindings.add(m_for.group(1))
+                used: List[str] = []
+                seen: set[str] = set()
+                for _bn, bl in body_lines:
+                    # Remove string literals before identifier scan to avoid
+                    # capturing names that only appear inside quotes.
+                    sl = re.sub(r'"(?:[^"\\]|\\.)*"', '""', bl)
+                    for m_id in re.finditer(r"\b([A-Za-z_]\w*)\b", sl):
+                        var = m_id.group(1)
+                        if var not in seen:
+                            seen.add(var)
+                            used.append(var)
+                captures: List[Tuple[str, str]] = []
+                for var in used:
+                    if var in inner_local_bindings:
+                        continue
+                    if var in _ZL_KEYWORDS_FOR_CAPTURE:
+                        continue
+                    if var in ctx.functions or var in ctx.structs or var in ctx.consts:
+                        continue
+                    if var in scope:
+                        captures.append((var, scope[var]))
+                lifted_name = f"{outer_name}_{inner_name}_zllifted"
+                env_struct = f"ZL_env_{outer_name}_{inner_name}"
+                # Register the lifted fn's *own* fn type as a typedef so the
+                # outer fn's fat-value construction can name it.
+                inner_param_types = list(inner_params.values())
+                fn_type = f"fn({','.join(inner_param_types)})->{inner_ret}"
+                register_fn_typedef(ctx, fn_type)
+                ctx.lifted_fn_index[(outer_name, inner_name)] = len(ctx.lifted_fns)
+                ctx.lifted_fns.append({
+                    "outer": outer_name,
+                    "inner": inner_name,
+                    "lifted_name": lifted_name,
+                    "env_struct": env_struct,
+                    "captures": captures,
+                    "params": inner_params,
+                    "ret_type": inner_ret,
+                    "header_line_no": ln_no,
+                    # body excluding header line and final closing `}` line
+                    "body_lines": body_lines[1:-1] if len(body_lines) >= 2 else [],
+                })
+                # collect_signatures saw `fn back_fn(...)` and registered it
+                # as a top-level fn. Remove it: nested fns are local fat-value
+                # symbols of the outer fn, never callable by their bare name
+                # outside it.
+                if inner_name in ctx.functions:
+                    del ctx.functions[inner_name]
+                # Advance outer walker past the entire nested fn block.
+                # The outer-depth counting at the bottom of this loop would
+                # otherwise process every line in body_lines and miscount.
+                i = j
+                continue
+            # Track bindings in outer scope for later nested-fn analysis.
+            let_m = re.match(r"\s*(?:let|const)\s+([A-Za-z_]\w*)\s*(?::\s*([^=;]+?))?\s*(?:=\s*(.*))?;\s*$", l)
+            if let_m:
+                var = let_m.group(1)
+                explicit = (let_m.group(2) or "").strip().replace(" ", "")
+                rhs = (let_m.group(3) or "").strip()
+                if explicit:
+                    vtype = explicit
+                elif rhs:
+                    saved_symbols = ctx.symbols
+                    ctx.symbols = dict(scope)
+                    try:
+                        vtype = infer_type(rhs, ctx)
+                    finally:
+                        ctx.symbols = saved_symbols
+                else:
+                    vtype = "int"
+                scope[var] = vtype
+            depth += l.count("{") - l.count("}")
+            i += 1
+
+
+def emit_lifted_env_structs(ctx: TranspileContext) -> List[str]:
+    """ZEP-0013: emit one struct per lifted closure to hold its captured state."""
+    out: List[str] = []
+    for lf in ctx.lifted_fns:
+        out.append(f"typedef struct {lf['env_struct']} {{")
+        for cap_name, cap_type in lf["captures"]:
+            out.append(f"    {c_type(cap_type)} {cap_name};")
+        if not lf["captures"]:
+            out.append("    int _zl_empty;")
+        out.append(f"}} {lf['env_struct']};")
+    if ctx.lifted_fns:
+        out.append("")
+    for lf in ctx.lifted_fns:
+        out.append(f"static void {lf['env_struct']}_zldrop(void* payload) {{")
+        out.append(f"    {lf['env_struct']}* env = ({lf['env_struct']}*)payload;")
+        out.append("    if (!env) return;")
+        for cap_name, cap_type in reversed(lf["captures"]):
+            statement = release_statement_for_type(f"env->{cap_name}", cap_type, ctx)
+            if statement:
+                out.append(f"    {statement}")
+        out.append("    free(env);")
+        out.append("}")
+    if out:
+        out.append("")
+    return out
+
+
+def emit_lifted_fn_prototypes(ctx: TranspileContext) -> List[str]:
+    """ZEP-0013: forward-declare every lifted closure body so outer fns can
+    reference it when building the fat value."""
+    out: List[str] = []
+    for lf in ctx.lifted_fns:
+        params = lf["params"]
+        param_types = list(params.values())
+        param_names = list(params.keys())
+        if param_types:
+            c_params = "void* env_v, " + ", ".join(
+                f"{c_param_type(t)} {n}" for t, n in zip(param_types, param_names)
+            )
+        else:
+            c_params = "void* env_v"
+        ret_c = c_type(lf["ret_type"])
+        out.append(f"static {ret_c} {lf['lifted_name']}({c_params});")
+    if out:
+        out.append("")
+    return out
+
+
+def emit_lifted_fn_bodies(ctx: TranspileContext, all_lines: List[Tuple[int, str]]) -> List[str]:
+    """ZEP-0013: emit each lifted closure's body. Captures are renamed in the
+    source to `env->capture_name` references; the inner fn's own params are
+    declared via the standard signature path."""
+    out: List[str] = []
+    for lf in ctx.lifted_fns:
+        captures = lf["captures"]
+        params = lf["params"]
+        param_types = list(params.values())
+        param_names = list(params.keys())
+        if param_types:
+            c_params = "void* env_v, " + ", ".join(
+                f"{c_param_type(t)} {n}" for t, n in zip(param_types, param_names)
+            )
+        else:
+            c_params = "void* env_v"
+        ret_c = c_type(lf["ret_type"])
+        out.append(f"static {ret_c} {lf['lifted_name']}({c_params}) {{")
+        out.append(f"    {lf['env_struct']}* __zl_env = ({lf['env_struct']}*)env_v;")
+        if not captures:
+            out.append("    (void)__zl_env;")
+        # Hoist each capture into a local var so the body can reference it by
+        # its original name without any textual rewrite. Side effect: captures
+        # are read-only inside the closure (any `set <capture> = ...` mutates
+        # the local copy, not the env). That matches the documented semantics.
+        # Use the existing emit_function_body to process the body lines. Seed
+        # scope with inner params + captures so infer_type sees correct types.
+        saved_symbols = dict(ctx.symbols)
+        saved_ptr_targets = dict(ctx.ptr_targets)
+        saved_consts = set(ctx.consts)
+        saved_list_refs = set(ctx.list_refs)
+        saved_scope_stack = list(ctx.scope_stack)
+        saved_owned_scope_stack = [list(scope) for scope in ctx.owned_scope_stack]
+        saved_loop_depth = ctx.loop_depth
+        saved_current = ctx.current_function
+        saved_return_type = ctx.current_return_type
+        ctx.symbols = dict(params)
+        ctx.ptr_targets = {}
+        ctx.consts = set()
+        ctx.list_refs = {name for name, ztype in params.items() if ztype_base(ztype) == "List"}
+        for param_name, param_type in params.items():
+            inner = ptr_inner_type(param_type)
+            if inner:
+                ctx.ptr_targets[param_name] = inner
+        for cap_name, cap_type in captures:
+            ctx.symbols[cap_name] = cap_type
+            inner = ptr_inner_type(cap_type)
+            if inner:
+                ctx.ptr_targets[cap_name] = inner
+            if ztype_base(cap_type) == "List":
+                ctx.list_refs.add(cap_name)
+            out.append(f"    {c_type(cap_type)} {cap_name} = __zl_env->{cap_name};")
+        ctx.scope_stack = [set(params.keys()) | {c[0] for c in captures}]
+        ctx.owned_scope_stack = [[]]
+        ctx.loop_depth = 0
+        ctx.current_function = None
+        ctx.current_return_type = lf["ret_type"]
+        wrapped = list(lf["body_lines"]) + [(lf["header_line_no"], "}")]
+        emit_function_body(wrapped, 0, out, ctx)
+        ctx.symbols = saved_symbols
+        ctx.ptr_targets = saved_ptr_targets
+        ctx.consts = saved_consts
+        ctx.list_refs = saved_list_refs
+        ctx.scope_stack = saved_scope_stack
+        ctx.owned_scope_stack = saved_owned_scope_stack
+        ctx.loop_depth = saved_loop_depth
+        ctx.current_function = saved_current
+        ctx.current_return_type = saved_return_type
+        out.append("")
+    return out
+
+
+def collect_fn_typedefs(ctx: TranspileContext, lines: List[Tuple[int, str]]) -> None:
+    """ZEP-0010: walk every place a fn-type can appear and register the typedef.
+
+    Must run before emit_struct_defs / emit_function_prototypes so the C typedef
+    appears before any use.
+    """
+    for fn in ctx.functions.values():
+        if is_fn_type(fn.ret_type):
+            register_fn_typedef(ctx, fn.ret_type)
+        for t in fn.params.values():
+            if is_fn_type(t):
+                register_fn_typedef(ctx, t)
+        # Also register the fn's own signature as an fn type so
+        # `let h = some_named_fn;` (inferred type) finds the typedef.
+        # Skip struct methods — `this` is internal and not user-callable as fn ptr.
+        if "this" not in fn.params:
+            own_sig = f"fn({','.join(fn.params.values())})->{fn.ret_type}"
+            register_fn_typedef(ctx, own_sig)
+    for struct in ctx.structs.values():
+        for t in struct.fields.values():
+            if is_fn_type(t):
+                register_fn_typedef(ctx, t)
+    for _line_no, line in lines:
+        parsed = parse_variable_declaration_syntax(line, trailing_semicolon=True)
+        if parsed and parsed[2] and is_fn_type(parsed[2]):
+            register_fn_typedef(ctx, _strip_module_prefix_type(parsed[2]))
+
+
+def emit_fn_typedefs(ctx: TranspileContext) -> List[str]:
+    """Emit one checked call helper per unique source-level fn signature."""
+    out: List[str] = []
+    for _tname, ztype in ctx.fn_typedefs.items():
+        param_types, ret_type = parse_fn_type(ztype)
+        call_type = fn_call_pointer_name(ztype)
+        helper = fn_call_helper_name(ztype)
+        owned_helper = fn_owned_call_helper_name(ztype)
+        call_params = ["void* env"] + [c_param_type(param) for param in param_types]
+        helper_params = ["ZL_Function value"] + [
+            f"{c_param_type(param)} arg{index}" for index, param in enumerate(param_types)
+        ]
+        args = ", ".join(f"arg{index}" for index in range(len(param_types)))
+        invoke_args = f"value.env, {args}" if args else "value.env"
+        signature = json.dumps(ztype.replace(" ", ""))
+        out.append(f"typedef {c_type(ret_type)} (*{call_type})({', '.join(call_params)});")
+        out.append(f"static inline {c_type(ret_type)} {helper}({', '.join(helper_params)}) {{")
+        out.append(f"    zl_fn_require(value, {signature});")
+        if ret_type == "void":
+            out.append(f"    (({call_type})value.call)({invoke_args});")
+        else:
+            out.append(f"    return (({call_type})value.call)({invoke_args});")
+        out.append("}")
+        out.append(f"static inline {c_type(ret_type)} {owned_helper}({', '.join(helper_params)}) {{")
+        out.append(f"    zl_fn_require(value, {signature});")
+        if ret_type == "void":
+            out.append(f"    (({call_type})value.call)({invoke_args});")
+            out.append("    zl_fn_release(value);")
+        else:
+            out.append(f"    {c_type(ret_type)} result = (({call_type})value.call)({invoke_args});")
+            out.append("    zl_fn_release(value);")
+            out.append("    return result;")
+        out.append("}")
+        managed_mask = 0
+        for index, param_type in enumerate(param_types):
+            if type_has_managed_value(param_type, ctx):
+                managed_mask |= 1 << index
+        subset = managed_mask
+        while subset:
+            for owns_callee in (False, True):
+                variant = fn_call_variant_name(ztype, subset, owns_callee)
+                out.append(f"static inline {c_type(ret_type)} {variant}({', '.join(helper_params)}) {{")
+                out.append(f"    zl_fn_require(value, {signature});")
+                if ret_type == "void":
+                    out.append(f"    (({call_type})value.call)({invoke_args});")
+                else:
+                    out.append(f"    {c_type(ret_type)} result = (({call_type})value.call)({invoke_args});")
+                for index in range(len(param_types) - 1, -1, -1):
+                    if subset & (1 << index):
+                        statement = release_statement_for_type(f"arg{index}", param_types[index], ctx)
+                        if statement:
+                            out.append(f"    {statement}")
+                if owns_callee:
+                    out.append("    zl_fn_release(value);")
+                if ret_type != "void":
+                    out.append("    return result;")
+                out.append("}")
+            subset = (subset - 1) & managed_mask
+    if out:
+        out.append("")
+    return out
+
+
+def emit_fn_thunks(ctx: TranspileContext) -> List[str]:
+    """ZEP-0013: emit a `<name>_zlthunk` + const fat literal `<name>_zlfnval`
+    for every top-level fn whose own signature is registered as a fn type.
+
+    The thunk accepts a leading `void* env` it ignores, so it fits the fat
+    call_ptr slot for any caller that holds a fn value.
+    """
+    out: List[str] = []
+    for fn in ctx.functions.values():
+        if "this" in fn.params:
+            continue
+        own_sig = f"fn({','.join(fn.params.values())})->{fn.ret_type}"
+        tname = fn_typedef_name(own_sig)
+        if tname not in ctx.fn_typedefs:
+            continue
+        param_types = list(fn.params.values())
+        param_names = list(fn.params.keys())
+        if param_types:
+            c_params = "void* env, " + ", ".join(
+                f"{c_param_type(t)} {n}" for t, n in zip(param_types, param_names)
+            )
+            forward = ", ".join(param_names)
+        else:
+            c_params = "void* env"
+            forward = ""
+        ret_c = c_type(fn.ret_type)
+        if fn.ret_type == "void":
+            out.append(f"static {ret_c} {fn.name}_zlthunk({c_params}) {{ (void)env; {fn.name}({forward}); }}")
+        else:
+            out.append(f"static {ret_c} {fn.name}_zlthunk({c_params}) {{ (void)env; return {fn.name}({forward}); }}")
+        signature = json.dumps(own_sig.replace(" ", ""))
+        out.append(
+            f"__attribute__((unused)) static ZL_Function {fn.name}_zlfnval = "
+            f"{{ (ZL_GenericFn){fn.name}_zlthunk, NULL, NULL, {signature} }};"
+        )
+    if out:
         out.append("")
     return out
 
@@ -2072,11 +3471,102 @@ def emit_function_prototypes(ctx: TranspileContext) -> List[str]:
     return out
 
 
+def emit_owned_argument_wrappers(ctx: TranspileContext) -> List[str]:
+    """Release owned temporary arguments after a borrowed-parameter call."""
+    out: List[str] = []
+    for fn in ctx.functions.values():
+        params = list(fn.params.items())
+        managed_mask = 0
+        for index, (_name, ztype) in enumerate(params):
+            if type_has_managed_value(ztype, ctx):
+                managed_mask |= 1 << index
+        subset = managed_mask
+        while subset:
+            wrapper = direct_owned_args_wrapper_name(fn.name, subset)
+            c_params = ", ".join(f"{c_param_type(ztype)} {name}" for name, ztype in params) or "void"
+            args = ", ".join(name for name, _ztype in params)
+            out.append(f"static inline {c_type(fn.ret_type)} {wrapper}({c_params}) {{")
+            if fn.ret_type == "void":
+                out.append(f"    {fn.name}({args});")
+            else:
+                out.append(f"    {c_type(fn.ret_type)} result = {fn.name}({args});")
+            for index in range(len(params) - 1, -1, -1):
+                if subset & (1 << index):
+                    name, ztype = params[index]
+                    statement = release_statement_for_type(name, ztype, ctx)
+                    if statement:
+                        out.append(f"    {statement}")
+            if fn.ret_type != "void":
+                out.append("    return result;")
+            out.append("}")
+            subset = (subset - 1) & managed_mask
+    if out:
+        out.append("")
+    return out
+
+
+def jump_cleanup_lines(ctx: TranspileContext, block_stack: List[str], for_owned_bases: List[Optional[int]], is_continue: bool) -> List[str]:
+    loop_index = -1
+    for index in range(len(block_stack) - 1, -1, -1):
+        if block_stack[index] == "for":
+            loop_index = index
+            break
+    if loop_index < 0:
+        return []
+    out: List[str] = []
+    for scope_index in range(len(ctx.owned_scope_stack) - 1, loop_index, -1):
+        out.extend(scope_cleanup_lines(ctx.owned_scope_stack[scope_index], ctx))
+    loop_entries = ctx.owned_scope_stack[loop_index]
+    if is_continue:
+        base = for_owned_bases[loop_index] or 0
+        loop_entries = loop_entries[base:]
+    out.extend(scope_cleanup_lines(loop_entries, ctx))
+    return out
+
+
 def emit_function_body(lines: List[Tuple[int, str]], start_i: int, out: List[str], ctx: TranspileContext) -> int:
     block_stack: List[str] = ["fn"]
+    for_owned_bases: List[Optional[int]] = [None]
     i = start_i
     while i < len(lines):
         line_no, line = lines[i]
+        # ZEP-0013: nested fn defn → look up the pre-scanned lifted record,
+        # emit env malloc + capture copies + fat-value local, skip the body.
+        inner_parsed = parse_fn_header_line(line)
+        if inner_parsed and inner_parsed[3] == "defn":
+            outer_name = ctx.current_function or ""
+            inner_name = inner_parsed[0]
+            key = (outer_name, inner_name)
+            if key not in ctx.lifted_fn_index:
+                raise ZyenError(
+                    f"line {line_no}: internal — nested fn `{inner_name}` "
+                    f"not found in lifted index for outer `{outer_name}`"
+                )
+            lf = ctx.lifted_fns[ctx.lifted_fn_index[key]]
+            env_struct = lf["env_struct"]
+            env_var = f"__zl_env_{lf['inner']}"
+            inner_param_types = list(lf["params"].values())
+            fn_type = f"fn({','.join(inner_param_types)})->{lf['ret_type']}"
+            out.append(f"{env_struct}* {env_var} = ({env_struct}*)malloc(sizeof({env_struct}));")
+            for cap_name, cap_type in lf["captures"]:
+                captured_c = retain_expr_for_type(cap_name, cap_type, ctx) if type_has_managed_value(cap_type, ctx) else cap_name
+                out.append(f"{env_var}->{cap_name} = {captured_c};")
+            owner_var = f"__zl_owner_{lf['inner']}"
+            out.append(f"ZL_ArcControl* {owner_var} = zl_arc_new({env_var}, {env_struct}_zldrop);")
+            signature = json.dumps(fn_type.replace(" ", ""))
+            out.append(
+                f"ZL_Function {inner_name} = {{ (ZL_GenericFn){lf['lifted_name']}, "
+                f"{env_var}, {owner_var}, {signature} }};"
+            )
+            declare_symbol(ctx, inner_name, fn_type, line_no)
+            # Skip past the nested fn block in `lines`.
+            depth_inner = line.count("{") - line.count("}")
+            j = i + 1
+            while j < len(lines) and depth_inner > 0:
+                depth_inner += lines[j][1].count("{") - lines[j][1].count("}")
+                j += 1
+            i = j
+            continue
         if line.startswith("if"):
             m = re.match(r"if\s*\((.*)\)\s*\{\s*$", line)
             if not m:
@@ -2085,34 +3575,46 @@ def emit_function_body(lines: List[Tuple[int, str]], start_i: int, out: List[str
             out.append(f"if ({transform_expr(cond, ctx)}) {{")
             push_scope(ctx)
             block_stack.append("if")
+            for_owned_bases.append(None)
         elif re.match(r"}\s*else\s+if\s*\(.*\)\s*{\s*$", line):
             if not block_stack:
                 raise ZyenError(f"line {line_no}: unexpected `else if`")
             closed = block_stack.pop()
+            for_owned_bases.pop()
             if closed == "for":
                 ctx.loop_depth -= 1
+            for cleanup in scope_cleanup_lines(ctx.owned_scope_stack[-1] if ctx.owned_scope_stack else [], ctx):
+                out.append("    " + cleanup)
             pop_scope(ctx)
             m = re.match(r"}\s*else\s+if\s*\((.*)\)\s*{\s*$", line)
             cond = m.group(1).strip()
             out.append(f"}} else if ({transform_expr(cond, ctx)}) {{")
             push_scope(ctx)
             block_stack.append("if")
+            for_owned_bases.append(None)
         elif line == "} else {":
             if not block_stack:
                 raise ZyenError(f"line {line_no}: unexpected `else`")
             closed = block_stack.pop()
+            for_owned_bases.pop()
             if closed == "for":
                 ctx.loop_depth -= 1
+            for cleanup in scope_cleanup_lines(ctx.owned_scope_stack[-1] if ctx.owned_scope_stack else [], ctx):
+                out.append("    " + cleanup)
             pop_scope(ctx)
             out.append("} else {")
             push_scope(ctx)
             block_stack.append("else")
+            for_owned_bases.append(None)
         elif line == "}":
             if not block_stack:
                 raise ZyenError(f"line {line_no}: unexpected `}}`")
             closed = block_stack.pop()
+            for_owned_bases.pop()
             if closed == "for":
                 ctx.loop_depth -= 1
+            for cleanup in scope_cleanup_lines(ctx.owned_scope_stack[-1] if ctx.owned_scope_stack else [], ctx):
+                out.append("    " + cleanup)
             pop_scope(ctx)
             out.append("}")
             out.append("")
@@ -2124,17 +3626,23 @@ def emit_function_body(lines: List[Tuple[int, str]], start_i: int, out: List[str
             push_scope(ctx)
             out.append(parse_for(line, ctx, line_no))
             block_stack.append("for")
+            for_owned_bases.append(len(ctx.owned_scope_stack[-1]))
             ctx.loop_depth += 1
         elif line.startswith("class "):
             raise ZyenError(f"line {line_no}: `class` is planned for v0.2; v0.1 supports `struct`")
         else:
-            out.append("    " + transform_statement(line, ctx, line_no))
+            if line in {"break;", "continue;"}:
+                for cleanup in jump_cleanup_lines(ctx, block_stack, for_owned_bases, line == "continue;"):
+                    out.append("    " + cleanup)
+            statement = transform_statement(line, ctx, line_no)
+            out.extend("    " + part for part in statement.splitlines())
         i += 1
     raise ZyenError("function is missing closing `}`")
 
 
 def reset_function_context(ctx: TranspileContext, name: str, params: Dict[str, str]) -> None:
     ctx.current_function = name
+    ctx.current_return_type = ctx.functions[name].ret_type if name in ctx.functions else "void"
     ctx.symbols = {param_name: ztype_base(param_type) for param_name, param_type in params.items()}
     # Preserve special pointer-to-struct self type for methods.
     for param_name, param_type in params.items():
@@ -2144,17 +3652,55 @@ def reset_function_context(ctx: TranspileContext, name: str, params: Dict[str, s
     ctx.ptr_targets = {}
     ctx.list_refs = {param_name for param_name, param_type in params.items() if ztype_base(param_type) == "List"}
     ctx.scope_stack = [set(params.keys())]
+    ctx.owned_scope_stack = [[]]
     ctx.loop_depth = 0
     for param_name, param_type in params.items():
         inner = ptr_inner_type(param_type)
         if inner:
             ctx.ptr_targets[param_name] = inner
 
+
+def collect_c_module_type_labels(source: str) -> Dict[str, str]:
+    labels: Dict[str, str] = {}
+    for raw in source.splitlines():
+        match = re.match(r'^\s*//\s*c_module_type:\s*([A-Za-z_]\w*)\s*=\s*(".*")\s*$', raw)
+        if not match:
+            continue
+        try:
+            label = json.loads(match.group(2))
+        except json.JSONDecodeError:
+            continue
+        if isinstance(label, str):
+            labels[match.group(1)] = label
+    return labels
+
+
+def collect_c_module_external_structs(source: str) -> Set[str]:
+    names: Set[str] = set()
+    for raw in source.splitlines():
+        match = re.match(r'^\s*//\s*c_module_external_struct:\s*([A-Za-z_]\w*)\s*$', raw)
+        if match:
+            names.add(match.group(1))
+    return names
+
+
+def collect_c_module_native_function_types(source: str) -> Dict[str, str]:
+    signatures: Dict[str, str] = {}
+    for raw in source.splitlines():
+        match = re.match(r"^\s*//\s*c_module_native_fn:\s*([A-Za-z_]\w*)\s*=\s*(fn\(.+\)->.+)\s*$", raw)
+        if match:
+            signatures[match.group(1)] = match.group(2).replace(" ", "")
+    return signatures
+
 def transpile(source: str) -> str:
     lines = clean_lines(source)
     ctx = collect_signatures(lines)
+    ctx.c_module_types = collect_c_module_type_labels(source)
+    ctx.external_structs = collect_c_module_external_structs(source)
+    ctx.native_function_types = collect_c_module_native_function_types(source)
+    needs_python_cli = "zl_cv_" in source or "zl_gpu_" in source
     out: List[str] = []
-    out.append("// Generated by ZyenLang v0.1.49")
+    out.append("// Generated by ZyenLang v0.1.50-rc.1")
     out.append("#include <stdio.h>")
     out.append("#include <stdbool.h>")
     out.append("#include <stdlib.h>")
@@ -2165,40 +3711,45 @@ def transpile(source: str) -> str:
     out.append("#include <windows.h>")
     out.append("#else")
     out.append("#include <unistd.h>")
+    out.append("#include <sys/time.h>")
     out.append("#endif")
     out.append("")
-    out.append("typedef struct { void* addr; const char* type_name; int mem_id; bool owned; } ptr;")
-    out.append("#define ZL_MEM_MAX 4096")
-    out.append("static void* zl_mem_addr[ZL_MEM_MAX];")
-    out.append("static bool zl_mem_valid[ZL_MEM_MAX];")
-    out.append("static int zl_mem_next_id = 1;")
-    out.append("static inline ptr zl_ptr(void* addr, const char* type_name) { return (ptr){ addr, type_name, 0, false }; }")
-    out.append("static inline ptr zl_none_ptr(const char* type_name) { return (ptr){ NULL, type_name, 0, false }; }")
+    abi_header = Path(__file__).resolve().parent / "std" / "zyenlang_c_abi.h"
+    out.extend(abi_header.read_text(encoding="utf-8").splitlines())
+    out.append("")
+    out.append("static atomic_int zl_mem_next_id = 1;")
+    out.append("static inline ptr zl_ptr(void* addr, const char* type_name) { return zl_ptr_borrow(addr, type_name); }")
+    out.append("static inline ptr zl_none_ptr(const char* type_name) { return (ptr){ NULL, type_name, 0, false, NULL }; }")
     out.append("static inline bool zl_ptr_is_none(ptr p) { return p.addr == NULL; }")
-    out.append("static inline bool zl_ptr_is_owned(ptr p) { return p.mem_id > 0; }")
-    out.append("static inline bool zl_ptr_is_valid(ptr p) { if (p.addr == NULL) return false; if (p.mem_id == 0) return true; if (p.mem_id <= 0 || p.mem_id >= ZL_MEM_MAX) return false; return zl_mem_valid[p.mem_id] && zl_mem_addr[p.mem_id] == p.addr; }")
+    out.append("static inline bool zl_ptr_is_owned(ptr p) { return p.owner != NULL; }")
+    out.append("static inline bool zl_ptr_is_valid(ptr p) { if (p.addr == NULL) return false; if (!p.owner) return true; return !atomic_load_explicit(&p.owner->disposed, memory_order_acquire) && p.owner->payload == p.addr; }")
     out.append("static inline void* zl_ptr_checked_addr(ptr p, const char* name) { if (p.addr == NULL) { fprintf(stderr, \"None pointer dereference: %s\\n\", name); exit(1); } if (!zl_ptr_is_valid(p)) { fprintf(stderr, \"Freed pointer dereference: %s\\n\", name); exit(1); } return p.addr; }")
-    out.append("static inline ptr zl_mem_alloc_cell(size_t size, const char* type_name) { void* raw = calloc(1, size); if (!raw) { fprintf(stderr, \"memory allocation failed\\n\"); exit(1); } int id = zl_mem_next_id++; if (id >= ZL_MEM_MAX) { fprintf(stderr, \"memory registry full\\n\"); exit(1); } zl_mem_addr[id] = raw; zl_mem_valid[id] = true; return (ptr){ raw, type_name, id, true }; }")
-    out.append("static inline int zl_mem_free(ptr p) { if (p.addr == NULL) return -1; if (p.mem_id <= 0) return -2; if (p.mem_id >= ZL_MEM_MAX || !zl_mem_valid[p.mem_id]) return -3; if (p.type_name && strcmp(p.type_name, \"str\") == 0 && p.addr) { char* inner = *((char**)p.addr); if (inner) free(inner); } free(p.addr); zl_mem_addr[p.mem_id] = NULL; zl_mem_valid[p.mem_id] = false; return 0; }")
+    out.append("static inline void zl_print_ptr_value(ptr p, bool release_after) { if (p.addr == NULL) printf(\"None\\n\"); else if (!zl_ptr_is_valid(p)) printf(\"Freed\\n\"); else printf(\"%p\\n\", p.addr); if (release_after) zl_ptr_release(p); }")
+    out.append("static inline void zl_mem_drop_ptr_cell(void* payload) { if (!payload) return; zl_ptr_release(*((ptr*)payload)); free(payload); }")
+    out.append("static inline void zl_mem_drop_fn_cell(void* payload) { if (!payload) return; zl_fn_release(*((ZL_Function*)payload)); free(payload); }")
+    out.append("static inline ptr zl_mem_alloc_cell_drop(size_t size, const char* type_name, ZL_ArcDrop drop) { void* raw = calloc(1, size); if (!raw) { fprintf(stderr, \"memory allocation failed\\n\"); exit(1); } int id = atomic_fetch_add_explicit(&zl_mem_next_id, 1, memory_order_relaxed); ZL_ArcControl* owner = zl_arc_new(raw, drop ? drop : zl_ptr_default_drop); return (ptr){ raw, type_name, id, true, owner }; }")
+    out.append("static inline ptr zl_mem_alloc_cell(size_t size, const char* type_name) { return zl_mem_alloc_cell_drop(size, type_name, zl_ptr_default_drop); }")
+    out.append("static inline int zl_mem_free(ptr p) { if (p.addr == NULL) return -1; if (!p.owner) return -2; return zl_arc_dispose(p.owner) ? 0 : -3; }")
     out.append("static inline bool zl_mem_is_valid(ptr p) { return zl_ptr_is_valid(p); }")
     out.append("static inline bool zl_mem_is_none(ptr p) { return p.addr == NULL; }")
-    out.append("static inline bool zl_mem_is_owned(ptr p) { return p.mem_id > 0 && p.owned; }")
+    out.append("static inline bool zl_mem_is_owned(ptr p) { return p.owner != NULL && p.owned; }")
     out.append("static inline const char* zl_mem_type(ptr p) { return p.type_name ? p.type_name : \"ptr\"; }")
     out.append("static inline ptr zl_mem_alloc_int(int v) { ptr p = zl_mem_alloc_cell(sizeof(int), \"int\"); *((int*)p.addr) = v; return p; }")
     out.append("static inline ptr zl_mem_alloc_float(double v) { ptr p = zl_mem_alloc_cell(sizeof(double), \"float\"); *((double*)p.addr) = v; return p; }")
     out.append("static inline ptr zl_mem_alloc_bool(bool v) { ptr p = zl_mem_alloc_cell(sizeof(bool), \"bool\"); *((bool*)p.addr) = v; return p; }")
     out.append("static inline char* zl_mem_strdup(const char* s) { size_t n = strlen(s ? s : \"\") + 1; char* out = (char*)malloc(n); if (!out) { fprintf(stderr, \"string allocation failed\\n\"); exit(1); } memcpy(out, s ? s : \"\", n); return out; }")
-    out.append("static inline ptr zl_mem_alloc_str(const char* v) { ptr p = zl_mem_alloc_cell(sizeof(char*), \"str\"); *((char**)p.addr) = zl_mem_strdup(v); return p; }")
-    out.append("typedef struct ZL_List ZL_List;")
-    out.append("typedef struct { int kind; long long i; double f; const char* s; bool b; ptr p; ZL_List* l; } Any;")
-    out.append("typedef struct ZL_List { Any* items; int len; int cap; } ZL_List;")
+    out.append("static inline void zl_mem_drop_str_cell(void* payload) { if (!payload) return; char* inner = *((char**)payload); if (inner) free(inner); free(payload); }")
+    out.append("static inline ptr zl_mem_alloc_str(const char* v) { ptr p = zl_mem_alloc_cell(sizeof(char*), \"str\"); p.owner->drop = zl_mem_drop_str_cell; *((char**)p.addr) = zl_mem_strdup(v); return p; }")
     out.append("static inline Any zl_any_int(int v) { return (Any){ .kind = 1, .i = v }; }")
     out.append("static inline Any zl_any_float(double v) { return (Any){ .kind = 2, .f = v }; }")
     out.append("static inline Any zl_any_str(const char* v) { return (Any){ .kind = 3, .s = zl_mem_strdup(v ? v : \"\") }; }")
     out.append("static inline Any zl_any_bool(bool v) { return (Any){ .kind = 4, .b = v }; }")
-    out.append("static inline Any zl_any_ptr(ptr v) { return (Any){ .kind = 5, .p = v }; }")
+    out.append("static inline Any zl_any_ptr(ptr v) { return (Any){ .kind = 5, .p = zl_ptr_retain(v) }; }")
+    out.append("static inline Any zl_any_ptr_take(ptr v) { return (Any){ .kind = 5, .p = v }; }")
     out.append("static inline Any zl_any_list(ZL_List* v) { return (Any){ .kind = 6, .l = v }; }")
-    out.append("static inline ptr zl_mem_alloc_any(Any v) { ptr p = zl_mem_alloc_cell(sizeof(Any), \"Any\"); *((Any*)p.addr) = v; return p; }")
+    out.append("static inline void zl_any_release(Any v) { if (v.kind == 5) zl_ptr_release(v.p); }")
+    out.append("static inline void zl_mem_drop_any_cell(void* payload) { if (!payload) return; zl_any_release(*((Any*)payload)); free(payload); }")
+    out.append("static inline ptr zl_mem_alloc_any(Any v) { ptr p = zl_mem_alloc_cell_drop(sizeof(Any), \"Any\", zl_mem_drop_any_cell); *((Any*)p.addr) = v; return p; }")
     out.append("static inline int zl_int_checked(long long v, const char* op) { if (v < -2147483648LL || v > 2147483647LL) { fprintf(stderr, \"int overflow in %s: %lld\\n\", op, v); exit(1); } return (int)v; }")
     out.append("static inline int zl_int_add(int a, int b) { return zl_int_checked((long long)a + (long long)b, \"+\"); }")
     out.append("static inline int zl_int_sub(int a, int b) { return zl_int_checked((long long)a - (long long)b, \"-\"); }")
@@ -2220,8 +3771,24 @@ def transpile(source: str) -> str:
     out.append("static inline const char* zl_str_join(int count, ...) { size_t total = 1; va_list ap; va_start(ap, count); for (int i = 0; i < count; i++) { const char* s = va_arg(ap, const char*); if (!s) s = \"\"; total += strlen(s); } va_end(ap); char* out = (char*)malloc(total); if (!out) { fprintf(stderr, \"string join allocation failed\\n\"); exit(1); } out[0] = 0; va_start(ap, count); for (int i = 0; i < count; i++) { const char* s = va_arg(ap, const char*); if (!s) s = \"\"; strcat(out, s); } va_end(ap); return out; }")
     out.append("static inline const char* zl_char_to_str(int c) { char* out = (char*)malloc(2); if (!out) { fprintf(stderr, \"char allocation failed\\n\"); exit(1); } out[0] = (char)c; out[1] = 0; return out; }")
     out.append("static inline const char* zl_str_substring(const char* s, int start, int length) { if (!s) s = \"\"; int n = (int)strlen(s); if (start < 0) start = 0; if (start > n) start = n; if (length < 0 || start + length > n) length = n - start; char* out = (char*)malloc((size_t)length + 1); if (!out) { fprintf(stderr, \"substring allocation failed\\n\"); exit(1); } memcpy(out, s + start, (size_t)length); out[length] = 0; return out; }")
-    out.append("static inline int zl_time_clock_ms(void) { return (int)((clock() * 1000) / CLOCKS_PER_SEC); }")
-    out.append("static inline int zl_thread_sleep_ms(int ms) { if (ms < 0) ms = 0; clock_t start = clock(); double target = ((double)ms) / 1000.0; while (((double)(clock() - start) / CLOCKS_PER_SEC) < target) { } return 0; }")
+    out.append("static inline int zl_time_clock_ms(void) {")
+    out.append("#ifdef _WIN32")
+    out.append("    return (int)(GetTickCount64() & 0x7fffffff);")
+    out.append("#else")
+    out.append("    struct timeval tv; gettimeofday(&tv, NULL);")
+    out.append("    long long ms = (long long)tv.tv_sec * 1000LL + (long long)(tv.tv_usec / 1000);")
+    out.append("    return (int)(ms & 0x7fffffff);")
+    out.append("#endif")
+    out.append("}")
+    out.append("static inline int zl_thread_sleep_ms(int ms) {")
+    out.append("    if (ms < 0) ms = 0;")
+    out.append("#ifdef _WIN32")
+    out.append("    Sleep((DWORD)ms);")
+    out.append("#else")
+    out.append("    usleep((useconds_t)ms * 1000);")
+    out.append("#endif")
+    out.append("    return 0;")
+    out.append("}")
     out.append("static inline int zl_thread_yield_now(void) { return zl_thread_sleep_ms(0); }")
     out.append("static inline int zl_thread_cpu_count(void) {")
     out.append("#ifdef _WIN32")
@@ -2262,9 +3829,9 @@ def transpile(source: str) -> str:
     out.append("static inline Any zl_list_get(ZL_List* l, int index) { if (index < 0 || index >= l->len) { fprintf(stderr, \"List index out of range: %d\\n\", index); exit(1); } return l->items[index]; }")
     out.append("static inline ptr zl_list_ptr(ZL_List* l, int index) { if (index < 0 || index >= l->len) { fprintf(stderr, \"List index out of range: %d\\n\", index); exit(1); } return zl_ptr(&l->items[index], \"Any\"); }")
     out.append("static inline ptr zl_list_append_ptr(ZL_List* l, Any v) { zl_list_append(l, v); return zl_ptr(&l->items[l->len - 1], \"Any\"); }")
-    out.append("static inline void zl_list_set(ZL_List* l, int index, Any v) { if (index < 0 || index >= l->len) { fprintf(stderr, \"List index out of range: %d\\n\", index); exit(1); } l->items[index] = v; }")
+    out.append("static inline void zl_list_set(ZL_List* l, int index, Any v) { if (index < 0 || index >= l->len) { zl_any_release(v); fprintf(stderr, \"List index out of range: %d\\n\", index); exit(1); } zl_any_release(l->items[index]); l->items[index] = v; }")
     out.append("static inline Any zl_list_pop(ZL_List* l) { if (l->len <= 0) { fprintf(stderr, \"List pop from empty list\\n\"); exit(1); } return l->items[--l->len]; }")
-    out.append("static inline void zl_list_clear(ZL_List* l) { l->len = 0; }")
+    out.append("static inline void zl_list_clear(ZL_List* l) { for (int i = 0; i < l->len; i++) zl_any_release(l->items[i]); l->len = 0; }")
     out.append("static inline ZL_List zl_str_split(const char* s, const char* sep) { ZL_List list = zl_list_new(); if (!s) s = \"\"; if (!sep || sep[0] == 0) { for (int i = 0; s[i]; i++) zl_list_append(&list, zl_any_str(zl_char_to_str((unsigned char)s[i]))); return list; } size_t sepn = strlen(sep); const char* cur = s; const char* hit = NULL; while ((hit = strstr(cur, sep)) != NULL) { int len = (int)(hit - cur); zl_list_append(&list, zl_any_str(zl_str_substring(cur, 0, len))); cur = hit + sepn; } zl_list_append(&list, zl_any_str(cur)); return list; }")
     out.append("#ifdef _WIN32")
     out.append('static inline ZL_List zl_fs_list_dir(const char* path) { ZL_List l = zl_list_new(); if (!path || !path[0]) return l; char pattern[1024]; snprintf(pattern, sizeof(pattern), "%s/*", path); WIN32_FIND_DATAA fd; HANDLE h = FindFirstFileA(pattern, &fd); if (h == INVALID_HANDLE_VALUE) return l; do { if (strcmp(fd.cFileName, ".") == 0) continue; char entry[600]; if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) snprintf(entry, sizeof(entry), "%s/", fd.cFileName); else snprintf(entry, sizeof(entry), "%s", fd.cFileName); zl_list_append(&l, zl_any_str(zl_mem_strdup(entry))); } while (FindNextFileA(h, &fd)); FindClose(h); return l; }')
@@ -2287,257 +3854,77 @@ def transpile(source: str) -> str:
     out.append('static inline void zl_print_any(Any v) { switch (v.kind) { case 1: printf("%lld\\n", v.i); break; case 2: printf("%g\\n", v.f); break; case 3: printf("%s\\n", v.s); break; case 4: printf("%s\\n", v.b ? "true" : "false"); break; case 5: if (v.p.addr == NULL) printf("None\\n"); else if (!zl_ptr_is_valid(v.p)) printf("Freed\\n"); else printf("%p\\n", (void*)v.p.addr); break; case 6: if (v.l == NULL) printf("List(None)\\n"); else printf("List(len=%d)\\n", v.l->len); break; default: printf("Any(?)\\n"); } }')
     out.append('static inline void zl_print_list(ZL_List* l) { printf("List(len=%d)\\n", l->len); }')
     out.append("")
-    out.append("static inline void zl_quote_arg(char* out_arg, size_t cap, const char* in_arg) { size_t j = 0; if (cap == 0) return; out_arg[j++] = \'\"\'; for (size_t i = 0; in_arg && in_arg[i] && j + 3 < cap; i++) { char ch = in_arg[i]; if (ch == \'\"\') ch = \'_\'; out_arg[j++] = ch; } if (j + 1 < cap) out_arg[j++] = \'\"\'; out_arg[j < cap ? j : cap - 1] = 0; }")
-    out.append("static inline int zl_py_cmd0(const char* module, const char* op) { char cmd[512]; snprintf(cmd, sizeof(cmd), \"python -m %s %s\", module, op); return system(cmd); }")
-    out.append("static inline int zl_py_cmd2(const char* module, const char* op, const char* a, const char* b) { char qa[512], qb[512], cmd[1600]; zl_quote_arg(qa, sizeof(qa), a); zl_quote_arg(qb, sizeof(qb), b); snprintf(cmd, sizeof(cmd), \"python -m %s %s %s %s\", module, op, qa, qb); return system(cmd); }")
-    out.append("static inline int zl_py_cmd3i(const char* module, const char* op, const char* a, const char* b, int x) { char qa[512], qb[512], cmd[1700]; zl_quote_arg(qa, sizeof(qa), a); zl_quote_arg(qb, sizeof(qb), b); snprintf(cmd, sizeof(cmd), \"python -m %s %s %s %s %d\", module, op, qa, qb, x); return system(cmd); }")
-    out.append("static inline int zl_py_cmd4ii(const char* module, const char* op, const char* a, const char* b, int x, int y) { char qa[512], qb[512], cmd[1800]; zl_quote_arg(qa, sizeof(qa), a); zl_quote_arg(qb, sizeof(qb), b); snprintf(cmd, sizeof(cmd), \"python -m %s %s %s %s %d %d\", module, op, qa, qb, x, y); return system(cmd); }")
-    out.append("static inline int zl_py_cmd3s(const char* module, const char* op, const char* a, const char* b, const char* c) { char qa[512], qb[512], qc[512], cmd[2100]; zl_quote_arg(qa, sizeof(qa), a); zl_quote_arg(qb, sizeof(qb), b); zl_quote_arg(qc, sizeof(qc), c); snprintf(cmd, sizeof(cmd), \"python -m %s %s %s %s %s\", module, op, qa, qb, qc); return system(cmd); }")
-    out.append("static inline int zl_py_cmd3sf(const char* module, const char* op, const char* a, double x, const char* b) { char qa[512], qb[512], cmd[2100]; zl_quote_arg(qa, sizeof(qa), a); zl_quote_arg(qb, sizeof(qb), b); snprintf(cmd, sizeof(cmd), \"python -m %s %s %s %.17g %s\", module, op, qa, x, qb); return system(cmd); }")
-    out.append("static char zl_tk_script_path[512] = \"zyen_tk_scene.ztk\";")
-    out.append("static FILE* zl_tk_scene_fp = NULL;")
-    out.append("static inline const char* zl_tk_clean(const char* s) { static char bufs[16][1024]; static int idx = 0; char* out = bufs[idx++ & 15]; int j = 0; if (!s) s = \"\"; for (int i = 0; s[i] && j < 1023; i++) { char ch = s[i]; if (ch == '\\n' || ch == '\\r' || ch == '\\t') ch = ' '; out[j++] = ch; } out[j] = 0; return out; }")
-    out.append("static inline int zl_tk_append_raw(const char* line) { if (zl_tk_scene_fp) { fputs(line ? line : \"\", zl_tk_scene_fp); fputc('\\n', zl_tk_scene_fp); return 0; } FILE* f = fopen(zl_tk_script_path, \"ab\"); if (!f) return -1; fputs(line ? line : \"\", f); fputc('\\n', f); fclose(f); return 0; }")
-    out.append("static inline int zl_tk_begin(const char* path) { if (path && path[0]) { strncpy(zl_tk_script_path, path, sizeof(zl_tk_script_path)-1); zl_tk_script_path[sizeof(zl_tk_script_path)-1] = 0; } FILE* f = fopen(zl_tk_script_path, \"wb\"); if (!f) return -1; fputs(\"# ZyenLang tk scene\\n\", f); fclose(f); return 0; }")
-    out.append("static inline int zl_tk_window(const char* title, int w, int h) { char line[1400]; snprintf(line, sizeof(line), \"window\\t%s\\t%d\\t%d\", zl_tk_clean(title), w, h); return zl_tk_append_raw(line); }")
-    out.append("static inline int zl_tk_open(const char* title, int w, int h) { int code = zl_tk_begin(\"zyen_tk_scene.ztk\"); if (code != 0) return code; return zl_tk_window(title, w, h); }")
-    out.append("static inline int zl_tk_bg(const char* color) { char line[1400]; snprintf(line, sizeof(line), \"bg\\t%s\", zl_tk_clean(color)); return zl_tk_append_raw(line); }")
-    out.append("static inline int zl_tk_clear(const char* color) { char line[1400]; snprintf(line, sizeof(line), \"clear\\t%s\", zl_tk_clean(color)); return zl_tk_append_raw(line); }")
-    out.append("static inline int zl_tk_line(int x1, int y1, int x2, int y2, const char* color, int width) { char line[1400]; snprintf(line, sizeof(line), \"line\\t%d\\t%d\\t%d\\t%d\\t%s\\t%d\", x1, y1, x2, y2, zl_tk_clean(color), width); return zl_tk_append_raw(line); }")
-    out.append("static inline int zl_tk_rect(int x, int y, int w, int h, const char* color) { char line[1400]; snprintf(line, sizeof(line), \"rect\\t%d\\t%d\\t%d\\t%d\\t%s\", x, y, w, h, zl_tk_clean(color)); return zl_tk_append_raw(line); }")
-    out.append("static inline int zl_tk_rect_outline(int x, int y, int w, int h, const char* color, int width) { char line[1400]; snprintf(line, sizeof(line), \"rect_outline\\t%d\\t%d\\t%d\\t%d\\t%s\\t%d\", x, y, w, h, zl_tk_clean(color), width); return zl_tk_append_raw(line); }")
-    out.append("static inline int zl_tk_circle(int x, int y, int r, const char* color) { char line[1400]; snprintf(line, sizeof(line), \"circle\\t%d\\t%d\\t%d\\t%s\", x, y, r, zl_tk_clean(color)); return zl_tk_append_raw(line); }")
-    out.append("static inline int zl_tk_circle_outline(int x, int y, int r, const char* color, int width) { char line[1400]; snprintf(line, sizeof(line), \"circle_outline\\t%d\\t%d\\t%d\\t%s\\t%d\", x, y, r, zl_tk_clean(color), width); return zl_tk_append_raw(line); }")
-    out.append("static inline int zl_tk_text(int x, int y, const char* text, const char* color, int size) { char line[1800]; snprintf(line, sizeof(line), \"text\\t%d\\t%d\\t%s\\t%s\\t%d\", x, y, zl_tk_clean(text), zl_tk_clean(color), size); return zl_tk_append_raw(line); }")
-    out.append("static inline int zl_tk_image(const char* path, int x, int y) { char line[1800]; snprintf(line, sizeof(line), \"image\\t%s\\t%d\\t%d\", zl_tk_clean(path), x, y); return zl_tk_append_raw(line); }")
-    out.append("static inline const char* zl_tk_script(void) { return zl_tk_script_path; }")
-    out.append("static inline int zl_tk_show(void) { char q[512], cmd[1200]; zl_quote_arg(q, sizeof(q), zl_tk_script_path); snprintf(cmd, sizeof(cmd), \"python -m zyenlang.tk_cli show %s\", q); fflush(stdout); return system(cmd); }")
-    out.append("static inline int zl_tk_show_for(int ms) { char q[512], cmd[1300]; zl_quote_arg(q, sizeof(q), zl_tk_script_path); snprintf(cmd, sizeof(cmd), \"python -m zyenlang.tk_cli show %s %d\", q, ms); fflush(stdout); return system(cmd); }")
-    # --- tk session (file-IPC) helpers --------------------------------------
-    out.append("static char zl_tk_session_dir[512] = \"\";")
-    out.append("static long zl_tk_session_event_offset = 0;")
-    out.append("static int  zl_tk_session_scene_version = 0;")
-    out.append("static inline void zl_tk_session_path(char* out_path, size_t cap, const char* name) {")
-    out.append("    snprintf(out_path, cap, \"%s/%s\", zl_tk_session_dir, name);")
-    out.append("}")
-    out.append("static inline int zl_tk_session_state_field(const char* path, const char* key, char* out_val, size_t cap) {")
-    out.append("    if (cap == 0) return -1;")
-    out.append("    out_val[0] = 0;")
-    out.append("    FILE* f = fopen(path, \"rb\");")
-    out.append("    if (!f) return -1;")
-    out.append("    char line[256];")
-    out.append("    int found = -1;")
-    out.append("    while (fgets(line, sizeof(line), f)) {")
-    out.append("        size_t kl = strlen(key);")
-    out.append("        if (strncmp(line, key, kl) == 0 && line[kl] == '=') {")
-    out.append("            const char* v = line + kl + 1;")
-    out.append("            size_t vn = strlen(v);")
-    out.append("            while (vn > 0 && (v[vn - 1] == '\\n' || v[vn - 1] == '\\r')) vn--;")
-    out.append("            if (vn >= cap) vn = cap - 1;")
-    out.append("            memcpy(out_val, v, vn);")
-    out.append("            out_val[vn] = 0;")
-    out.append("            found = 0;")
-    out.append("            break;")
-    out.append("        }")
-    out.append("    }")
-    out.append("    fclose(f);")
-    out.append("    return found;")
-    out.append("}")
-    out.append("static inline int zl_tk_session_state_set(const char* path, const char* key, const char* value) {")
-    # Read all fields, replace key, write back.
-    out.append("    char fields_key[8][32];")
-    out.append("    char fields_val[8][128];")
-    out.append("    int field_count = 0;")
-    out.append("    FILE* f = fopen(path, \"rb\");")
-    out.append("    if (f) {")
-    out.append("        char line[256];")
-    out.append("        while (fgets(line, sizeof(line), f) && field_count < 8) {")
-    out.append("            char* eq = strchr(line, '=');")
-    out.append("            if (!eq) continue;")
-    out.append("            *eq = 0;")
-    out.append("            const char* k = line;")
-    out.append("            const char* v = eq + 1;")
-    out.append("            size_t vn = strlen(v);")
-    out.append("            while (vn > 0 && (v[vn - 1] == '\\n' || v[vn - 1] == '\\r')) vn--;")
-    out.append("            snprintf(fields_key[field_count], sizeof(fields_key[field_count]), \"%s\", k);")
-    out.append("            int copy = (int)vn; if (copy >= (int)sizeof(fields_val[field_count])) copy = (int)sizeof(fields_val[field_count]) - 1;")
-    out.append("            memcpy(fields_val[field_count], v, (size_t)copy);")
-    out.append("            fields_val[field_count][copy] = 0;")
-    out.append("            field_count++;")
-    out.append("        }")
-    out.append("        fclose(f);")
-    out.append("    }")
-    out.append("    int replaced = 0;")
-    out.append("    for (int i = 0; i < field_count; i++) {")
-    out.append("        if (strcmp(fields_key[i], key) == 0) {")
-    out.append("            snprintf(fields_val[i], sizeof(fields_val[i]), \"%s\", value);")
-    out.append("            replaced = 1;")
-    out.append("            break;")
-    out.append("        }")
-    out.append("    }")
-    out.append("    if (!replaced && field_count < 8) {")
-    out.append("        snprintf(fields_key[field_count], sizeof(fields_key[field_count]), \"%s\", key);")
-    out.append("        snprintf(fields_val[field_count], sizeof(fields_val[field_count]), \"%s\", value);")
-    out.append("        field_count++;")
-    out.append("    }")
-    out.append("    char tmp_path[600];")
-    out.append("    snprintf(tmp_path, sizeof(tmp_path), \"%s.tmp\", path);")
-    out.append("    FILE* o = fopen(tmp_path, \"wb\");")
-    out.append("    if (!o) return -1;")
-    out.append("    for (int i = 0; i < field_count; i++) fprintf(o, \"%s=%s\\n\", fields_key[i], fields_val[i]);")
-    out.append("    fflush(o); fclose(o);")
-    out.append("    remove(path);")
-    out.append("    rename(tmp_path, path);")
-    out.append("    return 0;")
-    out.append("}")
-    out.append("static inline int zl_tk_session_open(const char* title, int w, int h, const char* dir) {")
-    out.append("    if (!dir || !dir[0]) return -1;")
-    out.append("    strncpy(zl_tk_session_dir, dir, sizeof(zl_tk_session_dir) - 1);")
-    out.append("    zl_tk_session_dir[sizeof(zl_tk_session_dir) - 1] = 0;")
-    out.append("    char mkdir_cmd[1024];")
-    out.append("#ifdef _WIN32")
-    out.append("    snprintf(mkdir_cmd, sizeof(mkdir_cmd), \"if not exist \\\"%s\\\" mkdir \\\"%s\\\" >nul 2>nul\", zl_tk_session_dir, zl_tk_session_dir);")
-    out.append("#else")
-    out.append("    snprintf(mkdir_cmd, sizeof(mkdir_cmd), \"mkdir -p '%s' >/dev/null 2>&1\", zl_tk_session_dir);")
-    out.append("#endif")
-    out.append("    system(mkdir_cmd);")
-    out.append("    char scene_path[600];")
-    out.append("    zl_tk_session_path(scene_path, sizeof(scene_path), \"scene.ztk\");")
-    out.append("    char events_path[600];")
-    out.append("    zl_tk_session_path(events_path, sizeof(events_path), \"events.txt\");")
-    out.append("    char state_path[600];")
-    out.append("    zl_tk_session_path(state_path, sizeof(state_path), \"state.txt\");")
-    out.append("    FILE* fe = fopen(events_path, \"wb\"); if (fe) fclose(fe);")
-    out.append("    FILE* fs = fopen(state_path, \"wb\"); if (fs) { fputs(\"scene_version=-1\\nevent_version=0\\nclose=0\\nclosed=0\\n\", fs); fclose(fs); }")
-    out.append("    strncpy(zl_tk_script_path, scene_path, sizeof(zl_tk_script_path) - 1);")
-    out.append("    zl_tk_script_path[sizeof(zl_tk_script_path) - 1] = 0;")
-    out.append("    FILE* fsc = fopen(scene_path, \"wb\"); if (fsc) { fclose(fsc); }")
-    out.append("    zl_tk_window(title, w, h);")
-    out.append("    zl_tk_session_event_offset = 0;")
-    out.append("    zl_tk_session_scene_version = 0;")
-    out.append("    char spawn_cmd[1400];")
-    out.append("#ifdef _WIN32")
-    out.append("    snprintf(spawn_cmd, sizeof(spawn_cmd), \"start \\\"\\\" /B cmd /C \\\"python -m zyenlang.tk_cli interactive \\\"%s\\\"\\\"\", zl_tk_session_dir);")
-    out.append("#else")
-    out.append("    snprintf(spawn_cmd, sizeof(spawn_cmd), \"python -m zyenlang.tk_cli interactive '%s' &\", zl_tk_session_dir);")
-    out.append("#endif")
-    out.append("    fflush(stdout); system(spawn_cmd);")
-    out.append("    int start = zl_time_clock_ms();")
-    out.append("    char val[32];")
-    out.append("    while (1) {")
-    out.append("        if (zl_tk_session_state_field(state_path, \"ready\", val, sizeof(val)) == 0 && strcmp(val, \"1\") == 0) return 0;")
-    out.append("        if (zl_time_clock_ms() - start >= 5000) return -1;")
-    out.append("        zl_thread_sleep_ms(40);")
-    out.append("    }")
-    out.append("}")
-    out.append("static inline int zl_tk_session_begin_frame(void) {")
-    out.append("    if (!zl_tk_session_dir[0]) return -1;")
-    out.append("    if (zl_tk_scene_fp) { fclose(zl_tk_scene_fp); zl_tk_scene_fp = NULL; }")
-    out.append("    zl_tk_scene_fp = fopen(zl_tk_script_path, \"wb\");")
-    out.append("    if (!zl_tk_scene_fp) return -1;")
-    out.append("    fputs(\"# ZyenLang tk scene\\n\", zl_tk_scene_fp);")
-    out.append("    return 0;")
-    out.append("}")
-    out.append("static inline int zl_tk_session_redraw(void) {")
-    out.append("    if (!zl_tk_session_dir[0]) return -1;")
-    out.append("    if (zl_tk_scene_fp) { fflush(zl_tk_scene_fp); fclose(zl_tk_scene_fp); zl_tk_scene_fp = NULL; }")
-    out.append("    zl_tk_session_scene_version++;")
-    out.append("    char state_path[600];")
-    out.append("    zl_tk_session_path(state_path, sizeof(state_path), \"state.txt\");")
-    out.append("    char val[32]; snprintf(val, sizeof(val), \"%d\", zl_tk_session_scene_version);")
-    out.append("    return zl_tk_session_state_set(state_path, \"scene_version\", val);")
-    out.append("}")
-    out.append("static inline const char* zl_tk_session_next_event(int timeout_ms) {")
-    out.append("    static char buf[16][512]; static int idx = 0;")
-    out.append("    char* out = buf[idx++ & 15]; out[0] = 0;")
-    out.append("    if (!zl_tk_session_dir[0]) return \"\";")
-    out.append("    char events_path[600]; zl_tk_session_path(events_path, sizeof(events_path), \"events.txt\");")
-    out.append("    int start = zl_time_clock_ms();")
-    out.append("    while (1) {")
-    out.append("        FILE* f = fopen(events_path, \"rb\");")
-    out.append("        if (f) {")
-    out.append("            if (fseek(f, zl_tk_session_event_offset, SEEK_SET) == 0) {")
-    out.append("                if (fgets(out, 512, f)) {")
-    out.append("                    size_t got = strlen(out);")
-    out.append("                    if (got > 0 && (out[got - 1] == '\\n' || out[got - 1] == '\\r')) {")
-    out.append("                        zl_tk_session_event_offset = (int)ftell(f);")
-    out.append("                        fclose(f);")
-    out.append("                        while (got > 0 && (out[got - 1] == '\\n' || out[got - 1] == '\\r')) { out[--got] = 0; }")
-    out.append("                        return out;")
-    out.append("                    }")
-    out.append("                }")
-    out.append("            }")
-    out.append("            fclose(f);")
-    out.append("        }")
-    out.append("        if (zl_time_clock_ms() - start >= timeout_ms) { out[0] = 0; return \"\"; }")
-    out.append("        zl_thread_sleep_ms(10);")
-    out.append("    }")
-    out.append("}")
-    out.append("static inline int zl_tk_session_close(void) {")
-    out.append("    if (!zl_tk_session_dir[0]) return -1;")
-    out.append("    char state_path[600]; zl_tk_session_path(state_path, sizeof(state_path), \"state.txt\");")
-    out.append("    zl_tk_session_state_set(state_path, \"close\", \"1\");")
-    out.append("    int start = zl_time_clock_ms();")
-    out.append("    char val[32];")
-    out.append("    while (1) {")
-    out.append("        if (zl_tk_session_state_field(state_path, \"closed\", val, sizeof(val)) == 0 && strcmp(val, \"1\") == 0) break;")
-    out.append("        if (zl_time_clock_ms() - start >= 2000) break;")
-    out.append("        zl_thread_sleep_ms(40);")
-    out.append("    }")
-    out.append("    zl_tk_session_dir[0] = 0;")
-    out.append("    return 0;")
-    out.append("}")
-    out.append("static int zl_tk_cached_char_w = 0;")
-    out.append("static int zl_tk_cached_line_h = 0;")
-    out.append("static inline int zl_tk_session_char_w(void) {")
-    out.append("    if (zl_tk_cached_char_w > 0) return zl_tk_cached_char_w;")
-    out.append("    if (!zl_tk_session_dir[0]) return 9;")
-    out.append("    char state_path[600]; zl_tk_session_path(state_path, sizeof(state_path), \"state.txt\");")
-    out.append("    char val[32];")
-    out.append("    for (int retry = 0; retry < 20; retry++) {")
-    out.append("        if (zl_tk_session_state_field(state_path, \"char_w\", val, sizeof(val)) == 0) {")
-    out.append("            int w = atoi(val);")
-    out.append("            if (w > 0) { zl_tk_cached_char_w = w; return w; }")
-    out.append("        }")
-    out.append("        zl_thread_sleep_ms(20);")
-    out.append("    }")
-    out.append("    return 9;")
-    out.append("}")
-    out.append("static inline int zl_tk_session_line_h(void) {")
-    out.append("    if (zl_tk_cached_line_h > 0) return zl_tk_cached_line_h;")
-    out.append("    if (!zl_tk_session_dir[0]) return 20;")
-    out.append("    char state_path[600]; zl_tk_session_path(state_path, sizeof(state_path), \"state.txt\");")
-    out.append("    char val[32];")
-    out.append("    for (int retry = 0; retry < 20; retry++) {")
-    out.append("        if (zl_tk_session_state_field(state_path, \"line_h\", val, sizeof(val)) == 0) {")
-    out.append("            int h = atoi(val);")
-    out.append("            if (h > 0) { zl_tk_cached_line_h = h; return h; }")
-    out.append("        }")
-    out.append("        zl_thread_sleep_ms(20);")
-    out.append("    }")
-    out.append("    return 20;")
-    out.append("}")
-    out.append("static inline int zl_cv_info(void) { return zl_py_cmd0(\"zyenlang.cv_cli\", \"info\"); }")
-    out.append("static inline int zl_cv_readable(const char* input) { char q[512], cmd[1200]; zl_quote_arg(q, sizeof(q), input); snprintf(cmd, sizeof(cmd), \"python -m zyenlang.cv_cli readable %s\", q); return system(cmd); }")
-    out.append("static inline int zl_cv_gray(const char* input, const char* output) { return zl_py_cmd2(\"zyenlang.cv_cli\", \"gray\", input, output); }")
-    out.append("static inline int zl_cv_resize(const char* input, const char* output, int w, int h) { return zl_py_cmd4ii(\"zyenlang.cv_cli\", \"resize\", input, output, w, h); }")
-    out.append("static inline int zl_cv_blur(const char* input, const char* output, int k) { return zl_py_cmd3i(\"zyenlang.cv_cli\", \"blur\", input, output, k); }")
-    out.append("static inline int zl_cv_canny(const char* input, const char* output, int low, int high) { return zl_py_cmd4ii(\"zyenlang.cv_cli\", \"canny\", input, output, low, high); }")
-    out.append("static inline int zl_cv_threshold(const char* input, const char* output, int t) { return zl_py_cmd3i(\"zyenlang.cv_cli\", \"threshold\", input, output, t); }")
-    out.append("static inline int zl_gpu_info(void) { return zl_py_cmd0(\"zyenlang.gpu_cli\", \"info\"); }")
-    out.append("static inline bool zl_gpu_has_nvidia(void) { return zl_py_cmd0(\"zyenlang.gpu_cli\", \"has-nvidia\") == 0; }")
-    out.append("static inline bool zl_gpu_has_torch_cuda(void) { return zl_py_cmd0(\"zyenlang.gpu_cli\", \"has-torch-cuda\") == 0; }")
-    out.append("static inline bool zl_gpu_has_opencv_cuda(void) { return zl_py_cmd0(\"zyenlang.gpu_cli\", \"has-opencv-cuda\") == 0; }")
-    out.append("static inline int zl_gpu_cv_gray(const char* input, const char* output) { return zl_py_cmd2(\"zyenlang.cv_cli\", \"gpu-gray\", input, output); }")
-    out.append("static inline int zl_gpu_vector_add_csv(const char* a, const char* b, const char* output) { return zl_py_cmd3s(\"zyenlang.gpu_cli\", \"vector-add-csv\", a, b, output); }")
-    out.append("static inline int zl_gpu_vector_scale_csv(const char* input, double scale, const char* output) { return zl_py_cmd3sf(\"zyenlang.gpu_cli\", \"vector-scale-csv\", input, scale, output); }")
-    out.append("static inline int zl_gpu_dot_csv(const char* a, const char* b, const char* output) { return zl_py_cmd3s(\"zyenlang.gpu_cli\", \"dot-csv\", a, b, output); }")
+    if needs_python_cli:
+        out.append("static inline void zl_quote_arg(char* out_arg, size_t cap, const char* in_arg) { size_t j = 0; if (cap == 0) return; out_arg[j++] = \'\"\'; for (size_t i = 0; in_arg && in_arg[i] && j + 3 < cap; i++) { char ch = in_arg[i]; if (ch == \'\"\') ch = \'_\'; out_arg[j++] = ch; } if (j + 1 < cap) out_arg[j++] = \'\"\'; out_arg[j < cap ? j : cap - 1] = 0; }")
+        out.append("static inline int zl_py_cmd0(const char* module, const char* op) { char cmd[512]; snprintf(cmd, sizeof(cmd), \"python -m %s %s\", module, op); return system(cmd); }")
+        out.append("static inline int zl_py_cmd2(const char* module, const char* op, const char* a, const char* b) { char qa[512], qb[512], cmd[1600]; zl_quote_arg(qa, sizeof(qa), a); zl_quote_arg(qb, sizeof(qb), b); snprintf(cmd, sizeof(cmd), \"python -m %s %s %s %s\", module, op, qa, qb); return system(cmd); }")
+        out.append("static inline int zl_py_cmd3i(const char* module, const char* op, const char* a, const char* b, int x) { char qa[512], qb[512], cmd[1700]; zl_quote_arg(qa, sizeof(qa), a); zl_quote_arg(qb, sizeof(qb), b); snprintf(cmd, sizeof(cmd), \"python -m %s %s %s %s %d\", module, op, qa, qb, x); return system(cmd); }")
+        out.append("static inline int zl_py_cmd4ii(const char* module, const char* op, const char* a, const char* b, int x, int y) { char qa[512], qb[512], cmd[1800]; zl_quote_arg(qa, sizeof(qa), a); zl_quote_arg(qb, sizeof(qb), b); snprintf(cmd, sizeof(cmd), \"python -m %s %s %s %s %d %d\", module, op, qa, qb, x, y); return system(cmd); }")
+        out.append("static inline int zl_py_cmd3s(const char* module, const char* op, const char* a, const char* b, const char* c) { char qa[512], qb[512], qc[512], cmd[2100]; zl_quote_arg(qa, sizeof(qa), a); zl_quote_arg(qb, sizeof(qb), b); zl_quote_arg(qc, sizeof(qc), c); snprintf(cmd, sizeof(cmd), \"python -m %s %s %s %s %s\", module, op, qa, qb, qc); return system(cmd); }")
+        out.append("static inline int zl_py_cmd3sf(const char* module, const char* op, const char* a, double x, const char* b) { char qa[512], qb[512], cmd[2100]; zl_quote_arg(qa, sizeof(qa), a); zl_quote_arg(qb, sizeof(qb), b); snprintf(cmd, sizeof(cmd), \"python -m %s %s %s %.17g %s\", module, op, qa, x, qb); return system(cmd); }")
+    # std/tk is backed by native C linked from its module metadata.
+    out.extend([
+        "int zl_tk_begin(const char* path);",
+        "int zl_tk_open(const char* title, int width, int height);",
+        "int zl_tk_window(const char* title, int width, int height);",
+        "int zl_tk_bg(const char* color);",
+        "int zl_tk_clear(const char* color);",
+        "int zl_tk_line(int x1, int y1, int x2, int y2, const char* color, int width);",
+        "int zl_tk_rect(int x, int y, int width, int height, const char* color);",
+        "int zl_tk_rect_outline(int x, int y, int width, int height, const char* color, int line_width);",
+        "int zl_tk_circle(int x, int y, int radius, const char* color);",
+        "int zl_tk_circle_outline(int x, int y, int radius, const char* color, int line_width);",
+        "int zl_tk_text(int x, int y, const char* text, const char* color, int size);",
+        "int zl_tk_codeview(int x, int y, int width, int height, int first_line, int line_height, int char_width, int size, int stamp, const char* lines_path);",
+        "int zl_tk_codeview_text(int x, int y, int width, int height, int first_line, int line_height, int char_width, int size, int stamp, const char* lines);",
+        "int zl_tk_image(const char* path, int x, int y);",
+        "const char* zl_tk_script(void);",
+        "int zl_tk_show(void);",
+        "int zl_tk_show_for(int ms);",
+        "int zl_tk_session_open(const char* title, int width, int height, const char* session_dir);",
+        "int zl_tk_session_begin_frame(void);",
+        "int zl_tk_session_redraw(void);",
+        "const char* zl_tk_session_next_event(int timeout_ms);",
+        "int zl_tk_session_pickdir(void);",
+        "int zl_tk_session_close(void);",
+        "int zl_tk_session_char_w(void);",
+        "int zl_tk_session_line_h(void);",
+    ])
+    if needs_python_cli:
+        out.append("static inline int zl_cv_info(void) { return zl_py_cmd0(\"zyenlang.cv_cli\", \"info\"); }")
+        out.append("static inline int zl_cv_readable(const char* input) { char q[512], cmd[1200]; zl_quote_arg(q, sizeof(q), input); snprintf(cmd, sizeof(cmd), \"python -m zyenlang.cv_cli readable %s\", q); return system(cmd); }")
+        out.append("static inline int zl_cv_gray(const char* input, const char* output) { return zl_py_cmd2(\"zyenlang.cv_cli\", \"gray\", input, output); }")
+        out.append("static inline int zl_cv_resize(const char* input, const char* output, int w, int h) { return zl_py_cmd4ii(\"zyenlang.cv_cli\", \"resize\", input, output, w, h); }")
+        out.append("static inline int zl_cv_blur(const char* input, const char* output, int k) { return zl_py_cmd3i(\"zyenlang.cv_cli\", \"blur\", input, output, k); }")
+        out.append("static inline int zl_cv_canny(const char* input, const char* output, int low, int high) { return zl_py_cmd4ii(\"zyenlang.cv_cli\", \"canny\", input, output, low, high); }")
+        out.append("static inline int zl_cv_threshold(const char* input, const char* output, int t) { return zl_py_cmd3i(\"zyenlang.cv_cli\", \"threshold\", input, output, t); }")
+        out.append("static inline int zl_gpu_info(void) { return zl_py_cmd0(\"zyenlang.gpu_cli\", \"info\"); }")
+        out.append("static inline bool zl_gpu_has_nvidia(void) { return zl_py_cmd0(\"zyenlang.gpu_cli\", \"has-nvidia\") == 0; }")
+        out.append("static inline bool zl_gpu_has_torch_cuda(void) { return zl_py_cmd0(\"zyenlang.gpu_cli\", \"has-torch-cuda\") == 0; }")
+        out.append("static inline bool zl_gpu_has_opencv_cuda(void) { return zl_py_cmd0(\"zyenlang.gpu_cli\", \"has-opencv-cuda\") == 0; }")
+        out.append("static inline int zl_gpu_cv_gray(const char* input, const char* output) { return zl_py_cmd2(\"zyenlang.cv_cli\", \"gpu-gray\", input, output); }")
+        out.append("static inline int zl_gpu_vector_add_csv(const char* a, const char* b, const char* output) { return zl_py_cmd3s(\"zyenlang.gpu_cli\", \"vector-add-csv\", a, b, output); }")
+        out.append("static inline int zl_gpu_vector_scale_csv(const char* input, double scale, const char* output) { return zl_py_cmd3sf(\"zyenlang.gpu_cli\", \"vector-scale-csv\", input, scale, output); }")
+        out.append("static inline int zl_gpu_dot_csv(const char* a, const char* b, const char* output) { return zl_py_cmd3s(\"zyenlang.gpu_cli\", \"dot-csv\", a, b, output); }")
     out.append("")
 
-    # Emit all structs first so function prototypes may use them regardless of
-    # source order. This keeps .zy imports convenient and C backend stable.
+    # ZL_Function has one uniform C representation, so complete struct bodies
+    # can be emitted before signature-specific call helpers. This is required
+    # for helpers that return a user struct by value.
+    # ZEP-0013: scan for nested fns BEFORE collect_fn_typedefs so the lifted
+    # fn-type signatures get registered too.
+    scan_nested_fns(ctx, lines)
+    collect_fn_typedefs(ctx, lines)
+    out.extend(emit_struct_forward_decls(ctx))
     out.extend(emit_struct_defs(ctx))
+    out.extend(emit_struct_management(ctx))
+    out.extend(emit_fn_typedefs(ctx))
+    out.extend(emit_lifted_env_structs(ctx))
     out.extend(emit_function_prototypes(ctx))
+    out.extend(emit_owned_argument_wrappers(ctx))
+    out.extend(emit_lifted_fn_prototypes(ctx))
+    # ZEP-0013: thunks need the prototypes above, fnval constants land here.
+    out.extend(emit_fn_thunks(ctx))
 
     i = 0
     while i < len(lines):
@@ -2553,16 +3940,16 @@ def transpile(source: str) -> str:
                     break
                 # Skip fields. They were already emitted in emit_struct_defs().
                 # ZEP-0006: also accept `let this.name: type = default;`.
-                if re.match(r"let\s+this\.[A-Za-z_]\w*\s*:\s*[A-Za-z_]\w*(?:\s*<\s*[A-Za-z_]\w*\s*>)?\s*(?:=\s*.+?)?\s*;\s*$", member_line):
+                # ZEP-0010: type may be `fn(...)->T`.
+                if parse_struct_field_line(member_line):
                     i += 1
                     continue
-                if re.match(r"(?:let\s+)?[A-Za-z_]\w*\s*:\s*[A-Za-z_]\w*(?:\s*<\s*[A-Za-z_]\w*\s*>)?\s*(?:=\s*.+?)?\s*;\s*$", member_line):
+                if re.match(r"(?:let\s+)?[A-Za-z_]\w*\s*:\s*" + TYPE_RX + r"\s*(?:=\s*.+?)?\s*;\s*$", member_line):
                     raise ZyenError(f"line {member_no}: struct field must use `let this.name: type;` or `let this.name: type = default;`, for example `let this.list_len: int;`")
-                fm_method = re.match(r"fn\s+([A-Za-z_]\w*)\s*\((.*)\)\s*(?:->\s*([A-Za-z_]\w*(?:\s*<\s*[A-Za-z_]\w*\s*>)?))?\s*\{\s*$", member_line)
-                if fm_method:
-                    method_name = fm_method.group(1)
-                    params, _defaults = parse_params(fm_method.group(2), member_no)
-                    ret_type = (fm_method.group(3) or "void").replace(" ", "")
+                parsed_method = parse_fn_header_line(member_line)
+                if parsed_method and parsed_method[3] == "defn":
+                    method_name, params_text, ret_type, _kind = parsed_method
+                    params, _defaults = parse_params(params_text, member_no)
                     c_name = f"{struct_name}_{method_name}"
                     c_params = {"this": f"ptrstruct<{struct_name}>"}
                     c_params.update(params)
@@ -2573,17 +3960,14 @@ def transpile(source: str) -> str:
                 raise ZyenError(f"line {member_no}: invalid struct member")
             continue
 
-        fm_decl = re.match(r"fn\s+([A-Za-z_]\w*)\s*\((.*)\)\s*(?:->\s*([A-Za-z_]\w*(?:\s*<\s*[A-Za-z_]\w*\s*>)?))?\s*;\s*$", line)
-        if fm_decl:
-            # Explicit prototype only.  collect_signatures() already registered it.
-            i += 1
-            continue
-
-        fm = re.match(r"fn\s+([A-Za-z_]\w*)\s*\((.*)\)\s*(?:->\s*([A-Za-z_]\w*(?:\s*<\s*[A-Za-z_]\w*\s*>)?))?\s*\{\s*$", line)
-        if fm:
-            name = fm.group(1)
-            ret_type = (fm.group(3) or "void").replace(" ", "")
-            params, _defaults = parse_params(fm.group(2), line_no)
+        parsed = parse_fn_header_line(line)
+        if parsed:
+            name, params_text, ret_type, kind = parsed
+            if kind == "decl":
+                # Prototype only. collect_signatures() already registered it.
+                i += 1
+                continue
+            params, _defaults = parse_params(params_text, line_no)
             reset_function_context(ctx, name, params)
             out.append(c_function_signature(name, ret_type, params) + " {")
             i = emit_function_body(lines, i + 1, out, ctx)
@@ -2596,6 +3980,9 @@ def transpile(source: str) -> str:
         if line and line != "}":
             raise ZyenError(f"line {line_no}: top-level statement is not allowed; only import, struct, and fn are allowed at file scope")
         i += 1
+
+    # ZEP-0013: lifted closure bodies last so they see every prototype.
+    out.extend(emit_lifted_fn_bodies(ctx, lines))
 
     return "\n".join(out).rstrip() + "\n"
 
@@ -2749,6 +4136,130 @@ def parse_user_import(cleaned: str):
     return re.match(r'^import\s+"([^"]+)"\s*(?:as\s+([A-Za-z_]\w*))?\s*;\s*$', cleaned)
 
 
+def parse_legacy_c_module_import(cleaned: str):
+    """Recognize the removed pre-v0.1.49 native import for migration errors."""
+    return re.match(r'^import\s+c_module\.load\(\s*"([^"]+)"\s*\)\s+as\s+([A-Za-z_]\w*)\s*;\s*$', cleaned)
+
+
+@dataclass(frozen=True)
+class CModuleBinding:
+    is_field: bool
+    name: str
+    type_alias: str
+    load_alias: str
+    manifest_text: str
+
+
+def parse_c_module_binding(raw: str) -> Optional[CModuleBinding]:
+    """Parse a dependent c_module declaration without resolving its alias."""
+    line = strip_comment(raw).strip()
+    match = re.match(
+        r'^let\s+(?:(this)\.)?([A-Za-z_]\w*)\s*:\s*([A-Za-z_]\w*)\.Module\s*=\s*'
+        r'([A-Za-z_]\w*)\.load\(\s*"([^"]+)"\s*\)\s*;\s*$',
+        line,
+    )
+    if not match:
+        return None
+    return CModuleBinding(
+        is_field=match.group(1) == "this",
+        name=match.group(2),
+        type_alias=match.group(3),
+        load_alias=match.group(4),
+        manifest_text=match.group(5),
+    )
+
+
+def _c_module_aliases(aliases: Dict[str, str]) -> Set[str]:
+    prefix = module_prefix("c_module")
+    return {alias for alias, value in aliases.items() if value == prefix}
+
+
+def _legacy_c_module_error(path: Path, line_no: int) -> ZyenError:
+    return ZyenError(
+        f'{path}:{line_no}: `import c_module.load("...") as name;` was removed; '
+        'use `import <std/c_module> as c_module;` and '
+        '`let value: c_module.Module = c_module.load("module.zlcm.h");`'
+    )
+
+
+def _resolve_c_module_manifest(source_path: Path, manifest_text: str, line_no: int) -> Path:
+    manifest = Path(manifest_text)
+    if not manifest.is_absolute():
+        manifest = source_path.parent / manifest
+    manifest = manifest.resolve()
+    if not manifest.exists():
+        raise ZyenError(f'{source_path}:{line_no}: c_module template not found: "{manifest_text}"')
+    if not native_c_module.is_native_module_path(manifest):
+        raise ZyenError(
+            f'{source_path}:{line_no}: c_module.load expects a `.zlcm.h` or `.zlcm.json` template, got "{manifest_text}"'
+        )
+    return manifest
+
+
+def expand_c_module_binding(
+    raw: str,
+    source_path: Path,
+    line_no: int,
+    aliases: Dict[str, str],
+    native_seen: Set[Path],
+) -> Tuple[str, str]:
+    """Rewrite one dependent declaration and return optional wrapper source."""
+    binding = parse_c_module_binding(raw)
+    c_aliases = _c_module_aliases(aliases)
+    if binding is not None:
+        related = binding.type_alias in c_aliases or binding.load_alias in c_aliases
+        if binding.type_alias != binding.load_alias and related:
+            raise ZyenError(
+                f"{source_path}:{line_no}: c_module type alias `{binding.type_alias}` and load alias "
+                f"`{binding.load_alias}` must match"
+            )
+        alias = binding.type_alias
+        if alias not in c_aliases:
+            raise ZyenError(
+                f"{source_path}:{line_no}: {alias}.load requires "
+                f"`import <std/c_module> as {alias};` before this declaration"
+            )
+
+        manifest = _resolve_c_module_manifest(source_path, binding.manifest_text, line_no)
+        try:
+            hidden_type = native_c_module.hidden_struct_name(manifest)
+            wrapper = ""
+            if manifest not in native_seen:
+                _module, wrapper = native_c_module.generate_module_text(
+                    manifest,
+                    struct_name=hidden_type,
+                    include_load=False,
+                    source_label=binding.manifest_text,
+                )
+                native_seen.add(manifest)
+        except (OSError, ValueError, json.JSONDecodeError) as exc:
+            raise ZyenError(f"{source_path}:{line_no}: invalid c_module template `{binding.manifest_text}`: {exc}") from exc
+
+        target = f"this.{binding.name}" if binding.is_field else binding.name
+        indent = raw[: len(raw) - len(raw.lstrip())]
+        initializer = f"{hidden_type} {{}}" if binding.is_field else hidden_type
+        rewritten = f"{indent}let {target}: {hidden_type} = {initializer};"
+        return rewritten, wrapper
+
+    cleaned = strip_comment(raw).strip()
+    for alias in sorted(c_aliases):
+        if re.search(rf"\b{re.escape(alias)}\.load\s*\(", cleaned):
+            raise ZyenError(
+                f"{source_path}:{line_no}: {alias}.load requires a string literal and must directly initialize "
+                f"`let value: {alias}.Module = {alias}.load(\"module.zlcm.h\");`"
+            )
+        if re.search(rf"\b{re.escape(alias)}\.Module\b", cleaned):
+            raise ZyenError(
+                f"{source_path}:{line_no}: {alias}.Module is only valid in a field or local declaration "
+                f"directly initialized by {alias}.load(\"module.zlcm.h\")"
+            )
+    if re.search(r"\bc_module\.(?:Module\b|load\s*\()", cleaned) and "c_module" not in c_aliases:
+        raise ZyenError(
+            f"{source_path}:{line_no}: c_module requires `import <std/c_module> as c_module;` before use"
+        )
+    return replace_module_calls(raw, aliases), ""
+
+
 
 def load_user_module_as_alias(
     input_path: Path,
@@ -2756,6 +4267,7 @@ def load_user_module_as_alias(
     seen: Set[Path],
     stack: List[Path],
     seen_aliases: Set[Tuple[Path, str]],
+    native_seen: Set[Path],
 ) -> str:
     """Load a user .zy file as a local namespace.
 
@@ -2780,27 +4292,37 @@ def load_user_module_as_alias(
     if not path.exists():
         raise FileNotFoundError(path)
 
+    if native_c_module.is_native_module_path(path):
+        raise ZyenError(
+            f'cannot import native template `{path.name}` directly; use `import <std/c_module> as c_module;` '
+            f'and `let value: c_module.Module = c_module.load("{path.name}");`'
+        )
+
     seen_aliases.add(key)
     stack.append(path)
 
     local_aliases: Dict[str, str] = {}
     dependency_pieces: List[str] = []
+    native_pieces: List[str] = []
     body_lines: List[str] = []
 
     for line_no, raw in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
         cleaned = strip_comment(raw).strip()
+        c_module_import = parse_legacy_c_module_import(cleaned)
         user_import = parse_user_import(cleaned)
         std_import = parse_std_import(cleaned)
+        if c_module_import:
+            raise _legacy_c_module_error(path, line_no)
         if user_import:
             import_path = resolve_import_path(path.parent, user_import.group(1))
             import_alias = user_import.group(2)
             if import_alias:
                 local_aliases[import_alias] = module_prefix(import_alias)
-                dependency_pieces.append(load_user_module_as_alias(import_path, import_alias, seen, stack, seen_aliases))
+                dependency_pieces.append(load_user_module_as_alias(import_path, import_alias, seen, stack, seen_aliases, native_seen))
             else:
                 # A plain user import inside a namespaced module is still global,
                 # preserving the original v0.1 behavior.
-                dependency_pieces.append(load_source_with_imports(import_path, seen=seen, stack=stack, seen_aliases=seen_aliases))
+                dependency_pieces.append(load_source_with_imports(import_path, seen=seen, stack=stack, seen_aliases=seen_aliases, native_seen=native_seen))
             continue
         if std_import:
             import_path = resolve_std_import_path(std_import.group(1))
@@ -2808,24 +4330,29 @@ def load_user_module_as_alias(
             std_alias = std_import.group(2) or imported_name
             local_aliases[std_alias] = module_prefix(imported_name)
             if imported_name == "prelude":
-                dependency_pieces.append(load_prelude_into_aliases(import_path, local_aliases, seen, stack))
+                dependency_pieces.append(load_prelude_into_aliases(import_path, local_aliases, seen, stack, native_seen))
             else:
-                dependency_pieces.append(load_std_module(import_path, imported_name, seen, stack))
+                dependency_pieces.append(load_std_module(import_path, imported_name, seen, stack, native_seen))
             continue
         if cleaned.startswith("import "):
-            raise ZyenError(f"{path}:{line_no}: import must look like `import \"file.zy\";`, `import \"file.zy\" as name;`, or `import <std/name>;`")
-        body_lines.append(replace_module_calls(raw, local_aliases))
+            raise ZyenError(f"{path}:{line_no}: import must use a `.zy` file or std module")
+        expanded, wrapper = expand_c_module_binding(raw, path, line_no, local_aliases, native_seen)
+        if wrapper:
+            native_pieces.append(wrapper)
+        body_lines.append(expanded)
 
     stack.pop()
     body = "\n".join(body_lines) + "\n"
     namespaced_body = prefix_module_body(body, alias)
-    return "\n".join(piece for piece in dependency_pieces if piece) + "\n" + namespaced_body
+    all_dependencies = dependency_pieces + native_pieces
+    return "\n".join(piece for piece in all_dependencies if piece) + "\n" + namespaced_body
 
 def load_std_module(
     input_path: Path,
     module_name: str,
     seen: Set[Path],
     stack: List[Path],
+    native_seen: Set[Path],
 ) -> str:
     """Load and namespace a standard-library module.
 
@@ -2846,16 +4373,20 @@ def load_std_module(
 
     local_aliases: Dict[str, str] = {}
     dependency_pieces: List[str] = []
+    native_pieces: List[str] = []
     body_lines: List[str] = []
 
     for line_no, raw in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
         cleaned = strip_comment(raw).strip()
+        c_module_import = parse_legacy_c_module_import(cleaned)
         user_import = parse_user_import(cleaned)
         std_import = parse_std_import(cleaned)
+        if c_module_import:
+            raise _legacy_c_module_error(path, line_no)
         if user_import:
             import_path = resolve_import_path(path.parent, user_import.group(1))
             # User imports inside std are rare; keep them global for now.
-            dependency_pieces.append(load_source_with_imports(import_path, seen=seen, stack=stack))
+            dependency_pieces.append(load_source_with_imports(import_path, seen=seen, stack=stack, native_seen=native_seen))
             continue
         if std_import:
             import_path = resolve_std_import_path(std_import.group(1))
@@ -2866,18 +4397,22 @@ def load_std_module(
             # `prelude` is only an aggregator; importing it inside a module simply
             # loads its member modules and exposes their aliases locally.
             if imported_name == "prelude":
-                dependency_pieces.append(load_prelude_into_aliases(import_path, local_aliases, seen, stack))
+                dependency_pieces.append(load_prelude_into_aliases(import_path, local_aliases, seen, stack, native_seen))
             else:
-                dependency_pieces.append(load_std_module(import_path, imported_name, seen, stack))
+                dependency_pieces.append(load_std_module(import_path, imported_name, seen, stack, native_seen))
             continue
         if cleaned.startswith("import "):
             raise ZyenError(f"{path}:{line_no}: import must look like `import \"file.zy\";` or `import <std/name>;`")
-        body_lines.append(replace_module_calls(raw, local_aliases))
+        expanded, wrapper = expand_c_module_binding(raw, path, line_no, local_aliases, native_seen)
+        if wrapper:
+            native_pieces.append(wrapper)
+        body_lines.append(expanded)
 
     stack.pop()
     body = "\n".join(body_lines) + "\n"
     namespaced_body = prefix_module_body(body, module_name)
-    return "\n".join(piece for piece in dependency_pieces if piece) + "\n" + namespaced_body
+    all_dependencies = dependency_pieces + native_pieces
+    return "\n".join(piece for piece in all_dependencies if piece) + "\n" + namespaced_body
 
 
 def load_prelude_into_aliases(
@@ -2885,6 +4420,7 @@ def load_prelude_into_aliases(
     aliases: Dict[str, str],
     seen: Set[Path],
     stack: List[Path],
+    native_seen: Set[Path],
 ) -> str:
     """Load std/prelude as an alias aggregator.
 
@@ -2910,7 +4446,7 @@ def load_prelude_into_aliases(
                 raise ZyenError(f"{path}:{line_no}: prelude cannot import itself")
             alias = std_import.group(2) or imported_name
             aliases[alias] = module_prefix(imported_name)
-            pieces.append(load_std_module(import_path, imported_name, seen, stack))
+            pieces.append(load_std_module(import_path, imported_name, seen, stack, native_seen))
             continue
         if cleaned and not cleaned.startswith("//"):
             raise ZyenError(f"{path}:{line_no}: prelude may only contain std imports")
@@ -2923,6 +4459,7 @@ def load_source_with_imports(
     seen: Optional[Set[Path]] = None,
     stack: Optional[List[Path]] = None,
     seen_aliases: Optional[Set[Tuple[Path, str]]] = None,
+    native_seen: Optional[Set[Path]] = None,
 ) -> str:
     """Load a .zy file and expand imports.
 
@@ -2936,6 +4473,7 @@ def load_source_with_imports(
     seen = seen if seen is not None else set()
     stack = stack if stack is not None else []
     seen_aliases = seen_aliases if seen_aliases is not None else set()
+    native_seen = native_seen if native_seen is not None else set()
     path = input_path.resolve()
 
     if path in stack:
@@ -2946,26 +4484,36 @@ def load_source_with_imports(
     if not path.exists():
         raise FileNotFoundError(path)
 
+    if native_c_module.is_native_module_path(path):
+        raise ZyenError(
+            f'cannot compile native template `{path.name}` directly; load it from a `.zy` file with '
+            '`import <std/c_module> as c_module;` and `c_module.load("...")`'
+        )
+
     seen.add(path)
     stack.append(path)
     aliases: Dict[str, str] = {}
     pieces: List[str] = []
+    native_pieces: List[str] = []
 
     for line_no, raw in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
         cleaned = strip_comment(raw).strip()
+        c_module_import = parse_legacy_c_module_import(cleaned)
         user_import = parse_user_import(cleaned)
         std_import = parse_std_import(cleaned)
+        if c_module_import:
+            raise _legacy_c_module_error(path, line_no)
         if user_import:
             import_path = resolve_import_path(path.parent, user_import.group(1))
             import_alias = user_import.group(2)
             if import_alias:
                 aliases[import_alias] = module_prefix(import_alias)
                 pieces.append(f"// begin import {import_path} as {import_alias}")
-                pieces.append(load_user_module_as_alias(import_path, import_alias, seen, stack, seen_aliases))
+                pieces.append(load_user_module_as_alias(import_path, import_alias, seen, stack, seen_aliases, native_seen))
                 pieces.append(f"// end import {import_path} as {import_alias}")
             else:
                 pieces.append(f"// begin import {import_path}")
-                pieces.append(load_source_with_imports(import_path, seen=seen, stack=stack, seen_aliases=seen_aliases))
+                pieces.append(load_source_with_imports(import_path, seen=seen, stack=stack, seen_aliases=seen_aliases, native_seen=native_seen))
                 pieces.append(f"// end import {import_path}")
             continue
         if std_import:
@@ -2975,20 +4523,23 @@ def load_source_with_imports(
 
             if imported_name == "prelude":
                 pieces.append(f"// begin std prelude {import_path}")
-                pieces.append(load_prelude_into_aliases(import_path, aliases, seen, stack))
+                pieces.append(load_prelude_into_aliases(import_path, aliases, seen, stack, native_seen))
                 pieces.append(f"// end std prelude {import_path}")
             else:
                 aliases[alias] = module_prefix(imported_name)
                 pieces.append(f"// begin std import {import_path} as {alias}")
-                pieces.append(load_std_module(import_path, imported_name, seen, stack))
+                pieces.append(load_std_module(import_path, imported_name, seen, stack, native_seen))
                 pieces.append(f"// end std import {import_path}")
             continue
         if cleaned.startswith("import "):
-            raise ZyenError(f"{path}:{line_no}: import must look like `import \"file.zy\";` or `import <std/name>;`")
-        pieces.append(replace_module_calls(raw, aliases))
+            raise ZyenError(f"{path}:{line_no}: import must use a `.zy` file or std module")
+        expanded, wrapper = expand_c_module_binding(raw, path, line_no, aliases, native_seen)
+        if wrapper:
+            native_pieces.append(wrapper)
+        pieces.append(expanded)
 
     stack.pop()
-    return "\n".join(pieces) + "\n"
+    return "\n".join(native_pieces + pieces) + "\n"
 
 def build_file(input_path: Path, output_path: Path) -> None:
     source = load_source_with_imports(input_path)
@@ -2997,9 +4548,65 @@ def build_file(input_path: Path, output_path: Path) -> None:
     output_path.write_text(c_code, encoding="utf-8")
 
 
-def compile_c(c_path: Path, exe_path: Path) -> None:
+def collect_native_c_metadata(
+    input_path: Path,
+    seen: Optional[Set[Path]] = None,
+    stack: Optional[List[Path]] = None,
+) -> dict:
+    """Collect native C metadata from .zy imports and .zlcm manifests."""
+    seen = seen if seen is not None else set()
+    stack = stack if stack is not None else []
+    path = input_path.resolve()
+    if path in stack:
+        chain = " -> ".join(p.name for p in stack + [path])
+        raise ZyenError(f"circular import detected while collecting C metadata: {chain}")
+    if path in seen:
+        return native_c_module.empty_native_metadata()
+    if not path.exists():
+        raise FileNotFoundError(path)
+
+    if native_c_module.is_native_module_path(path):
+        seen.add(path)
+        return native_c_module.native_metadata_from_manifest(path)
+
+    seen.add(path)
+    stack.append(path)
+    try:
+        meta = native_c_module.native_metadata_from_zy(path)
+        aliases: Dict[str, str] = {}
+        for line_no, raw in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+            cleaned = strip_comment(raw).strip()
+            c_module_import = parse_legacy_c_module_import(cleaned)
+            user_import = parse_user_import(cleaned)
+            std_import = parse_std_import(cleaned)
+            if c_module_import:
+                raise _legacy_c_module_error(path, line_no)
+            elif user_import:
+                child = resolve_import_path(path.parent, user_import.group(1))
+            elif std_import:
+                child = resolve_std_import_path(std_import.group(1))
+                imported_name = module_name_from_path(child)
+                alias = std_import.group(2) or imported_name
+                aliases[alias] = module_prefix(imported_name)
+            else:
+                binding = parse_c_module_binding(raw)
+                if binding is None or binding.type_alias not in _c_module_aliases(aliases):
+                    continue
+                child = _resolve_c_module_manifest(path, binding.manifest_text, line_no)
+            try:
+                child_meta = collect_native_c_metadata(child, seen, stack)
+            except FileNotFoundError as e:
+                raise FileNotFoundError(f"{path}:{line_no}: {e}") from e
+            native_c_module.merge_native_metadata(meta, child_meta)
+    finally:
+        stack.pop()
+    return native_c_module.finalize_native_metadata(meta)
+
+
+def compile_c(c_path: Path, exe_path: Path, native_meta: Optional[dict] = None) -> None:
     exe_path.parent.mkdir(parents=True, exist_ok=True)
-    cmd = ["gcc", "-std=c11", "-Wall", "-Wextra", str(c_path), "-o", str(exe_path)]
+    meta = native_meta or native_c_module.empty_native_metadata()
+    cmd = native_c_module.gcc_command(native_c_module.finalize_native_metadata(meta), c_path, exe_path)
     subprocess.run(cmd, check=True)
 
 
@@ -3010,13 +4617,14 @@ def run_source(input_path: Path) -> int:
         exe_name = input_path.stem + (".exe" if sys.platform.startswith("win") else "")
         exe_path = tmp_path / exe_name
         build_file(input_path, c_path)
-        compile_c(c_path, exe_path)
+        compile_c(c_path, exe_path, collect_native_c_metadata(input_path))
         result = subprocess.run([str(exe_path)], check=False)
         return result.returncode
 
 
 def main(argv: Optional[List[str]] = None) -> int:
-    parser = argparse.ArgumentParser(prog="zyen", description="ZyenLang v0.1.48 transpiler")
+    from . import __version__ as _pkg_version
+    parser = argparse.ArgumentParser(prog="zy", description=f"ZyenLang v{_pkg_version} transpiler")
     sub = parser.add_subparsers(dest="cmd", required=True)
 
     p_build = sub.add_parser("build", help="transpile .zy to .c")
@@ -3030,15 +4638,32 @@ def main(argv: Optional[List[str]] = None) -> int:
     p_check = sub.add_parser("check", help="only validate/transpile in memory")
     p_check.add_argument("input")
 
+    p_c_module = sub.add_parser("c-module", help="generate ZyenLang wrappers for native C modules")
+    c_module_sub = p_c_module.add_subparsers(dest="c_module_cmd", required=True)
+    p_c_module_gen = c_module_sub.add_parser("gen", help="generate a .zy wrapper from a .zlcm.h template or JSON manifest")
+    p_c_module_gen.add_argument("manifest")
+    p_c_module_gen.add_argument("-o", "--output", default=None)
+
+    sub.add_parser("version", help="print installed ZyenLang package version")
+
     # `zy doctor` — ZEP-0007. Defined in zyenlang.cli.doctor so the check
     # logic stays out of the transpiler hot path.
     from .cli import doctor as _doctor_cli
     _doctor_cli.add_subparser(sub)
 
     args = parser.parse_args(argv)
+    if args.cmd == "version":
+        print(f"zyenlang {_pkg_version}")
+        return 0
     if args.cmd == "doctor":
         return _doctor_cli.handle(args)
     try:
+        if args.cmd == "c-module":
+            if args.c_module_cmd == "gen":
+                out_path = native_c_module.write_module(Path(args.manifest), Path(args.output) if args.output else None)
+                print(out_path)
+                return 0
+            return 1
         input_path = Path(args.input)
         if args.cmd == "build":
             if args.output:
@@ -3054,7 +4679,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                 with tempfile.TemporaryDirectory() as tmp:
                     temp_c = Path(tmp) / (input_path.stem + ".c")
                     build_file(input_path, temp_c)
-                    compile_c(temp_c, requested_output)
+                    compile_c(temp_c, requested_output, collect_native_c_metadata(input_path))
                 print(f"compiled: {requested_output}")
                 return 0
 
@@ -3062,7 +4687,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             build_file(input_path, output_path)
             print(f"generated: {output_path}")
             if args.exe:
-                compile_c(output_path, Path(args.exe))
+                compile_c(output_path, Path(args.exe), collect_native_c_metadata(input_path))
                 print(f"compiled: {args.exe}")
             return 0
         if args.cmd == "run":
@@ -3075,6 +4700,9 @@ def main(argv: Optional[List[str]] = None) -> int:
         print(f"C compiler failed: {e}", file=sys.stderr)
         return 2
     except ZyenError as e:
+        print(f"Zyen error: {e}", file=sys.stderr)
+        return 1
+    except ValueError as e:
         print(f"Zyen error: {e}", file=sys.stderr)
         return 1
     except FileNotFoundError as e:

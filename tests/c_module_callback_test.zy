@@ -1,0 +1,171 @@
+import <std/test>;
+import <std/c_module> as c_module;
+import <std/mem>;
+
+fn twice(value: int) -> int {
+    return value * 2;
+}
+
+fn make_adder(delta: int) -> fn(int)->int {
+    fn add_delta(value: int) -> int {
+        return value + delta;
+    }
+    return add_delta;
+}
+
+fn wrap_callback(callback: fn(int)->int) -> fn(int)->int {
+    fn call_inner(value: int) -> int {
+        return callback(value);
+    }
+    return call_inner;
+}
+
+fn make_pointer_reader(value: ptr<int>) -> fn()->int {
+    fn read_value() -> int {
+        return *value;
+    }
+    return read_value;
+}
+
+fn read_pointer_value(value: ptr<int>) -> int {
+    return *value;
+}
+
+fn release_owned_pointer() -> void {
+    let native: c_module.Module = c_module.load("native_callback.zlcm.h");
+    let original: ptr<int> = native.make_owned(41);
+    let alias: ptr<int> = original;
+    print(*alias);
+}
+
+fn release_pointer_on_loop_jumps() -> void {
+    let native: c_module.Module = c_module.load("native_callback.zlcm.h");
+    for (let i = 0; i < 3; set i += 1) {
+        let value: ptr<int> = native.make_owned(i);
+        if (i == 0) {
+            continue;
+        }
+        if (i == 1) {
+            break;
+        }
+        print(*value);
+    }
+}
+
+fn release_pointer_from_list() -> void {
+    let native: c_module.Module = c_module.load("native_callback.zlcm.h");
+    let values: List = [];
+    let value: ptr<int> = native.make_owned(77);
+    values.append(value);
+    set value = None;
+    let borrowed_from_list: ptr<int> = (ptr<int>)values.get(0);
+    print(*borrowed_from_list);
+    values.clear();
+}
+
+fn transfer_pointer_from_list_pop() -> void {
+    let native: c_module.Module = c_module.load("native_callback.zlcm.h");
+    let values: List = [];
+    let value: ptr<int> = native.make_owned(88);
+    values.append(value);
+    set value = None;
+    let popped: ptr<int> = (ptr<int>)values.pop();
+    values.clear();
+    print(*popped);
+}
+
+fn raw_pointer_adapter_value() -> int {
+    let native: c_module.Module = c_module.load("native_callback.zlcm.h");
+    let first: ptr<int> = native.make_owned(1);
+    let *slot: ptr<ptr<int>> = first;
+    let second: ptr<int> = native.make_owned(42);
+    native.assign_pointer(slot, second);
+    let loaded: ptr<int> = *slot;
+    return *loaded;
+}
+
+fn main() -> int {
+    let t: TestStats = test.new_stats("c_module callbacks");
+    let native: c_module.Module = c_module.load("native_callback.zlcm.h");
+
+    let saved: fn(int)->int = make_adder(5);
+    native.set_callback(saved);
+    set saved = None;
+    t.eq_int("C retained closure", native.invoke(10), 15);
+
+    native.set_callback(twice);
+    t.eq_int("replace with named callback", native.invoke(9), 18);
+    native.clear_callback();
+    t.eq_int("unregister callback", native.invoke(9), -777);
+
+    let source: fn(int)->int = make_adder(7);
+    let echoed: fn(int)->int = native.echo(source);
+    set source = None;
+    t.eq_int("C returned owned callback", echoed(5), 12);
+
+    let boxed_source: fn(int)->int = make_adder(3);
+    let box: NativeCallbackBox = native.make_box(boxed_source);
+    set boxed_source = None;
+    t.eq_int("callback struct through C", native.call_box(box, 20), 23);
+    t.eq_int("callback struct field", box.callback(30), 33);
+
+    let inner_callback: fn(int)->int = make_adder(11);
+    let wrapped_callback: fn(int)->int = wrap_callback(inner_callback);
+    set inner_callback = None;
+    t.eq_int("closure captures closure", wrapped_callback(31), 42);
+
+    native.reset_drop_count();
+    let captured_pointer: ptr<int> = native.make_owned(42);
+    let pointer_reader: fn()->int = make_pointer_reader(captured_pointer);
+    set captured_pointer = None;
+    t.eq_int("closure captures owned ptr", pointer_reader(), 42);
+    t.eq_int("captured ptr remains owned", native.drop_count(), 0);
+    set pointer_reader = None;
+    t.eq_int("closure env releases captured ptr", native.drop_count(), 1);
+
+    native.reset_drop_count();
+    release_owned_pointer();
+    t.eq_int("last ptr alias runs destructor", native.drop_count(), 1);
+    native.reset_drop_count();
+    release_pointer_on_loop_jumps();
+    t.eq_int("break and continue release locals", native.drop_count(), 2);
+    native.reset_drop_count();
+    release_pointer_from_list();
+    t.eq_int("List clear releases owned ptr", native.drop_count(), 1);
+    native.reset_drop_count();
+    transfer_pointer_from_list_pop();
+    t.eq_int("List pop transfers owned ptr", native.drop_count(), 1);
+
+    native.reset_drop_count();
+    t.eq_int("method owned ptr temporary", native.read_pointer(native.make_owned(42)), 42);
+    t.eq_int("method releases ptr temporary", native.drop_count(), 1);
+    native.reset_drop_count();
+    t.eq_int("direct call owned ptr temporary", read_pointer_value(native.make_owned(42)), 42);
+    t.eq_int("direct call releases ptr temporary", native.drop_count(), 1);
+    native.reset_drop_count();
+    let pointer_fn: fn(ptr<int>)->int = read_pointer_value;
+    t.eq_int("fn call owned ptr temporary", pointer_fn(native.make_owned(42)), 42);
+    t.eq_int("fn call releases ptr temporary", native.drop_count(), 1);
+    native.reset_drop_count();
+    print(native.make_owned(55));
+    t.eq_int("print releases ptr temporary", native.drop_count(), 1);
+    native.reset_drop_count();
+    t.eq_int("raw C pointer adapter", raw_pointer_adapter_value(), 42);
+    t.eq_int("raw C pointer adapter releases", native.drop_count(), 2);
+
+    native.reset_drop_count();
+    let owned: ptr<int> = native.make_owned(42);
+    let owned_alias: ptr<int> = owned;
+    t.eq_int("mem.free owned", mem.free(owned), 0);
+    t.eq_bool("mem.free invalidates aliases", mem.is_valid(owned_alias), false);
+    t.eq_int("forced free destructor once", native.drop_count(), 1);
+    t.eq_int("double free", mem.free(owned_alias), -3);
+
+    native.reset_drop_count();
+    let borrowed: ptr<int> = native.make_borrowed(99);
+    t.eq_int("borrowed pointer value", *borrowed, 99);
+    t.eq_int("borrowed pointer free", mem.free(borrowed), -2);
+    t.eq_int("borrowed pointer not destroyed", native.drop_count(), 0);
+
+    return t.summary();
+}

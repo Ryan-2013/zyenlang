@@ -9,6 +9,15 @@
 *.pdb
 *.ilk
 
+# Native sources that are part of the runtime and c_module fixtures.
+!std/tk_native.c
+!zyenlang/std/tk_native.c
+!tests/native_abi.c
+!tests/native_callback.c
+!tests/native_math.c
+!tests/c_module_a/shared.c
+!tests/c_module_b/shared.c
+
 # Python package artefacts
 __pycache__/
 *.pyc
@@ -23,6 +32,8 @@ dist/
 ide_session/
 tk_scene.ztk
 *.ztk
+tk_native_session_smoke/
+verify_v143/
 .zy_log_file
 zy_log_test_output.txt
 zy_gpu_*.csv

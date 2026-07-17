@@ -1,12 +1,14 @@
 // Tk-like 2D GUI / Canvas bridge for ZyenLang.
+// c_headers: tk_native.h
+// c_sources: tk_native.c
+// c_libs: user32, gdi32, shell32, ole32
 // Usage:
 //   import <std/tk>;
 //   tk.open("Demo", 800, 480);
 //   tk.rect(40, 40, 120, 80, "#ff8800");
 //   tk.show();
 //
-// This is a low-level bridge over Python tkinter.
-// It writes a small scene script, then asks: python -m zyenlang.tk_cli show ...
+// This is a low-level bridge over the native C GUI backend.
 
 fn begin(path: str) -> int {
     return zl_tk_begin(path);
@@ -52,6 +54,16 @@ fn text(x: int, y: int, value: str, color: str, size: int) -> int {
     return zl_tk_text(x, y, value, color, size);
 }
 
+// File-backed viewport retained for non-session scene compatibility.
+fn codeview(x: int, y: int, width: int, height: int, first_line: int, line_height: int, char_width: int, size: int, stamp: int, lines_path: str) -> int {
+    return zl_tk_codeview(x, y, width, height, first_line, line_height, char_width, size, stamp, lines_path);
+}
+
+// Native session viewport: copies visible text into the C frame buffer.
+fn codeview_text(x: int, y: int, width: int, height: int, first_line: int, line_height: int, char_width: int, size: int, stamp: int, lines: str) -> int {
+    return zl_tk_codeview_text(x, y, width, height, first_line, line_height, char_width, size, stamp, lines);
+}
+
 fn image(path: str, x: int, y: int) -> int {
     return zl_tk_image(path, x, y);
 }
@@ -68,19 +80,17 @@ fn show_for(ms: int) -> int {
     return zl_tk_show_for(ms);
 }
 
-// Long-lived session mode: open a Tk window and drive it from ZyenLang.
-// See docs/tk_session_ipc.md for the protocol.
+// Long-lived native session. Frames and events stay in C memory.
 fn session_open(title: str, width: int, height: int, session_dir: str) -> int {
     return zl_tk_session_open(title, width, height, session_dir);
 }
 
-// Start a new frame: truncates the scene file so the next draw calls
-// produce a fresh canvas.
+// Start building the next in-memory frame.
 fn session_begin_frame() -> int {
     return zl_tk_session_begin_frame();
 }
 
-// Tell the Tk window to reload the scene and repaint.
+// Atomically publish the frame and repaint.
 fn session_redraw() -> int {
     return zl_tk_session_redraw();
 }
@@ -90,6 +100,10 @@ fn session_redraw() -> int {
 // "mouse\t100\t200", "ready", "quit".
 fn session_next_event(timeout_ms: int) -> str {
     return zl_tk_session_next_event(timeout_ms);
+}
+
+fn session_pickdir() -> int {
+    return zl_tk_session_pickdir();
 }
 
 fn session_close() -> int {

@@ -21,10 +21,6 @@ fn alloc_str(value: str) -> ptr<str> {
     return zl_mem_alloc_str(value);
 }
 
-fn alloc_any(value: Any) -> ptr<Any> {
-    return zl_mem_alloc_any(value);
-}
-
 fn free(p: ptr) -> int {
     return zl_mem_free(p);
 }

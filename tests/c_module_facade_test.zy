@@ -1,0 +1,17 @@
+import <std/test>;
+import <std/c_module> as c_module;
+
+struct Module {
+    let this.source_module: c_module.Module = c_module.load("native_math.zlcm.h");
+
+    fn add(a: int, b: int) -> int {
+        return this.source_module.add(a, b);
+    }
+}
+
+fn main() -> int {
+    let t: TestStats = test.new_stats("c_module facade");
+    let module: Module = Module {};
+    t.eq_int("field default load", module.add(b: 22, a: 20), 42);
+    return t.summary();
+}

@@ -1,0 +1,4 @@
+fn main() -> int {
+    let missing: fn(int)->int = None;
+    return missing(1);
+}

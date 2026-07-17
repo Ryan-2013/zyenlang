@@ -1,0 +1,9 @@
+import <std/test>;
+import "c_module_imported_api.zy" as native_api;
+
+fn main() -> int {
+    let t: TestStats = test.new_stats("c_module import graph");
+    let math: ImportedMath = native_api.new_math();
+    t.eq_int("imported facade links C", math.add(20, 22), 42);
+    return t.summary();
+}

@@ -1,0 +1,21 @@
+import <std/tk>;
+
+fn main() -> int {
+    let code: int = tk.session_open("Zyen native stress", 640, 400, "");
+    if (code != 0) {
+        return code;
+    }
+    for (let frame: int = 0; frame < 300; frame += 1) {
+        tk.session_begin_frame();
+        tk.bg("#202124");
+        for (let row: int = 0; row < 30; row += 1) {
+            tk.rect(12, 12 + row * 11, 180, 9, "#30343a");
+            tk.text(210, 8 + row * 11, "native frame", "#e8eaed", 14);
+        }
+        tk.codeview_text(360, 20, 250, 320, 0, 20, 9, 16, frame, "fn main() -> int {\n    return 0;\n}");
+        tk.session_redraw();
+    }
+    tk.session_next_event(100);
+    tk.session_close();
+    return 0;
+}

@@ -1,0 +1,6 @@
+import <std/c_module> as c_module;
+
+fn main() -> int {
+    let native: c_module.Module = c_module.load("invalid_template.zlcm.h");
+    return 0;
+}

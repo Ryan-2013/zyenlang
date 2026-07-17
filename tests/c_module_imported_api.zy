@@ -1,0 +1,13 @@
+import <std/c_module> as c_module;
+
+struct ImportedMath {
+    let this.source: c_module.Module = c_module.load("native_math.zlcm.h");
+
+    fn add(a: int, b: int) -> int {
+        return this.source.add(a, b);
+    }
+}
+
+fn new_math() -> ImportedMath {
+    return ImportedMath {};
+}

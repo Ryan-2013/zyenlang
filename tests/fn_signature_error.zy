@@ -1,0 +1,11 @@
+fn one(value: int) -> int {
+    return value;
+}
+
+fn takes_two(callback: fn(int,int)->int) -> int {
+    return callback(1, 2);
+}
+
+fn main() -> int {
+    return takes_two(one);
+}

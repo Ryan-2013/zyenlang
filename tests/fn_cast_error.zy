@@ -1,0 +1,9 @@
+fn identity(value: int) -> int {
+    return value;
+}
+
+fn main() -> int {
+    let callback: fn(int)->int = identity;
+    let invalid: ptr<void> = (ptr<void>)callback;
+    return 0;
+}

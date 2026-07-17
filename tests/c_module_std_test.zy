@@ -1,0 +1,10 @@
+import <std/test>;
+import <std/c_module> as c_module;
+
+fn main() -> int {
+    let t: TestStats = test.new_stats("std c_module");
+    let math: c_module.Module = c_module.load("native_math.zlcm.h");
+    t.check("compiler native", c_module.enabled());
+    t.eq_int("linked C call", math.add(20, 22), 42);
+    return t.summary();
+}

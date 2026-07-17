@@ -182,9 +182,6 @@ def interactive(session_dir: str) -> int:
             f.write(line + "\n")
             f.flush()
         event_version += 1
-        nonlocal_state = _read_state(state_path)
-        nonlocal_state["event_version"] = str(event_version)
-        _write_state(state_path, nonlocal_state)
 
     font_cache: dict[int, object] = {-16: editor_font}
 
@@ -195,6 +192,208 @@ def interactive(session_dir: str) -> int:
         font_cache[size] = f
         return f
 
+    code_colors = {
+        "plain": "#ebe9e0",
+        "keyword": "#d97757",
+        "type": "#7eb9c4",
+        "builtin": "#c4a169",
+        "module": "#a8c79c",
+        "number": "#c4a169",
+        "string": "#d4a574",
+        "comment": "#76736b",
+        "punct": "#a8a59c",
+        "fstring": "#d48989",
+    }
+    keywords = {
+        "fn", "let", "set", "if", "else", "for", "while", "do", "return",
+        "break", "continue", "struct", "import", "as", "in", "true",
+        "false", "this", "pass", "stop",
+    }
+    types = {"int", "str", "float", "bool", "void", "List", "ptr", "Any"}
+    builtins = {"print", "len"}
+    modules = {
+        "string", "char", "text", "list", "map", "set", "term", "fs",
+        "cmd", "log", "time", "path", "math", "mem", "tk", "test",
+        "config", "csv", "random",
+    }
+    punct_chars = set("(){}[],:;=+-*/<>!.&|%")
+    token_cache: dict[str, list[tuple[str, str]]] = {}
+    codeview_slots: list[tuple] = []
+    last_codeview_key = [None]
+
+    def _is_ident_start(ch: str) -> bool:
+        return ch == "_" or ch.isalpha()
+
+    def _is_ident_part(ch: str) -> bool:
+        return ch == "_" or ch.isalnum()
+
+    def _word_color(word: str, next_ch: str) -> str:
+        if word in keywords:
+            return code_colors["keyword"]
+        if word in types:
+            return code_colors["type"]
+        if word in builtins:
+            return code_colors["builtin"]
+        if word in modules or (next_ch == "." and word in modules):
+            return code_colors["module"]
+        return code_colors["plain"]
+
+    def _push_segment(out: list[tuple[str, str]], text: str, color: str) -> None:
+        if not text:
+            return
+        if out and out[-1][1] == color:
+            out[-1] = (out[-1][0] + text, color)
+        else:
+            out.append((text, color))
+
+    def _highlight_segments(line: str) -> list[tuple[str, str]]:
+        cached = token_cache.get(line)
+        if cached is not None:
+            return cached
+        out: list[tuple[str, str]] = []
+        n = len(line)
+        i = 0
+        while i < n:
+            ch = line[i]
+            if ch == "/" and i + 1 < n and line[i + 1] == "/":
+                _push_segment(out, line[i:], code_colors["comment"])
+                break
+            if ch == "f" and i + 1 < n and line[i + 1] == '"':
+                j = i + 2
+                while j < n:
+                    if line[j] == '"':
+                        j += 1
+                        break
+                    j += 1
+                _push_segment(out, line[i:j], code_colors["fstring"])
+                i = j
+                continue
+            if ch == '"':
+                j = i + 1
+                while j < n:
+                    if line[j] == '"':
+                        j += 1
+                        break
+                    j += 1
+                _push_segment(out, line[i:j], code_colors["string"])
+                i = j
+                continue
+            if ch.isdigit():
+                j = i + 1
+                while j < n and (line[j].isdigit() or line[j] == "."):
+                    j += 1
+                _push_segment(out, line[i:j], code_colors["number"])
+                i = j
+                continue
+            if _is_ident_start(ch):
+                j = i + 1
+                while j < n and _is_ident_part(line[j]):
+                    j += 1
+                next_ch = line[j] if j < n else ""
+                word = line[i:j]
+                _push_segment(out, word, _word_color(word, next_ch))
+                i = j
+                continue
+            if ch in punct_chars:
+                _push_segment(out, ch, code_colors["punct"])
+                i += 1
+                continue
+            j = i + 1
+            while j < n and not (
+                (line[j] == "/" and j + 1 < n and line[j + 1] == "/")
+                or (line[j] == "f" and j + 1 < n and line[j + 1] == '"')
+                or line[j] == '"'
+                or line[j].isdigit()
+                or _is_ident_start(line[j])
+                or line[j] in punct_chars
+            ):
+                j += 1
+            _push_segment(out, line[i:j], code_colors["plain"])
+            i = j
+        if len(token_cache) > 4096:
+            token_cache.clear()
+        token_cache[line] = out
+        return out
+
+    def _resolve_lines_path(value: str) -> Path:
+        p = Path(value)
+        if p.is_absolute() or p.exists():
+            return p
+        alt = sd / value
+        if alt.exists():
+            return alt
+        return p
+
+    def _render_codeview(cmd: list[str]) -> None:
+        nonlocal codeview_slots
+        if len(cmd) < 11:
+            return
+        x0 = _to_int(cmd[1])
+        y0 = _to_int(cmd[2])
+        h = _to_int(cmd[4])
+        line_h = max(1, _to_int(cmd[6], measured_line_h + 4))
+        char_w = max(1, _to_int(cmd[7], measured_char_w))
+        size_val = _to_int(cmd[8], -16)
+        stamp = cmd[9]
+        lines_path = _resolve_lines_path(cmd[10])
+        try:
+            body = lines_path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            body = ""
+        key = (tuple(cmd[1:10]), body)
+        if key == last_codeview_key[0]:
+            canvas.tag_raise("codeview")
+            return
+        last_codeview_key[0] = key
+        font_obj = pick_font(size_val)
+        max_rows = max(1, h // line_h + 1)
+        lines = body.split("\n") if body else [""]
+        new_slots: list[tuple] = []
+        slot_idx = 0
+        for row, raw_line in enumerate(lines[:max_rows]):
+            y = y0 + row * line_h + 2
+            x = x0
+            line = raw_line.replace("\t", "    ")
+            for text, color in _highlight_segments(line):
+                item_key = (x, y, text, color, size_val, stamp)
+                if slot_idx < len(codeview_slots):
+                    old_slot = codeview_slots[slot_idx]
+                    if old_slot[1] == item_key:
+                        new_slots.append(old_slot)
+                        x += len(text) * char_w
+                        slot_idx += 1
+                        continue
+                    item_id = old_slot[0]
+                    canvas.coords(item_id, x, y)
+                    canvas.itemconfigure(
+                        item_id,
+                        text=text,
+                        fill=color,
+                        font=font_obj,
+                        anchor="nw",
+                        tags=("codeview",),
+                    )
+                else:
+                    item_id = canvas.create_text(
+                        x,
+                        y,
+                        text=text,
+                        fill=color,
+                        font=font_obj,
+                        anchor="nw",
+                        tags=("codeview",),
+                    )
+                new_slots.append((item_id, item_key))
+                x += len(text) * char_w
+                slot_idx += 1
+        for j in range(slot_idx, len(codeview_slots)):
+            try:
+                canvas.delete(codeview_slots[j][0])
+            except Exception:
+                pass
+        codeview_slots = new_slots
+        canvas.tag_raise("codeview")
+
     # Real flicker fix: maintain a persistent list of canvas item IDs across
     # frames, matched by index in the scene. For each new scene command we
     # itemconfigure + coords the existing item (cheap, no flash) instead of
@@ -203,9 +402,10 @@ def interactive(session_dir: str) -> int:
     # end. Tk repaints affected regions only.
     last_bg = [None]
     last_scene_text = [""]
-    # Each entry: (item_id, op, image_ref_or_None). op gates reuse: if the
+    # Each entry: (item_id, op, image_ref_or_None, raw_scene_line). op gates reuse: if the
     # op for this index changed (e.g. "rect" -> "text"), we have to delete
-    # and recreate. image_ref keeps PhotoImage alive for that item.
+    # and recreate. image_ref keeps PhotoImage alive for that item. The raw
+    # scene line lets redraw skip canvas updates for unchanged items.
     item_slots: list[tuple] = []
 
     def _emit_item(op: str, cmd: list[str], reuse_id, reuse_img):
@@ -301,17 +501,18 @@ def interactive(session_dir: str) -> int:
             return
         last_scene_text[0] = raw_text
 
-        parsed: list[list[str]] = []
+        parsed: list[tuple[str, list[str]]] = []
         for raw in raw_text.splitlines():
             line = raw.strip("\n\r")
             if not line or line.lstrip().startswith("#"):
                 continue
-            parsed.append(line.split("\t"))
+            parsed.append((line, line.split("\t")))
 
         new_slots: list[tuple] = []
         slot_idx = 0   # walks through item_slots in lockstep with item-emitting cmds
+        codeview_seen = False
 
-        for cmd in parsed:
+        for raw_cmd, cmd in parsed:
             op = cmd[0]
             if op == "window" and len(cmd) >= 4:
                 root.title(cmd[1])
@@ -327,16 +528,32 @@ def interactive(session_dir: str) -> int:
                     canvas.configure(bg=cmd[1])
                     last_bg[0] = cmd[1]
                 continue
+            if op == "codeview":
+                codeview_seen = True
+                _render_codeview(cmd)
+                continue
             # Item-emitting op. Try to reuse the slot at slot_idx if its
             # op matches; otherwise delete the stale item and create a
             # new one in its place.
             reuse_id = None
             reuse_img = None
+            old_raw = ""
             if slot_idx < len(item_slots):
-                old_id, old_op, old_img = item_slots[slot_idx]
+                old_slot = item_slots[slot_idx]
+                old_id, old_op, old_img = old_slot[0], old_slot[1], old_slot[2]
+                if len(old_slot) >= 4:
+                    old_raw = old_slot[3]
                 if old_op == op:
                     reuse_id = old_id
                     reuse_img = old_img
+                    if old_raw == raw_cmd:
+                        try:
+                            canvas.tag_raise(old_id)
+                        except Exception:
+                            pass
+                        new_slots.append(old_slot)
+                        slot_idx += 1
+                        continue
                 else:
                     try:
                         canvas.delete(old_id)
@@ -344,7 +561,11 @@ def interactive(session_dir: str) -> int:
                         pass
             new_id, new_img = _emit_item(op, cmd, reuse_id, reuse_img)
             if new_id is not None:
-                new_slots.append((new_id, op, new_img))
+                try:
+                    canvas.tag_raise(new_id)
+                except Exception:
+                    pass
+                new_slots.append((new_id, op, new_img, raw_cmd))
             slot_idx += 1
 
         # Anything left over from the previous frame (e.g. autocomplete
@@ -354,12 +575,20 @@ def interactive(session_dir: str) -> int:
                 canvas.delete(item_slots[j][0])
             except Exception:
                 pass
+        if not codeview_seen:
+            for code_slot in codeview_slots:
+                try:
+                    canvas.delete(code_slot[0])
+                except Exception:
+                    pass
+            codeview_slots.clear()
+            last_codeview_key[0] = None
 
         item_slots[:] = new_slots
         # Keep the legacy `images` list populated for any external code
         # that reaches in; image refs now live inside item_slots.
         images.clear()
-        images.extend(img for (_id, _op, img) in new_slots if img is not None)
+        images.extend(slot[2] for slot in new_slots if slot[2] is not None)
 
     request_path = sd / "request.txt"
 
@@ -404,7 +633,7 @@ def interactive(session_dir: str) -> int:
             redraw_from_scene()
             last_scene_version = sv
         handle_requests()
-        root.after(20, tick)
+        root.after(50, tick)
 
     NAV_KEYS = {"Left", "Right", "Up", "Down", "Home", "End", "Prior", "Next"}
 
@@ -436,6 +665,7 @@ def interactive(session_dir: str) -> int:
         if ch and ch.isprintable():
             ch_safe = ch.replace("\t", " ").replace("\n", " ")
             append_event(f"keychar\t{ch_safe}")
+            return
         if keysym:
             append_event(f"key\t{keysym}")
 
@@ -458,6 +688,9 @@ def interactive(session_dir: str) -> int:
     motion_last_xy = [(-1, -1)]
     drag_last_ms = [0]
     drag_last_xy = [(-1, -1)]
+    wheel_accum = [0]
+    wheel_xy = [(0, 0)]
+    wheel_flush_pending = [False]
 
     def on_motion(event: object) -> None:
         import time as _t
@@ -487,6 +720,24 @@ def interactive(session_dir: str) -> int:
         drag_last_xy[0] = (x, y)
         append_event(f"drag\t{x}\t{y}")
 
+    def flush_wheel() -> None:
+        wheel_flush_pending[0] = False
+        notches = wheel_accum[0]
+        if notches == 0:
+            return
+        x, y = wheel_xy[0]
+        wheel_accum[0] = 0
+        append_event(f"wheel\t{notches}\t{x}\t{y}")
+
+    def queue_wheel(notches: int, x: int, y: int) -> None:
+        if notches == 0:
+            return
+        wheel_accum[0] += notches
+        wheel_xy[0] = (x, y)
+        if not wheel_flush_pending[0]:
+            wheel_flush_pending[0] = True
+            root.after(16, flush_wheel)
+
     def on_wheel(event: object) -> None:
         try:
             delta = int(getattr(event, "delta", 0))
@@ -501,7 +752,7 @@ def interactive(session_dir: str) -> int:
             notches = -max(1, (-delta) // 120)
         x = int(getattr(event, "x", 0))
         y = int(getattr(event, "y", 0))
-        append_event(f"wheel\t{notches}\t{x}\t{y}")
+        queue_wheel(notches, x, y)
 
     def on_leave(_event: object) -> None:
         append_event("leave")
@@ -514,10 +765,6 @@ def interactive(session_dir: str) -> int:
         current["close"] = "1"
         _write_state(state_path, current)
 
-    def emit_tick() -> None:
-        append_event("tick")
-        root.after(500, emit_tick)
-
     root.bind("<Key>", on_key)
     root.bind("<Button-1>", on_click)
     root.bind("<ButtonRelease-1>", on_release)
@@ -528,8 +775,8 @@ def interactive(session_dir: str) -> int:
     # widget by default, which is the canvas — and we never bound it there).
     root.bind_all("<MouseWheel>", on_wheel)
     # Linux/X11 wheel arrives as Button-4 / Button-5.
-    root.bind_all("<Button-4>", lambda e: append_event(f"wheel\t1\t{int(getattr(e,'x',0))}\t{int(getattr(e,'y',0))}"))
-    root.bind_all("<Button-5>", lambda e: append_event(f"wheel\t-1\t{int(getattr(e,'x',0))}\t{int(getattr(e,'y',0))}"))
+    root.bind_all("<Button-4>", lambda e: queue_wheel(1, int(getattr(e, "x", 0)), int(getattr(e, "y", 0))))
+    root.bind_all("<Button-5>", lambda e: queue_wheel(-1, int(getattr(e, "x", 0)), int(getattr(e, "y", 0))))
     root.bind("<Leave>", on_leave)
     root.protocol("WM_DELETE_WINDOW", on_quit)
 
@@ -546,8 +793,7 @@ def interactive(session_dir: str) -> int:
         "font_px": "16",
     })
     append_event("ready")
-    root.after(20, tick)
-    root.after(500, emit_tick)
+    root.after(50, tick)
 
     try:
         root.mainloop()

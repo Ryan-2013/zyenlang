@@ -1,0 +1,8 @@
+fn invalid_pointer() -> ptr<int> {
+    let value: int = 42;
+    return &value;
+}
+
+fn main() -> int {
+    return 0;
+}

@@ -1,4 +1,4 @@
-# ZyenLang v0.1.50-rc.1
+# ZyenLang v0.1.50
 
 [English](README.md) | **繁體中文**
 
@@ -6,18 +6,29 @@
 > - **規範與慣例(ZEPs)**:[zyenlang-zeps](https://github.com/Ryan-2013/zyenlang-zeps)
 > - **IDE(dogfood)**:[zyenlang-ide](https://github.com/Ryan-2013/zyenlang-ide)
 
-ZyenLang 是一個實驗性的 C-like 腳本語言,搭配 Python 風格的工具體驗。
-`.zy` 原始碼會被轉譯成 C,再交給 gcc/clang 編譯。
+ZyenLang 是一個實驗性的 C-like 程式語言,搭配 Python 風格的工具體驗。
+`.zy` 原始碼會被轉譯成 C,再交給 Zig、gcc 或 clang 編譯。
 
 目前核心語法、ARC pointer、函式值、closure 與原生 C bridge 的完整寫法，
 集中在[目前語法總覽](docs/current_syntax_zh_TW.md)。
 
 定位:機器人、電腦視覺、控制系統、嵌入式風格實驗,以及小型引擎原型。
 
-這包是 **Windows flat direct** 版:壓縮檔第一層直接是 `pyproject.toml`、
-`zyen.py`、`zyenlang/`、`std/`、`examples/`、`tests/`、`tools/`。
+## Portable 下載
 
-## 安裝
+GitHub Release 提供 Windows、Linux 與 macOS 的可直接執行壓縮檔，內含
+獨立 `zy` CLI、Zig C toolchain、跨平台 raylib GUI runtime、範例、文件與
+預先編譯的 GUI demo。不必另外安裝 Python、`pip` 或 C 編譯器。
+
+```powershell
+.\zy.exe run examples\hello.zy
+.\zy.exe run examples\tk_portable_smoke.zy
+```
+
+Linux 與 macOS 將 `zy.exe` 改成 `./zy`。詳見
+[portable 發行指南](docs/portable_release.md)。
+
+## 從原始碼安裝
 
 ```powershell
 cd <repo-root>
@@ -51,7 +62,7 @@ fn main() -> int {
 }
 ```
 
-## 語言表面（v0.1.50-rc.1）
+## 語言表面（v0.1.50）
 
 - **變數**:`let a = v;`、`let a: T = v;`、`const a = v;`
 - **修改一律寫 `set`**:`set a = v;`、`set a += v;`、`set *p = v;`
@@ -275,7 +286,7 @@ ide/                  # VSCode + Zed 編輯器設定
 
 ## 狀態
 
-v0.1.50-rc.1 是以 Windows 為主的實驗性預覽版。語法表面（語法 + stdlib API）**故意保持小** ——
+v0.1.50 是第一個跨平台 portable 正式版。語法表面（語法 + stdlib API）**故意保持小** ——
 不打算加 lambda、spread / destructuring、`**kwargs`、comprehension,
 或其他 JS / Python 風格的語法糖。後續精力會花在修小毛病,不會擴張表面。
 

@@ -1,5 +1,29 @@
 # Changelog
 
+## v0.1.50 - 2026-07-17
+
+First cross-platform portable release.
+
+### Added
+
+- Standalone archives for Windows x64, Linux x64/ARM64, and macOS
+  Intel/Apple Silicon with an embedded Python runtime and Zig 0.16.0 C
+  toolchain.
+- raylib 6.0 backend for `std/tk` drawing, images, text, input events, live
+  sessions, and one-shot scenes on Windows, Linux, and macOS.
+- Platform-qualified native metadata such as `c_libs_linux`,
+  `c_cflags_windows`, and `c_ldflags_macos`.
+- Reproducible GitHub Actions builds with per-platform portable smoke tests.
+
+### Changed
+
+- `std/tk` no longer links directly to Win32/GDI and no longer has no-op
+  non-Windows stubs.
+- Portable `zy run` and `zy build --exe` use the bundled Zig compiler by
+  default; `ZY_CC` can select a system compiler.
+- Windows temporary executable cleanup no longer turns a successful run into
+  an error when virus scanning briefly keeps the file locked.
+
 ## v0.1.50-rc.1 - 2026-07-17
 
 Windows preview release.

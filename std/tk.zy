@@ -1,14 +1,15 @@
-// Tk-like 2D GUI / Canvas bridge for ZyenLang.
+// Cross-platform 2D GUI / Canvas bridge for ZyenLang.
 // c_headers: tk_native.h
 // c_sources: tk_native.c
-// c_libs: user32, gdi32, shell32, ole32
+// c_libs_linux: dl
 // Usage:
 //   import <std/tk>;
 //   tk.open("Demo", 800, 480);
 //   tk.rect(40, 40, 120, 80, "#ff8800");
 //   tk.show();
 //
-// This is a low-level bridge over the native C GUI backend.
+// The C backend dynamically loads the bundled raylib runtime on Windows,
+// Linux, and macOS. No Python or Tk process participates in rendering.
 
 fn begin(path: str) -> int {
     return zl_tk_begin(path);

@@ -1,4 +1,4 @@
-# ZyenLang v0.1.50-rc.1 Spec Snapshot
+# ZyenLang v0.1.50 Spec Snapshot
 
 ## 語言定位
 

@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import sys
+import tempfile
 from pathlib import Path
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
@@ -12,6 +14,7 @@ from zyenlang.transpiler import (
     load_source_with_imports,
     transpile,
 )
+from zyenlang.c_module import c_compiler_command, native_metadata_from_zy, native_platform_name
 
 
 ERROR_CASES = {
@@ -63,8 +66,33 @@ def test_hidden_types_and_metadata_are_deduplicated() -> None:
     assert len(metadata["sources"]) == 2
 
 
+def test_platform_native_metadata() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        module = Path(tmp) / "platform.zy"
+        module.write_text(
+            "// c_libs: common\n"
+            "// c_libs_windows: winonly\n"
+            "// c_libs_linux: dl\n"
+            "// c_libs_macos: cocoa\n",
+            encoding="utf-8",
+        )
+        metadata = native_metadata_from_zy(module)
+    expected = {"windows": "winonly", "linux": "dl", "macos": "cocoa"}[native_platform_name()]
+    assert metadata["libs"] == ["common", expected]
+
+
+def test_compiler_override() -> None:
+    with patch.dict("os.environ", {"ZY_CC": "custom-cc --portable"}):
+        assert c_compiler_command() == ["custom-cc", "--portable"]
+
+
 def main() -> int:
-    tests = [test_diagnostics, test_hidden_types_and_metadata_are_deduplicated]
+    tests = [
+        test_diagnostics,
+        test_hidden_types_and_metadata_are_deduplicated,
+        test_platform_native_metadata,
+        test_compiler_override,
+    ]
     for test in tests:
         test()
         print(f"PASS {test.__name__}")

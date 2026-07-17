@@ -70,23 +70,26 @@ def check_tkinter() -> CheckResult:
 
 
 def check_cc() -> CheckResult:
-    for name in ("gcc", "clang"):
-        path = shutil.which(name)
-        if path:
-            return CheckResult("cc", "environment", STATUS_PASS, f"{name} at {path}")
-    return CheckResult(
-        "cc", "environment", STATUS_ERROR,
-        "neither gcc nor clang found on PATH",
-        "Install gcc (Windows: MSYS2 / MinGW-w64; macOS: `xcode-select --install`; Linux: `apt install gcc`).",
-    )
+    try:
+        from zyenlang.c_module import c_compiler_command
+        command = c_compiler_command()
+        return CheckResult("cc", "environment", STATUS_PASS, " ".join(command))
+    except (FileNotFoundError, ValueError) as exc:
+        return CheckResult(
+            "cc", "environment", STATUS_ERROR,
+            str(exc),
+            "Use a portable release, install gcc/clang, or set ZY_CC.",
+        )
 
 
 def check_cc_compiles() -> CheckResult:
-    cc = shutil.which("gcc") or shutil.which("clang")
-    if not cc:
+    try:
+        from zyenlang.c_module import c_compiler_command
+        cc = c_compiler_command()
+    except (FileNotFoundError, ValueError):
         return CheckResult(
             "cc_compiles", "environment", STATUS_ERROR,
-            "skipped: no C compiler on PATH",
+            "skipped: no C compiler available",
             "Fix `cc` first.",
         )
     with tempfile.TemporaryDirectory() as tmp:
@@ -95,7 +98,7 @@ def check_cc_compiles() -> CheckResult:
         src.write_text("int main(void){return 0;}\n", encoding="utf-8")
         try:
             r = subprocess.run(
-                [cc, "-O0", "-o", str(exe), str(src)],
+                cc + ["-O0", "-o", str(exe), str(src)],
                 capture_output=True, text=True, timeout=20,
             )
         except (subprocess.SubprocessError, OSError) as exc:
@@ -117,7 +120,7 @@ def check_cc_compiles() -> CheckResult:
             )
         return CheckResult(
             "cc_compiles", "environment", STATUS_PASS,
-            f"{Path(cc).name} compiled hello.c",
+            f"{Path(cc[0]).name} compiled hello.c",
         )
 
 
@@ -348,16 +351,18 @@ def run_smoke_trio() -> tuple[CheckResult, CheckResult, CheckResult]:
             return t, err, run
 
         # 2. compile
-        cc = shutil.which("gcc") or shutil.which("clang")
-        if not cc:
+        try:
+            from zyenlang.c_module import c_compiler_command
+            cc = c_compiler_command()
+        except (FileNotFoundError, ValueError):
             comp = CheckResult("smoke_compile", "runtime", STATUS_ERROR,
-                               "no C compiler on PATH")
+                               "no C compiler available")
             run = CheckResult("smoke_run", "runtime", STATUS_ERROR,
                               "skipped (no C compiler)")
             return t, comp, run
         try:
             r = subprocess.run(
-                [cc, "-O0", "-o", str(exe), str(c)],
+                cc + ["-O0", "-o", str(exe), str(c)],
                 capture_output=True, text=True, timeout=30,
             )
         except (subprocess.SubprocessError, OSError) as exc:

@@ -1,0 +1,40 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+      - "codex/**"
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-24.04, macos-15]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install
+        run: python -m pip install -e .
+      - name: Python tests
+        run: |
+          python tests/test_c_module_python.py
+          python tests/test_doctor_python.py
+      - name: Language tests
+        run: |
+          zy run tests/fn_value_test.zy
+          zy run tests/fn_chain_test.zy
+          zy run tests/closure_test.zy
+          zy run tests/c_module_callback_test.zy
+      - name: Compile cross-platform GUI smoke
+        shell: bash
+        run: |
+          suffix=""
+          if [[ "$RUNNER_OS" == "Windows" ]]; then suffix=".exe"; fi
+          zy build examples/tk_portable_smoke.zy --exe "gui-smoke${suffix}"

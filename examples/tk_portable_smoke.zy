@@ -1,0 +1,11 @@
+import <std/tk>;
+
+fn main() -> int {
+    tk.open("ZyenLang cross-platform GUI", 480, 260);
+    tk.bg("#202124");
+    tk.rect(28, 28, 424, 204, "#2b3038");
+    tk.circle(90, 130, 42, "#ff8800");
+    tk.text(160, 92, "ZyenLang + raylib", "#ffffff", 24);
+    tk.text(160, 138, "Windows / Linux / macOS", "#55ff99", 18);
+    return tk.show_for(180);
+}

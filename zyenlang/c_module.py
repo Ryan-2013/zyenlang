@@ -2,7 +2,11 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
+import shlex
+import shutil
+import sys
 from pathlib import Path
 from typing import Iterable
 
@@ -14,6 +18,16 @@ TYPE_ALIASES = {
     "ZL_ptr": "ptr",
 }
 NATIVE_KEYS = ("headers", "sources", "include_dirs", "lib_dirs", "libs", "cflags", "ldflags")
+
+
+def native_platform_name() -> str:
+    if sys.platform.startswith("win"):
+        return "windows"
+    if sys.platform == "darwin":
+        return "macos"
+    if sys.platform.startswith("linux"):
+        return "linux"
+    return "unix"
 
 
 def empty_native_metadata() -> dict:
@@ -483,6 +497,7 @@ def native_metadata_from_zy(path: Path) -> dict:
         "c_cflags": "cflags",
         "c_ldflags": "ldflags",
     }
+    platform = native_platform_name()
     if not path.exists():
         return out
     for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
@@ -490,10 +505,16 @@ def native_metadata_from_zy(path: Path) -> dict:
             values = _comment_list(line, comment_key)
             if values is not None:
                 out[out_key].extend(resolve_many(base, values))
+            platform_values = _comment_list(line, f"{comment_key}_{platform}")
+            if platform_values is not None:
+                out[out_key].extend(resolve_many(base, platform_values))
         for comment_key, out_key in string_keys.items():
             values = _comment_list(line, comment_key)
             if values is not None:
                 out[out_key].extend(values)
+            platform_values = _comment_list(line, f"{comment_key}_{platform}")
+            if platform_values is not None:
+                out[out_key].extend(platform_values)
     return out
 
 
@@ -511,6 +532,11 @@ def native_metadata_from_manifest(path: Path) -> dict:
         out[plural].extend(resolve_many(base, _as_list(data, plural, singular)))
     for plural, singular in (("libs", "lib"), ("cflags", "cflag"), ("ldflags", "ldflag")):
         out[plural].extend(_as_list(data, plural, singular))
+    platform = native_platform_name()
+    for plural in path_fields:
+        out[plural].extend(resolve_many(base, _as_list(data, f"{plural}_{platform}")))
+    for plural in ("libs", "cflags", "ldflags"):
+        out[plural].extend(_as_list(data, f"{plural}_{platform}"))
     return finalize_native_metadata(out)
 
 
@@ -550,8 +576,36 @@ def finalize_native_metadata(meta: dict) -> dict:
     return out
 
 
+def c_compiler_command() -> list[str]:
+    override = os.environ.get("ZY_CC", "").strip()
+    if override:
+        return shlex.split(override, posix=not sys.platform.startswith("win"))
+
+    roots: list[Path] = []
+    if getattr(sys, "frozen", False):
+        roots.append(Path(sys.executable).resolve().parent)
+    roots.append(Path(__file__).resolve().parents[1])
+    executable = "zig.exe" if sys.platform.startswith("win") else "zig"
+    for root in roots:
+        candidate = root / "toolchain" / executable
+        if candidate.is_file():
+            return [str(candidate), "cc"]
+        candidate = root / "toolchain" / "zig" / executable
+        if candidate.is_file():
+            return [str(candidate), "cc"]
+
+    for name in ("gcc", "clang", "cc"):
+        found = shutil.which(name)
+        if found:
+            return [found]
+    raise FileNotFoundError(
+        "no C compiler found; use a portable ZyenLang release, install gcc/clang, "
+        "or set ZY_CC"
+    )
+
+
 def gcc_command(meta: dict, main_c: Path, output_exe: Path) -> list[str]:
-    cmd: list[str] = ["gcc", "-std=c11", "-Wall", "-Wextra"]
+    cmd: list[str] = c_compiler_command() + ["-std=c11", "-Wall", "-Wextra", "-Wno-unused-function"]
     cmd.extend(meta["cflags"])
     abi_dir = Path(__file__).resolve().parent / "std"
     abi_header = abi_dir / "zyenlang_c_abi.h"

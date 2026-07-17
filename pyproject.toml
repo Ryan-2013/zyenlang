@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "zyenlang"
-version = "0.1.50rc1"
+version = "0.1.50"
 description = "ZyenLang: a concise C-like language transpiled to C"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -19,4 +19,15 @@ zyen = "zyenlang.transpiler:main"
 packages = ["zyenlang", "zyenlang.cli"]
 
 [tool.setuptools.package-data]
-zyenlang = ["std/*.zy", "std/*.c", "std/*.h"]
+zyenlang = [
+    "std/*.zy",
+    "std/*.c",
+    "std/*.h",
+    "vendor/raylib/LICENSE",
+    "vendor/raylib/README.md",
+    "vendor/raylib/VERSION",
+    "vendor/raylib/windows-x64/*.dll",
+    "vendor/raylib/linux-x64/*.so",
+    "vendor/raylib/linux-arm64/*.so",
+    "vendor/raylib/macos-universal/*.dylib",
+]

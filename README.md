@@ -1,4 +1,4 @@
-# ZyenLang v0.1.50-rc.1
+# ZyenLang v0.1.50
 
 **English** | [繁體中文](README.zh-TW.md)
 
@@ -6,8 +6,9 @@
 > - **Specs & conventions (ZEPs)**: [zyenlang-zeps](https://github.com/Ryan-2013/zyenlang-zeps)
 > - **IDE (dogfood)**: [zyenlang-ide](https://github.com/Ryan-2013/zyenlang-ide)
 
-ZyenLang is an experimental C-like scripting language with Python-like
-tooling. `.zy` source is transpiled to C, then compiled with gcc/clang.
+ZyenLang is an experimental C-like programming language with Python-like
+tooling. `.zy` source is transpiled to C, then compiled with Zig, gcc, or
+clang.
 
 Current language syntax, ARC pointer rules, function values, closures, and the
 native C bridge are collected in the
@@ -16,11 +17,28 @@ native C bridge are collected in the
 Aimed at robotics, computer vision, control systems, embedded-style
 experiments, and small engine prototyping.
 
-This package is the **Windows flat direct** distribution: the top level
-contains `pyproject.toml`, `zyen.py`, `zyenlang/`, `std/`, `examples/`,
-`tests/`, `tools/`.
+## Portable download
 
-## Install
+The GitHub release provides ready-to-run archives for Windows, Linux, and
+macOS. They contain the standalone `zy` CLI, Zig C toolchain, cross-platform
+raylib GUI runtime, examples, docs, and a prebuilt GUI demo. Python, `pip`, and
+a separate C compiler are not required.
+
+```powershell
+# Windows, after extracting the archive
+.\zy.exe run examples\hello.zy
+.\zy.exe run examples\tk_portable_smoke.zy
+```
+
+```bash
+# Linux / macOS, after extracting the archive
+./zy run examples/hello.zy
+./zy run examples/tk_portable_smoke.zy
+```
+
+See [the portable release guide](docs/portable_release.md).
+
+## Source install
 
 ```powershell
 cd <repo-root>
@@ -55,7 +73,7 @@ fn main() -> int {
 }
 ```
 
-## Language surface (v0.1.50-rc.1)
+## Language surface (v0.1.50)
 
 - **Variables**: `let a = v;`, `let a: T = v;`, `const a = v;`
 - **Mutation requires `set`**: `set a = v;`, `set a += v;`, `set *p = v;`
@@ -221,8 +239,8 @@ ide/                  # VSCode + Zed editor configs
 
 ## Status
 
-v0.1.50-rc.1 is an experimental Windows preview. The surface (syntax + stdlib API) is
-intentionally small and **locked** — there are no plans to add lambdas,
+v0.1.50 is the first cross-platform portable release. The surface (syntax +
+stdlib API) is intentionally small and **locked** — there are no plans to add lambdas,
 spread / destructuring, `**kwargs`, comprehensions, or other JS / Python-
 style sugar. Effort goes into fixing rough edges, not adding surface area.
 

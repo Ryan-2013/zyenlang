@@ -14,7 +14,13 @@ from zyenlang.transpiler import (
     load_source_with_imports,
     transpile,
 )
-from zyenlang.c_module import c_compiler_command, native_metadata_from_zy, native_platform_name
+from zyenlang.c_module import (
+    c_compiler_command,
+    empty_native_metadata,
+    gcc_command,
+    native_metadata_from_zy,
+    native_platform_name,
+)
 
 
 ERROR_CASES = {
@@ -86,12 +92,22 @@ def test_compiler_override() -> None:
         assert c_compiler_command() == ["custom-cc", "--portable"]
 
 
+def test_linux_compiler_enables_posix_api_before_headers() -> None:
+    with patch("zyenlang.c_module.sys.platform", "linux"):
+        with patch("zyenlang.c_module.c_compiler_command", return_value=["cc"]):
+            command = gcc_command(empty_native_metadata(), Path("main.c"), Path("main"))
+    define_index = command.index("-D_POSIX_C_SOURCE=200809L")
+    include_index = command.index("-include")
+    assert define_index < include_index
+
+
 def main() -> int:
     tests = [
         test_diagnostics,
         test_hidden_types_and_metadata_are_deduplicated,
         test_platform_native_metadata,
         test_compiler_override,
+        test_linux_compiler_enables_posix_api_before_headers,
     ]
     for test in tests:
         test()

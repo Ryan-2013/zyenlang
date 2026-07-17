@@ -606,6 +606,10 @@ def c_compiler_command() -> list[str]:
 
 def gcc_command(meta: dict, main_c: Path, output_exe: Path) -> list[str]:
     cmd: list[str] = c_compiler_command() + ["-std=c11", "-Wall", "-Wextra", "-Wno-unused-function"]
+    if sys.platform.startswith("linux"):
+        # This must precede the forced ABI include so POSIX declarations such
+        # as nanosleep are visible to both generated and compatibility code.
+        cmd.append("-D_POSIX_C_SOURCE=200809L")
     cmd.extend(meta["cflags"])
     abi_dir = Path(__file__).resolve().parent / "std"
     abi_header = abi_dir / "zyenlang_c_abi.h"

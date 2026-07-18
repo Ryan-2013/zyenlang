@@ -7,7 +7,7 @@ fn main() -> int {
     fs.append(path, "append line\n");
 
     if (fs.exists(path)) {
-        print(fs.read(path));
+        print((str)(fs.read(path)));
     }
 
     term.line();

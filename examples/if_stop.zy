@@ -8,6 +8,6 @@ fn divide(a: float, b: float) -> float {
 
 fn main() -> int {
     let x: float = divide(10.0, 2.0);
-    print(x);
+    print((str)(x));
     return 0;
 }

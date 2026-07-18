@@ -19,6 +19,6 @@ fn main() -> int {
         pass;
     }
 
-    print(choose(true));
+    print((str)(choose(true)));
     return 0;
 }

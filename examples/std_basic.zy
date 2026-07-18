@@ -6,10 +6,10 @@ fn main() -> int {
     let ok: bool = check.between_int(safe, 0, 100);
     let pwm: int = motor.motor_pwm_step(3000, 2800, 50, 5, 0, 100);
 
-    print(safe);
-    print(y);
-    print(ok);
-    print(pwm);
+    print((str)(safe));
+    print((str)(y));
+    print((str)(ok));
+    print((str)(pwm));
 
     return 0;
 }

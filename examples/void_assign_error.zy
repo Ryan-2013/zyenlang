@@ -9,6 +9,6 @@ struct MyList {
 fn main() -> int {
     let list: MyList = MyList;
     let x = list.append(1);
-    print(x);
+    print((str)(x));
     return 0;
 }

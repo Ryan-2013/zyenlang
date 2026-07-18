@@ -14,18 +14,18 @@ fn main() -> int {
     let rpm_rad: float = motor.rpm_to_rad_s(60.0);
     let out: float = pid.output(1.0, 0.1, 0.01, 5.0, 2.0, 1.0, 0.0, 100.0);
 
-    print(a);
-    print(b);
-    print(ok);
-    print(name_len);
-    print(has_lang);
-    print(flags);
-    print(wrapped);
-    print(eased);
-    print(avg);
-    print(rnd);
-    print(rpm_rad);
-    print(out);
+    print((str)(a));
+    print((str)(b));
+    print((str)(ok));
+    print((str)(name_len));
+    print((str)(has_lang));
+    print((str)(flags));
+    print((str)(wrapped));
+    print((str)(eased));
+    print((str)(avg));
+    print((str)(rnd));
+    print((str)(rpm_rad));
+    print((str)(out));
 
     return 0;
 }

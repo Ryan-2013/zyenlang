@@ -1,11 +1,11 @@
 fn main() -> int {
     let *a: ptr<int> = 1;
 
-    print(*a);
+    print((str)(*a));
 
     set *a = 2;
 
-    print(*a);
+    print((str)(*a));
 
     return 0;
 }

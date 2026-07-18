@@ -1,6 +1,6 @@
 fn main() -> int {
     let value: int = 10;
     let opaque: ptr<void> = &value;
-    print((*(ptr<int>opaque)));
+    print((str)(*(ptr<int>opaque)));
     return 0;
 }

@@ -4,8 +4,8 @@ struct Bag {
         this.items.append(v);
     }
     fn show() -> void {
-        print(this.items.len());
-        print(this.items.get(0));
+        print((str)(this.items.len()));
+        print((str)(this.items.get(0)));
     }
 }
 fn main() -> int {

@@ -3,6 +3,6 @@ fn main() -> int {
     for (let i: int = 0; i < 5; set i += 1) {
         set sum += i;
     }
-    print(sum);
+    print((str)(sum));
     return 0;
 }

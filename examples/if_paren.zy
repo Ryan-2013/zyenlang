@@ -9,7 +9,7 @@ fn main() -> int {
 
     for (let i = 0; i < 2; i++) {
         if (i == 1) {
-            print(i);
+            print((str)(i));
         }
     }
 

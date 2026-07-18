@@ -7,6 +7,6 @@ fn main() -> int {
     let y: int = 20;
     let z: int = add(x, y);
 
-    print(z);
+    print((str)(z));
     return 0;
 }

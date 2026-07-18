@@ -5,9 +5,9 @@ fn main() -> int {
     let b: Point2 = geometry.point2(6.0, 8.0);
     let r: Rect = geometry.rect(0.0, 0.0, 10.0, 10.0);
 
-    print(geometry.length(a));
-    print(geometry.distance(a, b));
-    print(geometry.rect_contains_point(r, a));
+    print((str)(geometry.length(a)));
+    print((str)(geometry.distance(a, b)));
+    print((str)(geometry.rect_contains_point(r, a)));
 
     return 0;
 }

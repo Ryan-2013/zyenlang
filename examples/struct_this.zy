@@ -3,12 +3,12 @@ struct Bag {
 
     fn append_int(data: int) -> void {
         set this.list_len = this.list_len + 1;
-        print(data);
+        print((str)(data));
     }
 
     fn append_str(data: str) -> void {
         set this.list_len = this.list_len + 1;
-        print(data);
+        print((str)(data));
     }
 
     fn len() -> int {
@@ -22,7 +22,7 @@ fn main() -> int {
     bag.append_int(1);
     bag.append_str("Zyen");
 
-    print(bag.len());
+    print((str)(bag.len()));
 
     return 0;
 }

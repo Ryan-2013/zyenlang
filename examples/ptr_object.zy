@@ -2,9 +2,9 @@ fn main() -> int {
     let value: int = 100;
     let p: ptr = &value;
 
-    print(*p);
+    print((str)(*p));
     set *p = 200;
-    print(value);
+    print((str)(value));
 
     return 0;
 }

@@ -22,9 +22,9 @@ fn main() -> int {
     if (
         string.eq(text, "ZyenLang")
     ) {
-        print(text);
+        print((str)(text));
     }
 
-    print(n);
+    print((str)(n));
     return 0;
 }

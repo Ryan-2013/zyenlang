@@ -26,10 +26,10 @@ fn main() -> int {
         if (i == 3) {
             break;
         }
-        print(i);
+        print((str)(i));
     }
 
-    print(pwm);
+    print((str)(pwm));
     cmd.run("echo IDE demo ok");
     return 0;
 }

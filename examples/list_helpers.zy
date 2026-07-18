@@ -5,8 +5,8 @@ fn main() -> int {
     xs.append("robot");
     xs.append("cv");
     xs.append("control");
-    print(list.join_str(xs, " | "));
+    print((str)(list.join_str(xs, " | ")));
     let rev: List = list.reverse(xs);
-    print(list.join_str(rev, " -> "));
+    print((str)(list.join_str(rev, " -> ")));
     return 0;
 }

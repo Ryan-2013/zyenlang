@@ -6,17 +6,17 @@ fn main() -> int {
     set x *= 10;
     set x -= 5;
     set x /= 5;
-    print(x);
+    print((str)(x));
 
     let s: str = "zy";
     set s += "en";
-    print(s);
+    print((str)(s));
 
     for (let i = 0; i < 5; i++) {
         if (i == 2) {
             continue;
         }
-        print(i);
+        print((str)(i));
     }
 
     return 0;

@@ -1,4 +1,4 @@
-# ZyenLang v0.1.63
+# ZyenLang v0.1.73
 
 **English** | [繁體中文](README.zh-TW.md)
 
@@ -24,13 +24,14 @@ macOS. They contain the standalone `zy` CLI, Zig C toolchain, cross-platform
 raylib GUI runtime, examples, docs, and a prebuilt GUI demo. Python, `pip`, and
 a separate C compiler are not required.
 
-For v0.1.63, download the `zyv163` archive for your platform. The extracted
-folder is also named `zyv163`, and the `zy` executable is directly in that
-folder so the folder itself can be added to `PATH`.
+For v0.1.73, download the `zyv173` archive for your platform. The extracted
+folder is also named `zyv173`, and the `zy` executable is directly in that
+folder. On Windows, double-click `add-to-user-path.cmd` for one-click setup;
+Linux and macOS users can run `add-to-user-path.sh` once.
 
 ```powershell
 # Windows, after extracting the archive
-cd zyv163
+cd zyv173
 .\add-to-user-path.cmd
 .\zy.exe run examples\hello.zy
 .\zy.exe run examples\tk_portable_smoke.zy
@@ -38,7 +39,7 @@ cd zyv163
 
 ```bash
 # Linux / macOS, after extracting the archive
-cd zyv163
+cd zyv173
 ./add-to-user-path.sh
 ./zy run examples/hello.zy
 ./zy run examples/tk_portable_smoke.zy
@@ -76,12 +77,12 @@ fn add(a: int, b: int) -> int {
 fn main() -> int {
     let x: int = 10;
     let y: int = 20;
-    print(add(x, y));
+    print((str)add(x, y));
     return 0;
 }
 ```
 
-## Language surface (v0.1.63)
+## Language surface (v0.1.73)
 
 - **Variables**: `let a = v;`, `let a: T = v;`, `const a = v;`
 - **Mutation requires `set`**: `set a = v;`, `set a += v;`, `set *p = v;`
@@ -89,7 +90,8 @@ fn main() -> int {
 - **Functions**: `fn name(args) -> T { ... }`. Calls support positional args, named args such as `add(b: 10, a: 5)`, trailing default params, first-class `fn(...) -> T` values, and managed `ptr<fn(...)>` function-cell pointers. Any fn-typed expression can be called, including `pick("sub")(10, 3)`.
 - **Structs**: `struct S { let this.field: T; fn method() -> T { ... } }`
 - **Types**: `int`, `float`, `bool`, `str`, `List`, `ptr<T>`, `ptr<void>`, `fn(...) -> T`, `ptr<fn(...)>`, struct types, `void`, `None`. (`Any` is internal to `List`.)
-- **f-strings**: `f"i={i}"`
+- **Printing**: `print(expr)` accepts only `str`. Convert explicitly with `print((str)value)` or use an f-string.
+- **f-strings**: `f"i={i}"` always has type `str`; interpolation formats supported values automatically.
 - **Imports**: `import <std/math>;`, `import <std/math> as m;`, `import "lib.zy" as lib;`. Relative paths are resolved against the importing file's folder.
 - **Qualified types**: `let car: test.Car = test.Car { model: "Honda" };` — imported user structs live in the global namespace, the alias is just stripped.
 - **Multi-line statements**: function signatures, calls, `if` conditions, `for` headers, and list literals can span lines inside their `(...)`, `[...]`, `{...}` delimiters.
@@ -142,11 +144,11 @@ address of a top-level function borrows its compiler-emitted static cell;
 
 ```zy
 let pointer: ptr<fn(int,int)->int> = &add;
-print((*pointer)(20, 22));
-print(*pointer(20, 22));
+print(f"{(*pointer)(20, 22)}");
+print(f"{*pointer(20, 22)}");
 
 let opaque: ptr<void> = pointer;
-print(*(ptr<fn(int,int)->int>)opaque(12, 10));
+print(f"{*(ptr<fn(int,int)->int>)opaque(12, 10)}");
 ```
 
 Calls validate pointer state, the runtime cell tag, and the exact function
@@ -174,7 +176,7 @@ layer and ARC releases the complete chain:
 let *value: ptr<int> = 10;
 let *chain: ptr<ptr<int>> = 10;
 let inner = *chain;
-print(*inner); // 10
+print((str)(*inner)); // 10
 ```
 
 An existing pointer can initialize the nested cell as well. Prefer fully typed
@@ -208,7 +210,7 @@ import <std/c_module> as c_module;
 
 fn main() -> int {
     let math: c_module.Module = c_module.load("native_math.zlcm.h");
-    print(math.add(20, 22));
+    print((str)(math.add(20, 22)));
     return 0;
 }
 ```
@@ -230,11 +232,11 @@ import <std/map>;
 fn main() -> int {
     let s: Stack = stack.new();
     s.push_str("first");
-    print(s.pop_str());
+    print((str)(s.pop_str()));
 
     let m: StringMap = map.new();
     m.put("name", "ZyenLang");
-    print(m.get("name", "none"));
+    print((str)(m.get("name", "none")));
     return 0;
 }
 ```

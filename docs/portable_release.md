@@ -9,15 +9,15 @@ The platform archives contain everything needed to compile and run ZyenLang:
 
 No Python installation, `pip`, GCC, or MSYS2 setup is required.
 
-The v0.1.63 downloads are named `zyv163-<platform>`. Every archive extracts
-to one `zyv163` folder. The `zy` executable lives directly in that folder, so
+The v0.1.73 downloads are named `zyv173-<platform>`. Every archive extracts
+to one `zyv173` folder. The `zy` executable lives directly in that folder, so
 you can either invoke it in place or add that folder to `PATH`. Allow roughly
 400 MB of free space while extracting the bundled toolchain.
 
 ## Windows
 
 ```powershell
-cd zyv163
+cd zyv173
 .\add-to-user-path.cmd
 .\zy.exe version
 .\zy.exe run examples\hello.zy
@@ -28,7 +28,7 @@ cd zyv163
 ## Linux and macOS
 
 ```bash
-cd zyv163
+cd zyv173
 ./add-to-user-path.sh
 ./zy version
 ./zy run examples/hello.zy

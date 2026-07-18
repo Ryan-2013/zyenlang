@@ -11,9 +11,9 @@ distinct from the first-class `fn(P...)->R` value itself:
 let value: fn(int,int)->int = add;
 let pointer: ptr<fn(int,int)->int> = &add;
 
-print(value(20, 22));
-print((*pointer)(20, 22));
-print(*pointer(20, 22));
+print((str)(value(20, 22)));
+print(f"{(*pointer)(20, 22)}");
+print(f"{*pointer(20, 22)}");
 ```
 
 The last two calls are equivalent. The short form is intentional ZyenLang
@@ -49,10 +49,10 @@ explicit cast:
 let pointer: ptr<fn(int,int)->int> = &add;
 let opaque: ptr<void> = pointer;
 let restored: ptr<fn(int,int)->int> = (ptr<fn(int,int)->int>)opaque;
-print(*restored(12, 10));
+print(f"{*restored(12, 10)}");
 
 // Equivalent immediate form.
-print(*(ptr<fn(int,int)->int>)opaque(12, 10));
+print(f"{*(ptr<fn(int,int)->int>)opaque(12, 10)}");
 ```
 
 The cast preserves the address, owner, ownership state, and runtime type tag.
@@ -74,7 +74,7 @@ fn add1() -> fn()->fn(int,int)->int {
 
 let stage2: fn()->fn(int,int)->int = add1();
 let stage3: fn(int,int)->int = stage2();
-print(stage3(10, 10));
+print((str)(stage3(10, 10)));
 ```
 
 Assigning `add1` without `()` would have type

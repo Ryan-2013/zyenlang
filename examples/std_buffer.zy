@@ -5,10 +5,10 @@ fn main() -> int {
     let value: int = 10;
     let p: ptr<int> = &value;
 
-    print(buffer.read_int(p));
+    print((str)(buffer.read_int(p)));
     buffer.write_int(p, 77);
-    print(value);
-    print(ptr.is_type(p, "int"));
+    print((str)(value));
+    print((str)(ptr.is_type(p, "int")));
 
     return 0;
 }

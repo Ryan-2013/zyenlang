@@ -6,7 +6,7 @@ fn add(a: int, b: int) -> int {
 
 fn main() -> int {
     list.say_hi();
-    print(list.add(1, 2));
-    print(add(1, 2));
+    print((str)(list.add(1, 2)));
+    print((str)(add(1, 2)));
     return 0;
 }

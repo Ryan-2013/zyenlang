@@ -4,7 +4,7 @@ fn main() -> int {
     cv.info();
 
     let code: int = cv.gray("input.png", "build/gray.png");
-    print(code);
+    print((str)(code));
 
     return 0;
 }

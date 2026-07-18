@@ -51,7 +51,7 @@ class Scene:
 
 SCENES = (
     Scene(
-        "ZYENLANG v0.1.63",
+        "ZYENLANG v0.1.73",
         "指標、所有權與函式指標",
         'let *p: ptr<ptr<int>> = 10;\nprint(**p);\n\nlet fp: ptr<fn(int,int)->int> = &add;\nprint(*fp(20, 22));',
         ("編譯成 C", "自動 ARC", "可直接呼叫 C 模組"),
@@ -134,9 +134,9 @@ SCENES = (
         "BUILD SOMETHING",
         "解壓、加入 PATH、開始寫",
         'zy version\nzy doctor\nzy run examples\\pointer_function_tutorial.zy\n\n// Windows / Linux / macOS\n// github.com/Ryan-2013/zyenlang',
-        ("portable：zyv163", "ZEP-0015：函式 cell 指標", "免裝 Python 與 C compiler"),
-        "ZyenLang v0.1.63 提供多平台 portable release。",
-        "ZyenLang 零點一點六三提供 Windows、Linux 和 macOS 的 portable release。下載 zyv163，將解壓資料夾加入 PATH，就能直接執行教學範例。完整函式 cell 指標語意記錄在 ZEP 零零一五。",
+        ("portable：zyv173", "ZEP-0015：函式 cell 指標", "免裝 Python 與 C compiler"),
+        "ZyenLang v0.1.73 提供多平台 portable release。",
+        "ZyenLang 零點一點七三提供 Windows、Linux 和 macOS 的 portable release。下載 zyv173，將解壓資料夾加入 PATH，就能直接執行教學範例。完整函式 cell 指標語意記錄在 ZEP 零零一五。",
         GREEN,
     ),
 )

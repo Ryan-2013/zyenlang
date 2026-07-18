@@ -1,0 +1,45 @@
+fn add(a: int, b: int) -> int {
+    return a + b;
+}
+
+fn sub(a: int, b: int) -> int {
+    return a - b;
+}
+
+fn apply(op: fn(int,int)->int, a: int, b: int) -> int {
+    return op(a, b);
+}
+
+fn pick(name: str) -> fn(int,int)->int {
+    if (name == "add") {
+        return add;
+    }
+    return sub;
+}
+
+struct ScoreBox {
+    let this.value: ptr<int>;
+}
+
+fn make_score() -> ScoreBox {
+    let *score: ptr<int> = 110;
+    let box: ScoreBox = ScoreBox { value: score };
+    return box;
+}
+
+fn main() -> int {
+    let *deep: ptr<ptr<int>> = 10;
+    print(**deep);
+
+    let *slot: ptr<ptr> = &**deep;
+    set **slot = 21;
+    print(**deep);
+
+    let box: ScoreBox = make_score();
+    print(*box.value);
+
+    let op: fn(int,int)->int = pick("sub");
+    print(apply(op, 10, 3));
+    print(pick("add")(20, 22));
+    return 0;
+}

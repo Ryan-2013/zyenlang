@@ -12,6 +12,9 @@ ZyenLang 是一個實驗性的 C-like 程式語言,搭配 Python 風格的工具
 目前核心語法、ARC pointer、函式值、closure 與原生 C bridge 的完整寫法，
 集中在[目前語法總覽](docs/current_syntax_zh_TW.md)。
 
+想快速認識 pointer 與函式值，可直接閱讀或照著錄製
+[安全指標與函式值影片教學](docs/tutorial_pointer_function_video_zh_TW.md)。
+
 定位:機器人、電腦視覺、控制系統、嵌入式風格實驗,以及小型引擎原型。
 
 ## Portable 下載
@@ -266,8 +269,8 @@ zy run examples\add.zy
 zy run tests\text_test.zy
 ```
 
-- `examples/` —— 91 支單檔範例
-- `tests/` —— 26 個測試
+- `examples/` —— 92 支單檔範例
+- `tests/` —— 43 個測試
 - `apps/` —— 完整應用程式(`apps/zyide.zy`、`apps/zyide_gui.zy`、`apps/zytk_demo.zy`)
 
 ## 專案結構
@@ -276,8 +279,8 @@ zy run tests\text_test.zy
 zyenlang/             # Python 轉譯器 + 內附 std
 zyenlang/std/         # 標準函式庫正本(import <std/...> 會載這份)
 std/                  # 標準函式庫的源樹鏡像(方便瀏覽)
-examples/             # 91 支 .zy 範例
-tests/                # 26 個測試
+examples/             # 92 支 .zy 範例
+tests/                # 43 個測試
 docs/                 # 規格與筆記
 apps/                 # 完整應用程式
 tools/                # 安裝 / 修補腳本

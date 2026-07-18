@@ -216,11 +216,15 @@ fn main() -> int {
 
 ```powershell
 zy run examples\add.zy
+zy run examples\pointer_function_tutorial.zy
 zy run tests\text_test.zy
 ```
 
-- `examples/` — 91 single-file demos
-- `tests/` — 26 test suites
+The Traditional Chinese [pointer and function-value video tutorial](docs/tutorial_pointer_function_video_zh_TW.md)
+is both a runnable lesson and a ready-to-record script.
+
+- `examples/` — 92 single-file demos
+- `tests/` — 43 test suites
 - `apps/` — full programs (`apps/zyide.zy`, `apps/zyide_gui.zy`, `apps/zytk_demo.zy`)
 
 ## Layout
@@ -229,8 +233,8 @@ zy run tests\text_test.zy
 zyenlang/             # Python transpiler + installed std
 zyenlang/std/         # canonical stdlib (loaded by `import <std/...>`)
 std/                  # source-tree mirror of stdlib (browse-friendly)
-examples/             # 91 .zy demos
-tests/                # 26 test suites
+examples/             # 92 .zy demos
+tests/                # 43 test suites
 docs/                 # specs and notes
 apps/                 # full programs
 tools/                # install / repair scripts

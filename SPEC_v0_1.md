@@ -368,3 +368,25 @@ above.
 
 See `docs/ZEP-0010-function-values.md`, `docs/ZEP-0013-closures.md`, and
 `docs/arc_callback_abi.md` for the normative ABI v2 details.
+
+## ABI v3 boxed structs and structural List dispatch
+
+ABI v3 preserves the ABI v2 `ZL_ptr` and `ZL_Function` layouts and extends
+`ZL_Value`/`Any` with a boxed struct address, canonical type name, and ARC
+owner. A List may therefore contain user-defined struct values without making
+`Any` a public source type.
+
+For a local List, the compiler records a hidden conservative set of element
+types. `list.get(i).method(args)` and `list.pop().method(args)` are accepted
+when every possible element is a user struct with the same method parameter
+types, return type, and default expressions. Structural calls use
+positional arguments. An erased List uses a runtime type-tag dispatcher and
+fails explicitly for an incompatible value.
+
+Structs are copied into ARC boxes. `get` borrows, copying an Any cell retains,
+`set` and `clear` release removed boxes, and `pop` transfers ownership. An
+exact cast such as `(Dog)animals.pop()` checks the runtime type before restoring
+the struct value.
+
+See `docs/ZEP-0016-structural-list-dispatch.md` and
+`docs/arc_callback_abi.md` for the normative ABI v3 details.

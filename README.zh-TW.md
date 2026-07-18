@@ -1,4 +1,4 @@
-# ZyenLang v0.1.73
+# ZyenLang v0.1.83
 
 [English](README.md) | **繁體中文**
 
@@ -23,13 +23,13 @@ GitHub Release 提供 Windows、Linux 與 macOS 的可直接執行壓縮檔，�
 獨立 `zy` CLI、Zig C toolchain、跨平台 raylib GUI runtime、範例、文件與
 預先編譯的 GUI demo。不必另外安裝 Python、`pip` 或 C 編譯器。
 
-v0.1.73 請下載對應平台的 `zyv173` 壓縮檔。解壓後的根資料夾也叫
-`zyv173`，而且 `zy` 就放在根目錄。Windows 解壓後可直接雙擊
+v0.1.83 請下載對應平台的 `zyv183` 壓縮檔。解壓後的根資料夾也叫
+`zyv183`，而且 `zy` 就放在根目錄。Windows 解壓後可直接雙擊
 `add-to-user-path.cmd` 一鍵加入使用者 `PATH`；Linux 與 macOS 執行一次
 `add-to-user-path.sh` 即可：
 
 ```powershell
-cd zyv173
+cd zyv183
 .\add-to-user-path.cmd
 .\zy.exe run examples\hello.zy
 .\zy.exe run examples\tk_portable_smoke.zy
@@ -72,7 +72,7 @@ fn main() -> int {
 }
 ```
 
-## 語言表面（v0.1.73）
+## 語言表面（v0.1.83）
 
 - **變數**:`let a = v;`、`let a: T = v;`、`const a = v;`
 - **修改一律寫 `set`**:`set a = v;`、`set a += v;`、`set *p = v;`
@@ -224,6 +224,43 @@ fn main() -> int {
 }
 ```
 
+## List 的結構式方法呼叫
+
+使用者定義的 struct 可以直接放入同一個 `List`。只要所有可能的元素型別
+都有同名且簽章完全相同的方法，就能直接從 `get()` 或 `pop()` 呼叫，不必
+另外宣告 interface、trait 或繼承關係：
+
+```zy
+struct Dog {
+    fn bark() -> void {
+        print("dog");
+    }
+}
+
+struct Cat {
+    fn bark() -> void {
+        print("cat");
+    }
+}
+
+fn main() -> int {
+    let animals: List = [Dog {}, Cat {}];
+    for (let i = 0; i < animals.len(); set i += 1) {
+        animals.get(i).bark();
+    }
+    return 0;
+}
+```
+
+可能的元素型別由編譯器保存在隱藏 metadata，`Any` 仍不是公開語法。共同
+方法只接受位置參數，因為參數名稱不屬於共同形狀。當 List 經過一般 `List`
+參數而失去靜態型別集合時，runtime 會檢查實際 boxed struct，型別不符會產生
+明確錯誤。
+
+List 會複製 struct 值並放入 ARC box。`get()` 借用 box，`set()` 與
+`clear()` 釋放移除的 box，`pop()` 則轉移引用。需要取回具體值時可寫
+`let dog: Dog = (Dog)animals.pop();`。
+
 ## 標準函式庫
 
 ### Round 3:集合(collections)
@@ -294,8 +331,8 @@ zy run examples\add.zy
 zy run tests\text_test.zy
 ```
 
-- `examples/` —— 92 支單檔範例
-- `tests/` —— 43 個測試
+- `examples/` —— 93 支單檔範例
+- `tests/` —— 70 支 `.zy` 測試 / 錯誤 fixture 與 7 組 Python 整合測試
 - `apps/` —— 完整應用程式(`apps/zyide.zy`、`apps/zyide_gui.zy`、`apps/zytk_demo.zy`)
 
 ## 專案結構
@@ -304,8 +341,8 @@ zy run tests\text_test.zy
 zyenlang/             # Python 轉譯器 + 內附 std
 zyenlang/std/         # 標準函式庫正本(import <std/...> 會載這份)
 std/                  # 標準函式庫的源樹鏡像(方便瀏覽)
-examples/             # 92 支 .zy 範例
-tests/                # 43 個測試
+examples/             # 93 支 .zy 範例
+tests/                # 70 支 .zy fixture + 7 組 Python 整合測試
 docs/                 # 規格與筆記
 apps/                 # 完整應用程式
 tools/                # 安裝 / 修補腳本

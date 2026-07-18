@@ -1,5 +1,26 @@
 # Changelog
 
+## v0.1.83 - 2026-07-18
+
+### Added
+
+- ARC-boxed user struct values in heterogeneous Lists.
+- Structural calls through `List.get()` and `List.pop()` when all inferred
+  element structs provide one exact shared method signature.
+- Runtime-checked dispatch for Lists whose hidden element set is erased.
+- Exact casts from dynamic List values back to user struct values.
+- ZEP-0016, executable examples, positive coverage, compile-time diagnostics,
+  and a runtime type-guard fixture.
+
+### Changed
+
+- Native interoperability is ABI v3. `ZL_Value` now carries boxed struct
+  address, canonical type name, and ARC owner fields.
+- List copy, replace, clear, and pop paths now retain, release, or transfer
+  boxed struct references consistently.
+- Zero-field structs emit a portable one-byte placeholder for ISO C compilers.
+- Portable archives and extracted folders are named `zyv183`.
+
 ## v0.1.73 - 2026-07-18
 
 ### Changed

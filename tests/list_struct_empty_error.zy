@@ -1,0 +1,11 @@
+struct EmptyDog {
+    fn bark() -> void {
+        print("dog");
+    }
+}
+
+fn main() -> int {
+    let values: List = [];
+    values.get(0).bark();
+    return 0;
+}

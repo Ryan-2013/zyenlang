@@ -1,4 +1,4 @@
-# ZyenLang v0.1.73
+# ZyenLang v0.1.83
 
 **English** | [繁體中文](README.zh-TW.md)
 
@@ -24,14 +24,14 @@ macOS. They contain the standalone `zy` CLI, Zig C toolchain, cross-platform
 raylib GUI runtime, examples, docs, and a prebuilt GUI demo. Python, `pip`, and
 a separate C compiler are not required.
 
-For v0.1.73, download the `zyv173` archive for your platform. The extracted
-folder is also named `zyv173`, and the `zy` executable is directly in that
+For v0.1.83, download the `zyv183` archive for your platform. The extracted
+folder is also named `zyv183`, and the `zy` executable is directly in that
 folder. On Windows, double-click `add-to-user-path.cmd` for one-click setup;
 Linux and macOS users can run `add-to-user-path.sh` once.
 
 ```powershell
 # Windows, after extracting the archive
-cd zyv173
+cd zyv183
 .\add-to-user-path.cmd
 .\zy.exe run examples\hello.zy
 .\zy.exe run examples\tk_portable_smoke.zy
@@ -39,7 +39,7 @@ cd zyv173
 
 ```bash
 # Linux / macOS, after extracting the archive
-cd zyv173
+cd zyv183
 ./add-to-user-path.sh
 ./zy run examples/hello.zy
 ./zy run examples/tk_portable_smoke.zy
@@ -82,13 +82,14 @@ fn main() -> int {
 }
 ```
 
-## Language surface (v0.1.73)
+## Language surface (v0.1.83)
 
 - **Variables**: `let a = v;`, `let a: T = v;`, `const a = v;`
 - **Mutation requires `set`**: `set a = v;`, `set a += v;`, `set *p = v;`
 - **Control flow**: `if (...) {}`, `else { ... }`, `for (init; cond; step) {}`, infinite loop `for (;;) {}`. There is no `while`.
 - **Functions**: `fn name(args) -> T { ... }`. Calls support positional args, named args such as `add(b: 10, a: 5)`, trailing default params, first-class `fn(...) -> T` values, and managed `ptr<fn(...)>` function-cell pointers. Any fn-typed expression can be called, including `pick("sub")(10, 3)`.
 - **Structs**: `struct S { let this.field: T; fn method() -> T { ... } }`
+- **Structural List calls**: structs stored in one local List can share a method by matching its name and exact signature; no interface declaration is required.
 - **Types**: `int`, `float`, `bool`, `str`, `List`, `ptr<T>`, `ptr<void>`, `fn(...) -> T`, `ptr<fn(...)>`, struct types, `void`, `None`. (`Any` is internal to `List`.)
 - **Printing**: `print(expr)` accepts only `str`. Convert explicitly with `print((str)value)` or use an f-string.
 - **f-strings**: `f"i={i}"` always has type `str`; interpolation formats supported values automatically.
@@ -182,6 +183,45 @@ print((str)(*inner)); // 10
 An existing pointer can initialize the nested cell as well. Prefer fully typed
 forms such as `ptr<ptr<int>>`; `ptr<ptr>` loses the innermost static type.
 
+## Structural List dispatch
+
+User-defined structs can be stored directly in a heterogeneous `List`. A call
+through `get()` or `pop()` is valid when every inferred element struct provides
+the same method with the same parameter, return, and default declarations:
+
+```zy
+struct Dog {
+    fn bark() -> void {
+        print("dog");
+    }
+}
+
+struct Cat {
+    fn bark() -> void {
+        print("cat");
+    }
+}
+
+fn main() -> int {
+    let animals: List = [Dog {}, Cat {}];
+    for (let i = 0; i < animals.len(); set i += 1) {
+        animals.get(i).bark();
+    }
+    return 0;
+}
+```
+
+The compiler keeps the possible element types as hidden metadata; there is no
+public interface, trait, union, or `Any` syntax. Structural calls use positional
+arguments because parameter names are not part of the shared shape. If a List
+crosses an erased `List` boundary, dispatch checks the boxed struct type at
+runtime and reports a clear error for an incompatible value.
+
+List struct values are value copies stored in ARC boxes. `get()` borrows the
+box, `set()` and `clear()` release removed boxes, and `pop()` transfers the
+box reference. Cast a dynamic value back to its exact struct type when needed,
+for example `let dog: Dog = (Dog)animals.pop();`.
+
 ## Standard library
 
 ### Round 3: collections
@@ -220,7 +260,7 @@ the template's C headers, sources, libraries, and flags. Normal `zy check`,
 `zy run`, and `zy build` do not generate a `.zy` wrapper or invoke a Python
 helper. Templates may expose `ZL_List`/`ZL_list`, `ZL_ptr`/`ZL_ptr<T>`,
 `fn(...) -> T`, and value structs declared with `ZLC_STRUCT` plus `ZLC_FIELD`.
-Their stable ABI v2 layouts come from `zyenlang_c_abi.h`, which native builds
+Their stable ABI v3 layouts come from `zyenlang_c_abi.h`, which native builds
 include automatically. C code receives callbacks as `ZL_Function`; use
 `zl_fn_assign` when saving one and `zl_fn_clear` when replacing or unregistering
 it. `zy c-module gen` remains only for optional offline inspection/export.

@@ -606,18 +606,26 @@ print(*loaded);
 
 ```zy
 let *chain: ptr<ptr<int>> = 10;
-let inner = *chain;
-print(*inner);
+print(**chain);
 
 let *deep: ptr<ptr<ptr<int>>> = 42;
-let level2 = *deep;
-let level1 = *level2;
-print(*level1);
+print(***deep);
 ```
 
-每層都有自己的 owner，釋放最外層時 destructor 會遞迴釋放內層。`ptr<ptr>`
-仍可作為相容寫法，但會失去最內層靜態型別；應優先寫完整
-`ptr<ptr<int>>`。
+每層都有自己的 owner，釋放最外層時 destructor 會遞迴釋放內層。
+
+`&*managed_pointer` 會保留同一個 address、owner 與 runtime type tag，因此可以
+安全地為巢狀 pointer 建立 alias：
+
+```zy
+let *source: ptr<ptr<int>> = 10;
+let *slot: ptr<ptr> = &**source;
+set **slot = 20;
+print(**source); // 20
+```
+
+`ptr<ptr>` 可作為相容寫法；owned declaration 會從初始化式補出缺少的內層
+型別。為了讓 API 與診斷更清楚，公開介面仍應優先寫完整 `ptr<ptr<int>>`。
 
 ## 16. ptr<str> 與字串
 
@@ -692,6 +700,8 @@ fn work() -> int {
 - Owned pointer、closure 及 managed struct local 在 scope exit 自動 release。
 - 函式參數預設 borrowed，只保證在該次呼叫期間有效。
 - 回傳 managed value 會轉移一個 owned reference 給呼叫端。
+- 回傳 struct 或 nested pointer 時，從回傳值可達的 managed fields 會遞迴保留。
+- 沒有從回傳值逃逸的 managed locals 仍會在 scope exit 釋放。
 - Closure capture 會 retain managed snapshot。
 
 Hot loop 中每圈宣告 owned pointer 不會洩漏，但會配置與釋放很多次：

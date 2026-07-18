@@ -31,6 +31,7 @@ jobs:
           zy run tests/fn_value_test.zy
           zy run tests/fn_chain_test.zy
           zy run tests/closure_test.zy
+          zy run tests/pointer_escape_test.zy
           zy run tests/c_module_callback_test.zy
       - name: Compile cross-platform GUI smoke
         shell: bash

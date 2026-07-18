@@ -1,0 +1,70 @@
+import <std/test>;
+import <std/mem>;
+
+struct PointerBox {
+    let this.value: ptr<int>;
+}
+
+fn make_pointer() -> ptr<int> {
+    let *value: ptr<int> = 110;
+    return value;
+}
+
+fn make_chain() -> ptr<ptr<int>> {
+    let *value: ptr<ptr<int>> = 120;
+    return value;
+}
+
+fn return_chain_leaf() -> ptr<int> {
+    let *value: ptr<ptr<int>> = 125;
+    return &**value;
+}
+
+fn make_box() -> PointerBox {
+    let *value: ptr<int> = 130;
+    let box: PointerBox = PointerBox { value: value };
+    return box;
+}
+
+fn return_box_field() -> ptr<int> {
+    let box: PointerBox = make_box();
+    return box.value;
+}
+
+fn main() -> int {
+    let t: TestStats = test.new_stats("pointer chains and ownership escape");
+
+    let *deep: ptr<ptr<int>> = 10;
+    t.eq_int("direct double dereference", **deep, 10);
+
+    let *alias_slot: ptr<ptr> = &**deep;
+    t.eq_int("address of double dereference", **alias_slot, 10);
+    set **alias_slot = 20;
+    t.eq_int("write through inferred ptr slot", **deep, 20);
+    t.eq_bool("double dereference in condition", **deep == 20, true);
+
+    let escaped: ptr<int> = None;
+    if (true) {
+        let *scoped: ptr<ptr<int>> = 70;
+        set escaped = &**scoped;
+    }
+    t.eq_bool("managed alias survives inner scope", mem.is_valid(escaped), true);
+    t.eq_int("managed alias keeps payload", *escaped, 70);
+
+    let returned: ptr<int> = make_pointer();
+    t.eq_bool("returned pointer remains owned", mem.is_owned(returned), true);
+    t.eq_int("returned pointer payload", *returned, 110);
+
+    let returned_chain: ptr<ptr<int>> = make_chain();
+    t.eq_int("returned nested pointer payload", **returned_chain, 120);
+
+    let returned_leaf: ptr<int> = return_chain_leaf();
+    t.eq_int("addressed leaf escapes chain cleanup", *returned_leaf, 125);
+
+    let box: PointerBox = make_box();
+    t.eq_int("returned struct keeps pointer field", *box.value, 130);
+
+    let field: ptr<int> = return_box_field();
+    t.eq_int("returned field escapes struct cleanup", *field, 130);
+    return t.summary();
+}

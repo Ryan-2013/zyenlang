@@ -975,34 +975,6 @@ def convert_struct_literal(expr: str, ctx: TranspileContext) -> str:
     return pattern.sub(repl, expr)
 
 
-def transform_deref(expr: str, ctx: TranspileContext) -> str:
-    # Replace unary pointer dereference `*p`, but do not touch multiplication
-    # such as `a * b` or `p.x * p.y`.
-    pattern = re.compile(r"\*\s*([A-Za-z_]\w*)")
-    out: List[str] = []
-    last = 0
-    for m in pattern.finditer(expr):
-        start = m.start()
-        # Find previous non-space char. Unary deref is allowed at expression start
-        # or after an operator/open delimiter.
-        j = start - 1
-        while j >= 0 and expr[j].isspace():
-            j -= 1
-        prev = expr[j] if j >= 0 else ""
-        if prev and (prev.isalnum() or prev in "_.)]"):
-            continue
-        name = m.group(1)
-        target = ctx.ptr_targets.get(name)
-        repl = f"(*({c_type(target)}*)zl_ptr_checked_addr({name}, \"{name}\"))" if target else f"(*{name})"
-        out.append(expr[last:start])
-        out.append(repl)
-        last = m.end()
-    if last == 0:
-        return expr
-    out.append(expr[last:])
-    return "".join(out)
-
-
 def ptrstruct_inner_type(ztype: str) -> Optional[str]:
     m = re.match(r"ptrstruct\s*<\s*([A-Za-z_]\w*)\s*>", ztype.strip())
     if m:
@@ -1041,6 +1013,11 @@ def wrap_arg_for_expected(arg: str, expected_type: str, ctx: TranspileContext) -
     expected_base = ztype_base(expected)
     actual = infer_type(arg, ctx)
     base = ztype_base(actual)
+
+    if ptrstruct_inner_type(expected):
+        # Struct methods are rewritten to internal C calls with `&receiver`.
+        # That address is a native receiver pointer, not a source-level ZL_ptr.
+        return arg.strip() if arg.strip().startswith("&") else transform_expr(arg, ctx)
 
     if expected_base == "List":
         # Internal transformed calls may already pass a List by address, e.g.
@@ -1602,22 +1579,68 @@ def strip_outer_parens(expr: str) -> str:
     return source
 
 
+def unary_deref_operand(expr: str) -> Optional[str]:
+    """Return the complete operand of a pure unary dereference expression."""
+    source = expr.strip()
+    if not source.startswith("*"):
+        return None
+    operand = source[1:].strip()
+    if not operand:
+        return None
+    if re.fullmatch(r"[A-Za-z_]\w*(?:\.[A-Za-z_]\w*|\[[^\[\]]+\])*", operand):
+        return operand
+    if operand.startswith("*") and unary_deref_operand(operand) is not None:
+        return operand
+    if operand.startswith("(") and find_matching_paren(operand, 0) == len(operand) - 1:
+        return operand
+    return None
+
+
+def address_of_operand(expr: str) -> Optional[str]:
+    source = expr.strip()
+    if not source.startswith("&") or source.startswith("&&"):
+        return None
+    operand = source[1:].strip()
+    if re.fullmatch(r"[A-Za-z_]\w*", operand):
+        return operand
+    if unary_deref_operand(operand) is not None:
+        return operand
+    raise ZyenError(
+        f"address-of needs a local variable or managed pointer dereference, got `{expr}`"
+    )
+
+
 def deref_info(expr: str, ctx: TranspileContext) -> Optional[Tuple[str, str, str]]:
     """Return (pointer C expression, pointee type, diagnostic label)."""
     raw = expr.strip()
-    if not raw.startswith("*"):
+    operand = unary_deref_operand(raw)
+    if operand is None:
         return None
-    pointer_expr = strip_outer_parens(raw[1:].strip())
-    cast = is_cast_expr(pointer_expr)
-    if cast and ztype_base(cast[0]) == "ptr":
-        target = ptr_inner_type(cast[0])
-        if not target:
-            return None
-        inner = cast[1]
-        return transform_expr(inner, ctx), target, inner
-    if re.fullmatch(r"[A-Za-z_]\w*", pointer_expr) and pointer_expr in ctx.ptr_targets:
-        return pointer_expr, ctx.ptr_targets[pointer_expr], pointer_expr
-    return None
+    pointer_expr = strip_outer_parens(operand)
+    pointer_type = infer_type(pointer_expr, ctx)
+    if ztype_base(pointer_type) != "ptr":
+        raise ZyenError(f"cannot dereference non-pointer expression `{pointer_expr}`")
+    target = ptr_inner_type(pointer_type)
+    if target is None:
+        raise ZyenError(
+            f"cannot infer the pointee type of `{pointer_expr}`; use a concrete `ptr<T>`"
+        )
+    return transform_expr(pointer_expr, ctx), target, pointer_expr
+
+
+def transform_address_of(expr: str, ctx: TranspileContext) -> Optional[str]:
+    operand = address_of_operand(expr)
+    if operand is None:
+        return None
+    deref_operand = unary_deref_operand(operand)
+    if deref_operand is not None:
+        pointer_expr = strip_outer_parens(deref_operand)
+        pointer_type = infer_type(pointer_expr, ctx)
+        if ztype_base(pointer_type) != "ptr":
+            raise ZyenError(f"cannot take the address of `{operand}`")
+        return transform_expr(pointer_expr, ctx)
+    target_type = infer_type(operand, ctx)
+    return f'zl_ptr(&{operand}, "{type_name_for_runtime(target_type)}")'
 
 
 def transform_special_equality(expr: str, ctx: TranspileContext) -> Optional[str]:
@@ -1653,6 +1676,47 @@ def transform_special_equality(expr: str, ctx: TranspileContext) -> Optional[str
             test = f"{helper}({transform_expr(right, ctx)})"
             return test if op == "==" else f"(!{test})"
         return None
+    return None
+
+
+def split_top_level_condition(expr: str) -> Optional[Tuple[str, str, str]]:
+    source = expr.strip()
+    mask = string_mask(source)
+    depth = 0
+    candidates: List[Tuple[int, str]] = []
+    index = 0
+    while index < len(source):
+        if mask[index]:
+            index += 1
+            continue
+        ch = source[index]
+        if ch in "([{":
+            depth += 1
+            index += 1
+            continue
+        if ch in ")]}":
+            depth -= 1
+            index += 1
+            continue
+        if depth == 0:
+            two = source[index:index + 2]
+            if two in {"||", "&&", "==", "!=", "<=", ">="}:
+                candidates.append((index, two))
+                index += 2
+                continue
+            if ch in {"<", ">"}:
+                candidates.append((index, ch))
+        index += 1
+    if not candidates:
+        return None
+    for operators in ({"||"}, {"&&"}, {"==", "!=", "<=", ">=", "<", ">"}):
+        for position, operator in candidates:
+            if operator not in operators:
+                continue
+            left = source[:position].strip()
+            right = source[position + len(operator):].strip()
+            if left and right:
+                return left, operator, right
     return None
 
 def transform_field_access(expr: str, ctx: TranspileContext) -> str:
@@ -2062,15 +2126,25 @@ def transform_expr(expr: str, ctx: TranspileContext) -> str:
     cast = is_cast_expr(expr)
     if cast:
         return c_cast_expr(cast[0], cast[1], ctx)
+    unwrapped = strip_outer_parens(expr)
+    if unwrapped != expr:
+        return f"({transform_expr(unwrapped, ctx)})"
     special_equality = transform_special_equality(expr, ctx)
     if special_equality is not None:
         return special_equality
+    condition = split_top_level_condition(expr)
+    if condition is not None:
+        left, operator, right = condition
+        return f"({transform_expr(left, ctx)} {operator} {transform_expr(right, ctx)})"
+    address = transform_address_of(expr, ctx)
+    if address is not None:
+        return address
     deref = deref_info(expr, ctx)
     if deref is not None:
         pointer_c, target_type, label = deref
         if target_type == "void":
             raise ZyenError(f"cannot dereference `ptr<void>` `{label}`; cast it to a concrete ptr<T> first")
-        return f"(*({c_type(target_type)}*)zl_ptr_checked_addr({pointer_c}, \"{label}\"))"
+        return f"(*({c_type(target_type)}*)zl_ptr_checked_addr({pointer_c}, {json.dumps(label)}))"
     expr = transform_postfix_fn_call(expr, ctx)
     expr = convert_struct_literal(expr, ctx)
     expr = replace_fstrings_in_expr(expr, ctx)
@@ -2081,7 +2155,6 @@ def transform_expr(expr: str, ctx: TranspileContext) -> str:
     expr = transform_method_calls(expr, ctx)
     expr = transform_field_access(expr, ctx)
     expr = transform_ptr_index(expr, ctx)
-    expr = transform_deref(expr, ctx)
     expr = transform_checked_int_arithmetic(expr, ctx)
     return expr
 
@@ -2148,16 +2221,22 @@ def infer_type(expr: str, ctx: TranspileContext) -> str:
         return "int"
     if re.match(r"^-?\d+\.\d*([eE][+-]?\d+)?$", raw) or re.match(r"^-?\d+[eE][+-]?\d+$", raw):
         return "float"
-    if raw.startswith("&"):
-        return "ptr"
-    dm = re.match(r"^\*\s*([A-Za-z_]\w*)$", raw)
-    if dm:
-        return ctx.ptr_targets.get(dm.group(1), "int")
-    if raw.startswith("*"):
-        pointer_expr = strip_outer_parens(raw[1:].strip())
-        pointer_cast = is_cast_expr(pointer_expr)
-        if pointer_cast and ztype_base(pointer_cast[0]) == "ptr":
-            return ptr_inner_type(pointer_cast[0]) or "void"
+    address_operand = address_of_operand(raw)
+    if address_operand is not None:
+        deref_operand = unary_deref_operand(address_operand)
+        if deref_operand is not None:
+            pointer_type = infer_type(strip_outer_parens(deref_operand), ctx)
+            if ztype_base(pointer_type) != "ptr":
+                raise ZyenError(f"cannot take the address of `{address_operand}`")
+            return pointer_type
+        return f"ptr<{infer_type(address_operand, ctx)}>"
+    deref_operand = unary_deref_operand(raw)
+    if deref_operand is not None:
+        pointer_expr = strip_outer_parens(deref_operand)
+        pointer_type = infer_type(pointer_expr, ctx)
+        if ztype_base(pointer_type) != "ptr":
+            raise ZyenError(f"cannot dereference non-pointer expression `{pointer_expr}`")
+        return ptr_inner_type(pointer_type) or "void"
     im = re.match(r"^([A-Za-z_]\w*)\s*\[.*\]$", raw)
     if im and im.group(1) in ctx.ptr_targets:
         return ctx.ptr_targets.get(im.group(1), "int")
@@ -2530,6 +2609,12 @@ def parse_owned_ptr_decl(line: str, ctx: TranspileContext, line_no: int, trailin
             target_type = infer_type(expr, ctx)
             if ztype_base(target_type) == "Any":
                 raise ZyenError(f"line {line_no}: cannot infer a concrete ptr target from dynamic List value; cast first")
+        elif target_type == "ptr":
+            actual_type = infer_type(expr, ctx)
+            if ztype_base(actual_type) == "ptr" and ptr_inner_type(actual_type):
+                target_type = actual_type
+            elif ztype_base(actual_type) not in {"Any", "none", "void"}:
+                target_type = f"ptr<{actual_type}>"
     else:
         target_type = infer_type(expr, ctx)
 
@@ -2668,10 +2753,7 @@ def parse_var_decl(line: str, ctx: TranspileContext, line_no: int, trailing_semi
             ptr_target = target_type
             expr_c = f'zl_none_ptr("{type_name_for_runtime(target_type)}")'
     elif typ == "ptr" and expr.startswith("&"):
-        target_var = expr[1:].strip()
-        target_type = ptr_target or ctx.symbols.get(target_var, "void")
-        ptr_target = target_type
-        expr_c = f'zl_ptr(&{target_var}, "{type_name_for_runtime(target_type)}")'
+        expr_c = transform_expr(expr, ctx)
     elif typ == "List" and expr == "List":
         typ = "List"
         expr_c = "zl_list_new()"
@@ -2703,7 +2785,7 @@ def parse_var_decl(line: str, ctx: TranspileContext, line_no: int, trailing_semi
     # track the target type for later `*p` operations.
     if ztype_base(typ) == "ptr" and not ptr_target:
         if expr.startswith("&"):
-            ptr_target = ctx.symbols.get(expr[1:].strip(), "void")
+            ptr_target = ptr_inner_type(infer_type(expr, ctx)) or "void"
         elif expr in ctx.ptr_targets:
             ptr_target = ctx.ptr_targets.get(expr, "void")
         elif re.match(r"^[A-Za-z_]\w*\.(ptr|append_ptr)\s*\(", expr):
@@ -2856,10 +2938,9 @@ def parse_set(line: str, ctx: TranspileContext, line_no: int) -> str:
         if is_none_literal(rhs):
             return f'zl_ptr_release({lhs});\n{lhs} = zl_none_ptr("{type_name_for_runtime(target_type)}");'
         if rhs.startswith("&"):
-            target_var = rhs[1:].strip()
-            target_type = ctx.symbols.get(target_var, target_type)
-            ctx.ptr_targets[lhs] = target_type
-            return f'zl_ptr_assign(&{lhs}, zl_ptr(&{target_var}, "{type_name_for_runtime(target_type)}"));'
+            rhs_type = infer_type(rhs, ctx)
+            ensure_assignable(f"ptr<{target_type}>", rhs_type, line_no, f"assignment to `{lhs}`")
+            return f"zl_ptr_assign(&{lhs}, {transform_expr(rhs, ctx)});"
 
     # Dereference assignment. If the pointer is None, Zyen lazily creates one
     # hidden cell for it. This makes this intuitive pattern valid:
@@ -2884,7 +2965,7 @@ def parse_set(line: str, ctx: TranspileContext, line_no: int) -> str:
             raise ZyenError(f"line {line_no}: cannot assign through `ptr<void>`; cast `{label}` to a concrete ptr<T> first")
         ensure_assignable(target_type, infer_type(rhs, ctx), line_no, f"assignment through `{lhs}`")
         rhs_c = wrap_arg_for_expected(rhs, "Any", ctx) if ztype_base(target_type) == "Any" else transform_expr(rhs, ctx)
-        lhs_c = f"(*({c_type(target_type)}*)zl_ptr_checked_addr({pointer_c}, \"{label}\"))"
+        lhs_c = f"(*({c_type(target_type)}*)zl_ptr_checked_addr({pointer_c}, {json.dumps(label)}))"
         return managed_assignment_c(lhs_c, target_type, rhs_c, expression_produces_owned_value(rhs, ctx), ctx)
 
     if lhs.startswith("*"):
@@ -3190,7 +3271,7 @@ def scan_nested_fns(ctx: TranspileContext, lines: List[Tuple[int, str]]) -> None
                 i = j
                 continue
             # Track bindings in outer scope for later nested-fn analysis.
-            let_m = re.match(r"\s*(?:let|const)\s+([A-Za-z_]\w*)\s*(?::\s*([^=;]+?))?\s*(?:=\s*(.*))?;\s*$", l)
+            let_m = re.match(r"\s*(?:let|const)\s+\*?\s*([A-Za-z_]\w*)\s*(?::\s*([^=;]+?))?\s*(?:=\s*(.*))?;\s*$", l)
             if let_m:
                 var = let_m.group(1)
                 explicit = (let_m.group(2) or "").strip().replace(" ", "")

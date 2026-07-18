@@ -172,7 +172,7 @@ fn make_score() -> ScoreBox {
 `box.value` 會跟著回傳的 struct 存活。回傳 `box.value` 或 `&**chain` 時也會把
 對應 owner 轉移給呼叫端。
 
-## 第六章：函式指標在 ZyenLang 是函式值（5:25 至 7:10）
+## 第六章：函式值與函式指標（5:25 至 7:10）
 
 先定義兩個具名函式：
 
@@ -227,6 +227,33 @@ print(pick("add")(20, 22)); // 42
 
 函式值使用位置參數。第二段連續呼叫沒有參數名稱資訊，因此不要寫具名參數。
 具名 top-level function 不需要配置 owner；closure 則會用 ARC 管理捕捉環境。
+
+真正需要「pointer 指向函式」時，使用 `ptr<fn(...)>`。它指向一個
+`ZL_Function` 記憶體 cell：
+
+```zy
+let func_ptr: ptr<fn(int,int)->int> = &add;
+print((*func_ptr)(20, 22));
+print(*func_ptr(20, 22)); // ZyenLang 簡寫
+```
+
+`&add` 指向編譯器為 top-level function 建立的靜態 cell。要建立 ARC 管理的
+heap cell，使用 owned pointer 寫法：
+
+```zy
+let *owned_ptr: ptr<fn(int,int)->int> = add;
+```
+
+函式指標也能先擦除成 `ptr<void>`，再以相同簽章還原：
+
+```zy
+let opaque: ptr<void> = func_ptr;
+print(*(ptr<fn(int,int)->int>)opaque(12, 10));
+```
+
+呼叫前會檢查 pointer runtime tag 與 fn signature。不同函式簽章禁止互相
+cast；`ptr<fn(...)>` 是 pointer to `ZL_Function` data cell，不是把 raw C
+function pointer 塞進 `void*`。
 
 ## 第七章：安全邊界（7:10 至 8:10）
 

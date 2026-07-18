@@ -66,6 +66,7 @@ EXAMPLES = [
     "robot_control_demo.zy",
     "default_args.zy",
     "function_declaration.zy",
+    "pointer_function_tutorial.zy",
 ]
 
 

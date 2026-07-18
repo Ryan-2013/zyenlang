@@ -19,7 +19,7 @@ def check(condition: bool, message: str) -> None:
 
 
 def main() -> int:
-    check(project_version() == "0.1.53", "release version")
+    check(project_version() == "0.1.63", "release version")
     check(portable_name("0.1.53") == "zyv153", "compact portable name")
     check(portable_name("1.2.3") == "zyv123", "nonzero major portable name")
 

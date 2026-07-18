@@ -1,4 +1,4 @@
-# ZyenLang v0.1.53
+# ZyenLang v0.1.63
 
 **English** | [繁體中文](README.zh-TW.md)
 
@@ -24,13 +24,13 @@ macOS. They contain the standalone `zy` CLI, Zig C toolchain, cross-platform
 raylib GUI runtime, examples, docs, and a prebuilt GUI demo. Python, `pip`, and
 a separate C compiler are not required.
 
-For v0.1.53, download the `zyv153` archive for your platform. The extracted
-folder is also named `zyv153`, and the `zy` executable is directly in that
+For v0.1.63, download the `zyv163` archive for your platform. The extracted
+folder is also named `zyv163`, and the `zy` executable is directly in that
 folder so the folder itself can be added to `PATH`.
 
 ```powershell
 # Windows, after extracting the archive
-cd zyv153
+cd zyv163
 .\add-to-user-path.cmd
 .\zy.exe run examples\hello.zy
 .\zy.exe run examples\tk_portable_smoke.zy
@@ -38,7 +38,7 @@ cd zyv153
 
 ```bash
 # Linux / macOS, after extracting the archive
-cd zyv153
+cd zyv163
 ./add-to-user-path.sh
 ./zy run examples/hello.zy
 ./zy run examples/tk_portable_smoke.zy
@@ -81,14 +81,14 @@ fn main() -> int {
 }
 ```
 
-## Language surface (v0.1.53)
+## Language surface (v0.1.63)
 
 - **Variables**: `let a = v;`, `let a: T = v;`, `const a = v;`
 - **Mutation requires `set`**: `set a = v;`, `set a += v;`, `set *p = v;`
 - **Control flow**: `if (...) {}`, `else { ... }`, `for (init; cond; step) {}`, infinite loop `for (;;) {}`. There is no `while`.
-- **Functions**: `fn name(args) -> T { ... }`. Calls support positional args, named args such as `add(b: 10, a: 5)`, trailing default params, and first-class `fn(...) -> T` values. Any fn-typed expression can be called, including `pick("sub")(10, 3)`.
+- **Functions**: `fn name(args) -> T { ... }`. Calls support positional args, named args such as `add(b: 10, a: 5)`, trailing default params, first-class `fn(...) -> T` values, and managed `ptr<fn(...)>` function-cell pointers. Any fn-typed expression can be called, including `pick("sub")(10, 3)`.
 - **Structs**: `struct S { let this.field: T; fn method() -> T { ... } }`
-- **Types**: `int`, `float`, `bool`, `str`, `List`, `ptr<T>`, `ptr<void>`, `fn(...) -> T`, struct types, `void`, `None`. (`Any` is internal to `List`.)
+- **Types**: `int`, `float`, `bool`, `str`, `List`, `ptr<T>`, `ptr<void>`, `fn(...) -> T`, `ptr<fn(...)>`, struct types, `void`, `None`. (`Any` is internal to `List`.)
 - **f-strings**: `f"i={i}"`
 - **Imports**: `import <std/math>;`, `import <std/math> as m;`, `import "lib.zy" as lib;`. Relative paths are resolved against the importing file's folder.
 - **Qualified types**: `let car: test.Car = test.Car { model: "Honda" };` — imported user structs live in the global namespace, the alias is just stripped.
@@ -133,6 +133,25 @@ function type contains types, not parameter names. Calling `None` reports a
 runtime error instead of jumping through a null C pointer. Closures are created
 by nested named functions and capture a read-only snapshot; there is no
 anonymous lambda syntax.
+
+## Function-cell pointers
+
+`ptr<fn(P...)->R>` points to a checked `ZL_Function` memory cell. Taking the
+address of a top-level function borrows its compiler-emitted static cell;
+`let *` creates an ARC-owned cell that can retain a closure:
+
+```zy
+let pointer: ptr<fn(int,int)->int> = &add;
+print((*pointer)(20, 22));
+print(*pointer(20, 22));
+
+let opaque: ptr<void> = pointer;
+print(*(ptr<fn(int,int)->int>)opaque(12, 10));
+```
+
+Calls validate pointer state, the runtime cell tag, and the exact function
+signature before dispatch. Different function-pointer signatures cannot be
+cast into one another.
 
 ## Managed pointers
 

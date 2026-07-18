@@ -1,0 +1,9 @@
+fn add(a: int, b: int) -> int {
+    return a + b;
+}
+
+fn main() -> int {
+    let pointer: ptr<fn(int,int)->int> = &add;
+    set opaque: ptr<void> = pointer;
+    return 0;
+}

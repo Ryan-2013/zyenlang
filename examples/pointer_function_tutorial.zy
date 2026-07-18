@@ -41,5 +41,13 @@ fn main() -> int {
     let op: fn(int,int)->int = pick("sub");
     print(apply(op, 10, 3));
     print(pick("add")(20, 22));
+
+    let func_ptr: ptr<fn(int,int)->int> = &add;
+    print(*func_ptr(20, 22));
+    let opaque: ptr<void> = func_ptr;
+    print(*(ptr<fn(int,int)->int>)opaque(12, 10));
+
+    let *owned_func_ptr: ptr<fn(int,int)->int> = op;
+    print((*owned_func_ptr)(10, 3));
     return 0;
 }

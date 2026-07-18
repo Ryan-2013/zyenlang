@@ -1,4 +1,4 @@
-# ZyenLang v0.1.53
+# ZyenLang v0.1.63
 
 [English](README.md) | **繁體中文**
 
@@ -23,12 +23,12 @@ GitHub Release 提供 Windows、Linux 與 macOS 的可直接執行壓縮檔，�
 獨立 `zy` CLI、Zig C toolchain、跨平台 raylib GUI runtime、範例、文件與
 預先編譯的 GUI demo。不必另外安裝 Python、`pip` 或 C 編譯器。
 
-v0.1.53 請下載對應平台的 `zyv153` 壓縮檔。解壓後的根資料夾也叫
-`zyv153`，而且 `zy` 就放在根目錄；可直接把這個資料夾加入 `PATH`，或執行
+v0.1.63 請下載對應平台的 `zyv163` 壓縮檔。解壓後的根資料夾也叫
+`zyv163`，而且 `zy` 就放在根目錄；可直接把這個資料夾加入 `PATH`，或執行
 內附的安裝腳本：
 
 ```powershell
-cd zyv153
+cd zyv163
 .\add-to-user-path.cmd
 .\zy.exe run examples\hello.zy
 .\zy.exe run examples\tk_portable_smoke.zy
@@ -71,14 +71,14 @@ fn main() -> int {
 }
 ```
 
-## 語言表面（v0.1.53）
+## 語言表面（v0.1.63）
 
 - **變數**:`let a = v;`、`let a: T = v;`、`const a = v;`
 - **修改一律寫 `set`**:`set a = v;`、`set a += v;`、`set *p = v;`
 - **流程控制**:`if (...) {}`、`else { ... }`、`for (init; cond; step) {}`,無限迴圈 `for (;;) {}`。**沒有 `while`**。
-- **函式**:`fn name(args) -> T { ... }`。可有尾端預設參數 `fn f(a: int, b: int = 1) -> int`,可前置宣告 `fn f(a: int) -> int;`。
+- **函式**:`fn name(args) -> T { ... }`。支援尾端預設參數、前置宣告、第一級 `fn(...) -> T` 函式值，以及 managed `ptr<fn(...)>` 函式 cell 指標。
 - **結構**:`struct S { let this.field: T; fn method() -> T { ... } }`
-- **型別**:`int`、`float`、`bool`、`str`、`List`、`ptr<T>`、struct、`void`、`None`。(`Any` 只用在 `List` 內部,使用者拿不到。)
+- **型別**:`int`、`float`、`bool`、`str`、`List`、`ptr<T>`、`ptr<void>`、`fn(...) -> T`、`ptr<fn(...)>`、struct、`void`、`None`。(`Any` 只用在 `List` 內部,使用者拿不到。)
 - **f-string**:`f"i={i}"`
 - **import**:`import <std/math>;`、`import <std/math> as m;`、`import "lib.zy" as lib;`。相對路徑以「寫 import 的那個 `.zy` 檔案所在資料夾」為基準,不是終端機目前目錄。
 - **限定型別**:`let car: test.Car = test.Car { model: "Honda" };` —— 被 import 的 user struct 仍在全域命名空間,前綴只是被 strip 掉。
@@ -114,6 +114,23 @@ for (let i: int = 0; i < 10; i += 1) {
 for (let i: int = 0; i < 10; set i += 1) {
 }
 ```
+
+## 函式 cell 指標
+
+`ptr<fn(P...)->R>` 指向受檢查的 `ZL_Function` 記憶體 cell。`&add` 會借用
+編譯器建立的靜態 cell；`let *` 則建立可保存 closure 的 ARC owned cell：
+
+```zy
+let pointer: ptr<fn(int,int)->int> = &add;
+print((*pointer)(20, 22));
+print(*pointer(20, 22));
+
+let opaque: ptr<void> = pointer;
+print(*(ptr<fn(int,int)->int>)opaque(12, 10));
+```
+
+呼叫前會檢查 pointer 狀態、runtime cell tag 與完整函式簽章。不同函式指標
+簽章不能互相 cast。
 
 ## 預設參數與前置宣告(v0.1.49 新增)
 

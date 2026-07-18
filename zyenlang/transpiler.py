@@ -72,10 +72,8 @@ INTERNAL_TYPES = {"Any"}
 INT_MIN = -2147483648
 INT_MAX = 2147483647
 
-# Regex for a type position, used in struct fields and let/const declarations.
-# Accepts: int, str, ptr<int>, mod.Car, ptr<mod.T>, AND fn(int,int)->int.
-# The fn-type variant tolerates one level of parens inside (`[^()]*`); deeper
-# nesting (`fn(fn(int)->int)->int`) is intentionally out of scope for v0.1.49.
+# Legacy type-position detector used by a few fallback diagnostics. Actual
+# declarations use parse_type_prefix(), which handles recursive ptr/fn types.
 _TYPE_FN_RX = r"fn\s*\((?:[^()]|\([^()]*\))*\)\s*(?:->\s*[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)?(?:\s*<\s*[^=;]+\s*>)?)?"
 _TYPE_SIMPLE_RX = r"[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)?(?:\s*<\s*[^=;]+\s*>)?"
 TYPE_RX = f"(?:{_TYPE_FN_RX}|{_TYPE_SIMPLE_RX})"
@@ -455,7 +453,7 @@ def _generic_inner_type(ztype: str, outer: str) -> Optional[str]:
     for index, ch in enumerate(ztype[len(outer):], start=len(outer)):
         if ch == "<":
             depth += 1
-        elif ch == ">":
+        elif ch == ">" and (index == 0 or ztype[index - 1] != "-"):
             depth -= 1
             if depth == 0 and index != len(ztype) - 1:
                 return None
@@ -569,11 +567,20 @@ def register_fn_typedef(ctx: "TranspileContext", ztype: str) -> str:
         ctx.fn_typedefs[name] = ztype.strip().replace(" ", "")
         param_types, ret_type = parse_fn_type(ztype)
         for pt in param_types:
-            if is_fn_type(pt):
-                register_fn_typedef(ctx, pt)
-        if is_fn_type(ret_type):
-            register_fn_typedef(ctx, ret_type)
+            register_fn_types_in_type(ctx, pt)
+        register_fn_types_in_type(ctx, ret_type)
     return name
+
+
+def register_fn_types_in_type(ctx: "TranspileContext", ztype: str) -> None:
+    """Register fn signatures nested in fn returns, params, or ptr cells."""
+    normalized = ztype.strip().replace(" ", "")
+    if is_fn_type(normalized):
+        register_fn_typedef(ctx, normalized)
+        return
+    inner = ptr_inner_type(normalized)
+    if inner is not None:
+        register_fn_types_in_type(ctx, inner)
 
 
 def validate_user_type(ztype: str, line_no: int, context: str = "type") -> None:
@@ -588,6 +595,10 @@ def validate_user_type(ztype: str, line_no: int, context: str = "type") -> None:
             validate_user_type(pt, line_no, "fn type parameter")
         if ret_type != "void":
             validate_user_type(ret_type, line_no, "fn return type")
+        return
+    pointer_inner = ptr_inner_type(t)
+    if pointer_inner is not None:
+        validate_user_type(pointer_inner, line_no, "pointer target")
         return
     if t == "Any" or ptr_inner_type(t) == "Any":
         raise ZyenError(f"line {line_no}: `Any` is internal to List; use a concrete type such as int/float/bool/str/ptr<T>/List")
@@ -610,6 +621,11 @@ def ensure_assignable(expected_type: str, actual_type: str, line_no: int, what: 
         actual_inner = ptr_inner_type(actual)
         if expected_inner in {None, "void"} or actual_inner is None or expected_inner == actual_inner:
             return
+        if is_fn_type(expected_inner) and is_fn_type(actual_inner):
+            raise ZyenError(
+                f"{location}function pointer signature mismatch in {what}: expected `{expected_type}`, got `{actual_type}`; "
+                "function pointer signatures must match exactly and cannot be cast between signatures"
+            )
         raise ZyenError(
             f"{location}pointer type mismatch in {what}: expected `{expected_type}`, got `{actual_type}`; "
             f"use an explicit `({expected_type})value` cast"
@@ -1563,6 +1579,13 @@ def c_cast_expr(target_type: str, inner: str, ctx: TranspileContext) -> str:
         if source_base == "Any":
             return f"zl_cast_ptr_any({inner_c})"
         if source_base == "ptr":
+            target_inner = ptr_inner_type(target_type)
+            source_inner = ptr_inner_type(source_type)
+            if (target_inner and is_fn_type(target_inner)) or (source_inner and is_fn_type(source_inner)):
+                if target_inner not in {"void", source_inner} and source_inner not in {"void", target_inner}:
+                    raise ZyenError(
+                        f"cannot cast `{source_type}` to `{target_type}`; function pointer signatures must match exactly"
+                    )
             return inner_c
         raise ZyenError(f"cannot cast `{source_type}` to `{target_type}`; pointer casts require another ptr value")
 
@@ -1588,6 +1611,9 @@ def unary_deref_operand(expr: str) -> Optional[str]:
     if not operand:
         return None
     if re.fullmatch(r"[A-Za-z_]\w*(?:\.[A-Za-z_]\w*|\[[^\[\]]+\])*", operand):
+        return operand
+    cast = is_cast_expr(operand)
+    if cast is not None and ztype_base(cast[0]) == "ptr":
         return operand
     if operand.startswith("*") and unary_deref_operand(operand) is not None:
         return operand
@@ -1640,6 +1666,8 @@ def transform_address_of(expr: str, ctx: TranspileContext) -> Optional[str]:
             raise ZyenError(f"cannot take the address of `{operand}`")
         return transform_expr(pointer_expr, ctx)
     target_type = infer_type(operand, ctx)
+    if operand in ctx.functions and operand not in ctx.symbols:
+        return f'zl_ptr(&{operand}_zlfnval, {json.dumps(target_type.replace(" ", ""))})'
     return f'zl_ptr(&{operand}, "{type_name_for_runtime(target_type)}")'
 
 
@@ -1700,6 +1728,9 @@ def split_top_level_condition(expr: str) -> Optional[Tuple[str, str, str]]:
             continue
         if depth == 0:
             two = source[index:index + 2]
+            if two in {"<<", ">>"}:
+                index += 2
+                continue
             if two in {"||", "&&", "==", "!=", "<=", ">="}:
                 candidates.append((index, two))
                 index += 2
@@ -1775,6 +1806,9 @@ def has_top_level_comparison(expr: str) -> bool:
                 depth -= 1
             elif depth == 0:
                 two = expr[i:i + 2]
+                if two in {"<<", ">>"}:
+                    i += 2
+                    continue
                 if two in {"==", "!=", "<=", ">=", "&&", "||"}:
                     return True
                 if ch in {"<", ">"}:
@@ -2136,6 +2170,9 @@ def transform_expr(expr: str, ctx: TranspileContext) -> str:
     if condition is not None:
         left, operator, right = condition
         return f"({transform_expr(left, ctx)} {operator} {transform_expr(right, ctx)})"
+    postfix_call = transform_postfix_fn_call(expr, ctx)
+    if postfix_call != expr:
+        return postfix_call
     address = transform_address_of(expr, ctx)
     if address is not None:
         return address
@@ -2144,8 +2181,10 @@ def transform_expr(expr: str, ctx: TranspileContext) -> str:
         pointer_c, target_type, label = deref
         if target_type == "void":
             raise ZyenError(f"cannot dereference `ptr<void>` `{label}`; cast it to a concrete ptr<T> first")
+        if is_fn_type(target_type):
+            signature = json.dumps(target_type.replace(" ", ""))
+            return f"zl_fn_ptr_load({pointer_c}, {signature}, {json.dumps(label)})"
         return f"(*({c_type(target_type)}*)zl_ptr_checked_addr({pointer_c}, {json.dumps(label)}))"
-    expr = transform_postfix_fn_call(expr, ctx)
     expr = convert_struct_literal(expr, ctx)
     expr = replace_fstrings_in_expr(expr, ctx)
     # String concat must run before object/method rewriting, so expressions like
@@ -2319,7 +2358,8 @@ def infer_type(expr: str, ctx: TranspileContext) -> str:
         fn = ctx.functions[raw]
         param_types = list(fn.params.values())
         return f"fn({','.join(param_types)})->{fn.ret_type}"
-    if any(op in raw for op in ["==", "!=", "<=", ">=", "<", ">", "&&", "||"]):
+    comparison_probe = raw.replace("<<", "").replace(">>", "")
+    if any(op in comparison_probe for op in ["==", "!=", "<=", ">=", "<", ">", "&&", "||"]):
         return "bool"
     # Try top-level arithmetic before falling back to the dot heuristic:
     # if every operand of `+ - * /` independently infers to int, the result
@@ -2472,7 +2512,8 @@ def build_recursive_owned_ptr_value(expected_type: str, expr: str, name: str, ct
         return lines, hidden
 
     assert_expr_literals_fit(expr, ctx, line_no, expected_type)
-    value_c = wrap_arg_for_expected(expr, "Any", ctx) if ztype_base(expected_type) == "Any" else transform_expr(expr, ctx)
+    coerced_fn = coerce_named_fn_to_fnval(expr, expected_type, ctx) if is_fn_type(expected_type) else None
+    value_c = coerced_fn if coerced_fn is not None else (wrap_arg_for_expected(expr, "Any", ctx) if ztype_base(expected_type) == "Any" else transform_expr(expr, ctx))
     if type_has_managed_value(expected_type, ctx) and not expression_produces_owned_value(expr, ctx):
         value_c = retain_expr_for_type(value_c, expected_type, ctx)
     return [], value_c
@@ -2753,6 +2794,8 @@ def parse_var_decl(line: str, ctx: TranspileContext, line_no: int, trailing_semi
             ptr_target = target_type
             expr_c = f'zl_none_ptr("{type_name_for_runtime(target_type)}")'
     elif typ == "ptr" and expr.startswith("&"):
+        if explicit_type:
+            ensure_assignable(explicit_type, infer_type(expr, ctx), line_no, f"declaration of `{name}`")
         expr_c = transform_expr(expr, ctx)
     elif typ == "List" and expr == "List":
         typ = "List"
@@ -2766,14 +2809,25 @@ def parse_var_decl(line: str, ctx: TranspileContext, line_no: int, trailing_semi
         if typ == "Any" and not explicit_type:
             raise ZyenError(f"line {line_no}: dynamic List value cannot be stored without a concrete cast; use `(int)`, `(str)`, `(bool)`, `(float)`, or print it directly")
         if explicit_type:
+            actual_type = infer_type(expr, ctx)
+            if (
+                re.fullmatch(r"[A-Za-z_]\w*", expr)
+                and expr in ctx.functions
+                and ctx.functions[expr].ret_type.replace(" ", "") == explicit_type.replace(" ", "")
+                and actual_type.replace(" ", "") != explicit_type.replace(" ", "")
+            ):
+                raise ZyenError(
+                    f"line {line_no}: `{expr}` is the function itself with type `{actual_type}`; "
+                    f"call `{expr}()` to obtain `{explicit_type}`"
+                )
             ensure_c_module_assignable(
                 explicit_type,
-                infer_type(expr, ctx),
+                actual_type,
                 ctx,
                 line_no,
                 f"declaration of `{name}`",
             )
-            ensure_assignable(explicit_type, infer_type(expr, ctx), line_no, f"declaration of `{name}`")
+            ensure_assignable(explicit_type, actual_type, line_no, f"declaration of `{name}`")
         assert_expr_literals_fit(expr, ctx, line_no, typ)
         # ZEP-0013: bare named-fn RHS coerces to fat value.
         coerced_fn = coerce_named_fn_to_fnval(expr, explicit_type or "", ctx) if explicit_type else None
@@ -2918,6 +2972,12 @@ def parse_set(line: str, ctx: TranspileContext, line_no: int) -> str:
     if not m:
         raise ZyenError(f"line {line_no}: invalid assignment, expected `set name = value;` or `set name += value;`")
     lhs, rhs = m.group(1).strip(), m.group(2).strip()
+    if ":" in lhs:
+        declared_name = lhs.split(":", 1)[0].strip()
+        raise ZyenError(
+            f"line {line_no}: `set` only assigns an existing variable; "
+            f"declare `{declared_name}` with `let {lhs} = {rhs};`"
+        )
     const_name = re.split(r"[.\[]", lhs, 1)[0].replace("*", "").strip()
     if const_name in ctx.consts:
         raise ZyenError(f"line {line_no}: cannot modify const `{const_name}`")
@@ -2955,7 +3015,8 @@ def parse_set(line: str, ctx: TranspileContext, line_no: int) -> str:
             raise ZyenError(f"line {line_no}: pointer `{name}` has no target type; declare it as `ptr<int>`, `ptr<str>`, etc.")
         ensure_assignable(target_type, rhs_type, line_no, f"assignment to `*{name}`")
         assert_expr_literals_fit(rhs, ctx, line_no, target_type)
-        rhs_c = wrap_arg_for_expected(rhs, "Any", ctx) if ztype_base(target_type) == "Any" else transform_expr(rhs, ctx)
+        coerced_fn = coerce_named_fn_to_fnval(rhs, target_type, ctx) if is_fn_type(target_type) else None
+        rhs_c = coerced_fn if coerced_fn is not None else (wrap_arg_for_expected(rhs, "Any", ctx) if ztype_base(target_type) == "Any" else transform_expr(rhs, ctx))
         return auto_storage_for_deref(name, target_type, rhs_c, expression_produces_owned_value(rhs, ctx), ctx)
 
     typed_deref = deref_info(lhs, ctx)
@@ -2964,7 +3025,8 @@ def parse_set(line: str, ctx: TranspileContext, line_no: int) -> str:
         if target_type == "void":
             raise ZyenError(f"line {line_no}: cannot assign through `ptr<void>`; cast `{label}` to a concrete ptr<T> first")
         ensure_assignable(target_type, infer_type(rhs, ctx), line_no, f"assignment through `{lhs}`")
-        rhs_c = wrap_arg_for_expected(rhs, "Any", ctx) if ztype_base(target_type) == "Any" else transform_expr(rhs, ctx)
+        coerced_fn = coerce_named_fn_to_fnval(rhs, target_type, ctx) if is_fn_type(target_type) else None
+        rhs_c = coerced_fn if coerced_fn is not None else (wrap_arg_for_expected(rhs, "Any", ctx) if ztype_base(target_type) == "Any" else transform_expr(rhs, ctx))
         lhs_c = f"(*({c_type(target_type)}*)zl_ptr_checked_addr({pointer_c}, {json.dumps(label)}))"
         return managed_assignment_c(lhs_c, target_type, rhs_c, expression_produces_owned_value(rhs, ctx), ctx)
 
@@ -3033,8 +3095,11 @@ def transform_statement(line: str, ctx: TranspileContext, line_no: int) -> str:
             return "\n".join(cleanup + ["return;"])
         # ZEP-0013: bare named-fn returned where ret type is fn type → fat value.
         ret_type = ctx.current_return_type
-        if ztype_base(ret_type) == "ptr" and re.fullmatch(r"&\s*[A-Za-z_]\w*", expr):
-            raise ZyenError(f"line {line_no}: cannot return a pointer to local stack storage")
+        returned_address = re.fullmatch(r"&\s*([A-Za-z_]\w*)", expr)
+        if ztype_base(ret_type) == "ptr" and returned_address:
+            addressed_name = returned_address.group(1)
+            if addressed_name not in ctx.functions or addressed_name in ctx.symbols:
+                raise ZyenError(f"line {line_no}: cannot return a pointer to local stack storage")
         actual_type = infer_type(expr, ctx)
         # The legacy scalar inference pass intentionally falls back to int for
         # some valid unary/module expressions. Managed returns need exact
@@ -3068,7 +3133,7 @@ def transform_statement(line: str, ctx: TranspileContext, line_no: int) -> str:
         raise ZyenError(f"line {line_no}: bare assignment is not allowed; use `let`, `const`, or `set`")
     if not line.endswith(";"):
         raise ZyenError(f"line {line_no}: statement must end with `;`")
-    return transform_expr(line, ctx)
+    return transform_expr(line[:-1].strip(), ctx) + ";"
 
 
 def c_param_type(ztype: str) -> str:
@@ -3419,11 +3484,9 @@ def collect_fn_typedefs(ctx: TranspileContext, lines: List[Tuple[int, str]]) -> 
     appears before any use.
     """
     for fn in ctx.functions.values():
-        if is_fn_type(fn.ret_type):
-            register_fn_typedef(ctx, fn.ret_type)
+        register_fn_types_in_type(ctx, fn.ret_type)
         for t in fn.params.values():
-            if is_fn_type(t):
-                register_fn_typedef(ctx, t)
+            register_fn_types_in_type(ctx, t)
         # Also register the fn's own signature as an fn type so
         # `let h = some_named_fn;` (inferred type) finds the typedef.
         # Skip struct methods — `this` is internal and not user-callable as fn ptr.
@@ -3432,12 +3495,13 @@ def collect_fn_typedefs(ctx: TranspileContext, lines: List[Tuple[int, str]]) -> 
             register_fn_typedef(ctx, own_sig)
     for struct in ctx.structs.values():
         for t in struct.fields.values():
-            if is_fn_type(t):
-                register_fn_typedef(ctx, t)
+            register_fn_types_in_type(ctx, t)
     for _line_no, line in lines:
         parsed = parse_variable_declaration_syntax(line, trailing_semicolon=True)
-        if parsed and parsed[2] and is_fn_type(parsed[2]):
-            register_fn_typedef(ctx, _strip_module_prefix_type(parsed[2]))
+        if parsed is None:
+            parsed = parse_variable_declaration_syntax(line, trailing_semicolon=True, owned_pointer=True)
+        if parsed and parsed[2]:
+            register_fn_types_in_type(ctx, _strip_module_prefix_type(parsed[2]))
 
 
 def emit_fn_typedefs(ctx: TranspileContext) -> List[str]:
@@ -3781,7 +3845,7 @@ def transpile(source: str) -> str:
     ctx.native_function_types = collect_c_module_native_function_types(source)
     needs_python_cli = "zl_cv_" in source or "zl_gpu_" in source
     out: List[str] = []
-    out.append("// Generated by ZyenLang v0.1.53")
+    out.append("// Generated by ZyenLang v0.1.63")
     out.append("#ifndef _WIN32")
     out.append("#ifndef _POSIX_C_SOURCE")
     out.append("#define _POSIX_C_SOURCE 200809L")
@@ -3813,6 +3877,7 @@ def transpile(source: str) -> str:
     out.append("static inline bool zl_ptr_is_owned(ptr p) { return p.owner != NULL; }")
     out.append("static inline bool zl_ptr_is_valid(ptr p) { if (p.addr == NULL) return false; if (!p.owner) return true; return !atomic_load_explicit(&p.owner->disposed, memory_order_acquire) && p.owner->payload == p.addr; }")
     out.append("static inline void* zl_ptr_checked_addr(ptr p, const char* name) { if (p.addr == NULL) { fprintf(stderr, \"None pointer dereference: %s\\n\", name); exit(1); } if (!zl_ptr_is_valid(p)) { fprintf(stderr, \"Freed pointer dereference: %s\\n\", name); exit(1); } return p.addr; }")
+    out.append("static inline ZL_Function zl_fn_ptr_load(ptr p, const char* signature, const char* name) { void* addr = zl_ptr_checked_addr(p, name); if (!p.type_name || strcmp(p.type_name, signature) != 0) { fprintf(stderr, \"function pointer signature mismatch: %s stores %s, requested %s\\n\", name, p.type_name ? p.type_name : \"unknown\", signature); exit(1); } ZL_Function value = *((ZL_Function*)addr); zl_fn_require(value, signature); return value; }")
     out.append("static inline void zl_print_ptr_value(ptr p, bool release_after) { if (p.addr == NULL) printf(\"None\\n\"); else if (!zl_ptr_is_valid(p)) printf(\"Freed\\n\"); else printf(\"%p\\n\", p.addr); if (release_after) zl_ptr_release(p); }")
     out.append("static inline void zl_mem_drop_ptr_cell(void* payload) { if (!payload) return; zl_ptr_release(*((ptr*)payload)); free(payload); }")
     out.append("static inline void zl_mem_drop_fn_cell(void* payload) { if (!payload) return; zl_fn_release(*((ZL_Function*)payload)); free(payload); }")

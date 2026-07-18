@@ -1,5 +1,29 @@
 # Changelog
 
+## v0.1.63 - 2026-07-18
+
+Managed function-cell pointers and checked calls through erased pointers.
+
+### Added
+
+- `ptr<fn(P...)->R>` values backed by checked `ZL_Function` memory cells.
+- Borrowed pointers to top-level functions with `&function` and ARC-owned
+  function cells with `let *pointer: ptr<fn(...)> = function_value;`.
+- Function-pointer calls through `(*pointer)(args)`, `*pointer(args)`, and an
+  explicitly restored `ptr<void>`.
+- Runtime pointer-tag and exact-signature validation before indirect calls.
+- ZEP-0015, executable examples, positive coverage, and compile/runtime error
+  fixtures for function-cell pointers.
+
+### Changed
+
+- Function factories and standalone indirect-call statements share the typed
+  postfix expression path used by normal function values.
+- Nested generic parsing no longer treats the arrow in `fn(...) -> T` as a
+  generic closing token.
+- Shift operators `<<` and `>>` are no longer misclassified as comparisons.
+- Portable archives and extracted folders are named `zyv163`.
+
 ## v0.1.53 - 2026-07-18
 
 Path-ready portable release and nested managed-pointer expressions.

@@ -1,6 +1,6 @@
 # ZyenLang 目前語法總覽
 
-狀態：`v0.1.53`（Python 套件版本 `0.1.53`，原生互通 ABI v2）
+狀態：`v0.1.63`（Python 套件版本 `0.1.63`，原生互通 ABI v2）
 更新日期：2026-07-18
 
 這份文件集中記錄目前編譯器實際支援的語法、型別、ownership 規則與
@@ -462,6 +462,49 @@ set callback = None;
 
 呼叫 `None` 函式值會產生明確 runtime error，不會跳入空 C function pointer。
 函式值不能 cast 成另一個 fn 簽章，也不能 cast 成 `ptr<T>`。
+
+### `ptr<fn(...)>` 函式指標
+
+`fn(...)` 是函式值；`ptr<fn(...)>` 則是指向 `ZL_Function` 記憶體 cell 的
+managed pointer。top-level 函式的位址指向編譯器建立的靜態 cell：
+
+```zy
+fn add(a: int, b: int) -> int {
+    return a + b;
+}
+
+let func_ptr: ptr<fn(int,int)->int> = &add;
+print((*func_ptr)(20, 22));
+print(*func_ptr(20, 22)); // ZyenLang 簡寫，結果同上
+```
+
+使用 `let *` 可以建立 ARC 管理的 owned function cell。若存入 closure，cell
+會 retain closure environment：
+
+```zy
+let operation: fn(int,int)->int = make_operation();
+let *owned_ptr: ptr<fn(int,int)->int> = operation;
+print(*owned_ptr(20, 22));
+```
+
+函式指標可以隱式擦除成 `ptr<void>`，還原時需要顯式 cast：
+
+```zy
+let opaque: ptr<void> = func_ptr;
+let restored: ptr<fn(int,int)->int> = (ptr<fn(int,int)->int>)opaque;
+print(*restored(12, 10));
+print(*(ptr<fn(int,int)->int>)opaque(12, 10));
+```
+
+這裡是新宣告，所以使用 `let opaque: ptr<void> = func_ptr;`。`set` 只用來修改
+已經宣告的變數，不能寫成 `set opaque: ptr<void> = ...;`。
+
+cast 不改變 address、owner 或 runtime type tag。呼叫前會檢查 pointer tag 與
+函式簽章；`None`、`Freed`、錯誤原始型別及不同 fn 簽章都不會進入無效 C
+位址。不同 `ptr<fn(...)>` 簽章之間禁止直接 cast。
+
+`ptr<fn(...)>` 指向的是 `ZL_Function` data cell，不是把 C function pointer
+強制轉成 `void*`。raw C callback 仍由 c_module 相容層負責轉接。
 
 ## 12. Closure
 

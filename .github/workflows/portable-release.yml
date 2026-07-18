@@ -35,6 +35,17 @@ jobs:
         run: python -m pip install --upgrade pip setuptools wheel pyinstaller
       - name: Install ZyenLang
         run: python -m pip install -e .
+      - name: Read package version
+        id: package
+        shell: python
+        run: |
+          import os
+          import re
+          from pathlib import Path
+          source = Path("pyproject.toml").read_text(encoding="utf-8")
+          version = re.search(r'^version\s*=\s*"([^"]+)"\s*$', source, re.MULTILINE).group(1)
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+              output.write(f"version={version}\n")
       - name: Install Linux GUI runtime
         if: runner.os == 'Linux'
         run: |
@@ -43,12 +54,12 @@ jobs:
       - name: Fetch verified Zig toolchain
         run: python tools/fetch_zig.py --version 0.16.0 --output .portable/zig
       - name: Build portable archive
-        run: python tools/build_portable.py --version 0.1.50 --zig-dir .portable/zig --output-dir dist/release
+        run: python tools/build_portable.py --version ${{ steps.package.outputs.version }} --zig-dir .portable/zig --output-dir dist/release
       - name: Run packaged Linux GUI smoke
         if: runner.os == 'Linux'
         shell: bash
         run: |
-          zy_bin=$(find dist/portable-work -type f -path '*/zyenlang-v*/zy' | head -n 1)
+          zy_bin=$(find dist/portable-work -type f -path '*/zyv*/zy' | head -n 1)
           xvfb-run -a "$zy_bin" run "$GITHUB_WORKSPACE/examples/tk_portable_smoke.zy"
       - uses: actions/upload-artifact@v4
         with:
@@ -81,6 +92,16 @@ jobs:
         with:
           path: dist/release
           merge-multiple: true
+      - name: Resolve release notes
+        id: release
+        shell: bash
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          package_version=$(python -c 'import re; from pathlib import Path; print(re.search(r"^version\s*=\s*\"([^\"]+)\"\s*$", Path("pyproject.toml").read_text(encoding="utf-8"), re.MULTILINE).group(1))')
+          test "$version" = "$package_version"
+          notes="docs/release_v${version//./_}.md"
+          test -f "$notes"
+          echo "notes=$notes" >> "$GITHUB_OUTPUT"
       - name: Create checksums
         shell: bash
         run: |
@@ -93,4 +114,4 @@ jobs:
           gh release create "${{ github.ref_name }}" dist/release/*
           --verify-tag
           --title "ZyenLang ${{ github.ref_name }}"
-          --notes-file docs/release_v0_1_50.md
+          --notes-file "${{ steps.release.outputs.notes }}"

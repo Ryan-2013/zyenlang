@@ -1,5 +1,26 @@
 # Changelog
 
+## v0.1.53 - 2026-07-18
+
+Path-ready portable release and nested managed-pointer expressions.
+
+### Added
+
+- Portable archives named `zyv153-<platform>` that extract to one `zyv153`
+  folder with `zy` directly at its root.
+- Idempotent `add-to-user-path` helpers for Windows, Linux, and macOS.
+- Recursive pointer expressions such as `**p` and `***p`.
+- ARC-preserving `&*managed_pointer` aliases, including `&**p`.
+- Pointer ownership escape tests and a Traditional Chinese pointer/function
+  value video tutorial.
+
+### Changed
+
+- Portable-release metadata is derived from `pyproject.toml` instead of being
+  fixed to v0.1.50.
+- Returned pointers, nested pointers, and managed struct fields are documented
+  as transferring a retained ownership graph to the caller.
+
 ## v0.1.50 - 2026-07-17
 
 First cross-platform portable release.

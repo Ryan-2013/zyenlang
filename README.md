@@ -1,4 +1,4 @@
-# ZyenLang v0.1.50
+# ZyenLang v0.1.53
 
 **English** | [繁體中文](README.zh-TW.md)
 
@@ -24,14 +24,22 @@ macOS. They contain the standalone `zy` CLI, Zig C toolchain, cross-platform
 raylib GUI runtime, examples, docs, and a prebuilt GUI demo. Python, `pip`, and
 a separate C compiler are not required.
 
+For v0.1.53, download the `zyv153` archive for your platform. The extracted
+folder is also named `zyv153`, and the `zy` executable is directly in that
+folder so the folder itself can be added to `PATH`.
+
 ```powershell
 # Windows, after extracting the archive
+cd zyv153
+.\add-to-user-path.cmd
 .\zy.exe run examples\hello.zy
 .\zy.exe run examples\tk_portable_smoke.zy
 ```
 
 ```bash
 # Linux / macOS, after extracting the archive
+cd zyv153
+./add-to-user-path.sh
 ./zy run examples/hello.zy
 ./zy run examples/tk_portable_smoke.zy
 ```
@@ -73,7 +81,7 @@ fn main() -> int {
 }
 ```
 
-## Language surface (v0.1.50)
+## Language surface (v0.1.53)
 
 - **Variables**: `let a = v;`, `let a: T = v;`, `const a = v;`
 - **Mutation requires `set`**: `set a = v;`, `set a += v;`, `set *p = v;`

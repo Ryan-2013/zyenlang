@@ -18,7 +18,7 @@ fn main() -> int {
     let c: ptr;
 
     set *b = c;
-    print(*b);
+    print((str)(*b));
 
     return 0;
 }

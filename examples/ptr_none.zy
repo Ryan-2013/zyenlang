@@ -1,24 +1,24 @@
 fn main() -> int {
     let a: ptr<int>;
-    print(a);
+    print((str)(a));
 
     let value: int = 10;
     set a = &value;
-    print(*a);
+    print((str)(*a));
 
     set *a = 20;
-    print(value);
+    print((str)(value));
 
     set a = None;
-    print(a);
+    print((str)(a));
 
     let *b: ptr<int> = 1;
-    print(*b);
+    print((str)(*b));
     set *b = 2;
-    print(*b);
+    print((str)(*b));
 
     let *c: ptr<int>;
-    print(c);
+    print((str)(c));
 
     return 0;
 }

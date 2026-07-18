@@ -1,4 +1,4 @@
-# ZyenLang v0.1.63
+# ZyenLang v0.1.73
 
 [English](README.md) | **繁體中文**
 
@@ -23,12 +23,13 @@ GitHub Release 提供 Windows、Linux 與 macOS 的可直接執行壓縮檔，�
 獨立 `zy` CLI、Zig C toolchain、跨平台 raylib GUI runtime、範例、文件與
 預先編譯的 GUI demo。不必另外安裝 Python、`pip` 或 C 編譯器。
 
-v0.1.63 請下載對應平台的 `zyv163` 壓縮檔。解壓後的根資料夾也叫
-`zyv163`，而且 `zy` 就放在根目錄；可直接把這個資料夾加入 `PATH`，或執行
-內附的安裝腳本：
+v0.1.73 請下載對應平台的 `zyv173` 壓縮檔。解壓後的根資料夾也叫
+`zyv173`，而且 `zy` 就放在根目錄。Windows 解壓後可直接雙擊
+`add-to-user-path.cmd` 一鍵加入使用者 `PATH`；Linux 與 macOS 執行一次
+`add-to-user-path.sh` 即可：
 
 ```powershell
-cd zyv163
+cd zyv173
 .\add-to-user-path.cmd
 .\zy.exe run examples\hello.zy
 .\zy.exe run examples\tk_portable_smoke.zy
@@ -66,12 +67,12 @@ fn add(a: int, b: int) -> int {
 fn main() -> int {
     let x: int = 10;
     let y: int = 20;
-    print(add(x, y));
+    print((str)add(x, y));
     return 0;
 }
 ```
 
-## 語言表面（v0.1.63）
+## 語言表面（v0.1.73）
 
 - **變數**:`let a = v;`、`let a: T = v;`、`const a = v;`
 - **修改一律寫 `set`**:`set a = v;`、`set a += v;`、`set *p = v;`
@@ -79,7 +80,8 @@ fn main() -> int {
 - **函式**:`fn name(args) -> T { ... }`。支援尾端預設參數、前置宣告、第一級 `fn(...) -> T` 函式值，以及 managed `ptr<fn(...)>` 函式 cell 指標。
 - **結構**:`struct S { let this.field: T; fn method() -> T { ... } }`
 - **型別**:`int`、`float`、`bool`、`str`、`List`、`ptr<T>`、`ptr<void>`、`fn(...) -> T`、`ptr<fn(...)>`、struct、`void`、`None`。(`Any` 只用在 `List` 內部,使用者拿不到。)
-- **f-string**:`f"i={i}"`
+- **輸出**:`print(expr)` 只接受 `str`；其他型別使用 `print((str)value)` 或 f-string。
+- **f-string**:`f"i={i}"` 的結果永遠是 `str`，插值內容會自動格式化支援的型別。
 - **import**:`import <std/math>;`、`import <std/math> as m;`、`import "lib.zy" as lib;`。相對路徑以「寫 import 的那個 `.zy` 檔案所在資料夾」為基準,不是終端機目前目錄。
 - **限定型別**:`let car: test.Car = test.Car { model: "Honda" };` —— 被 import 的 user struct 仍在全域命名空間,前綴只是被 strip 掉。
 - **多行語句**:函式簽章、函式呼叫、`if` 條件、`for` 表頭、list literal 可在它們的 `(...)`、`[...]`、`{...}` 內換行。
@@ -122,11 +124,11 @@ for (let i: int = 0; i < 10; set i += 1) {
 
 ```zy
 let pointer: ptr<fn(int,int)->int> = &add;
-print((*pointer)(20, 22));
-print(*pointer(20, 22));
+print(f"{(*pointer)(20, 22)}");
+print(f"{*pointer(20, 22)}");
 
 let opaque: ptr<void> = pointer;
-print(*(ptr<fn(int,int)->int>)opaque(12, 10));
+print(f"{*(ptr<fn(int,int)->int>)opaque(12, 10)}");
 ```
 
 呼叫前會檢查 pointer 狀態、runtime cell tag 與完整函式簽章。不同函式指標
@@ -142,8 +144,8 @@ fn add(a: int, b: int = 10) -> int {
 }
 
 fn main() -> int {
-    print(add(5));     // 15
-    print(add(5, 2));  // 7
+    print((str)(add(5)));     // 15
+    print((str)(add(5, 2)));  // 7
     return 0;
 }
 ```
@@ -163,8 +165,8 @@ ZyenLang 本來就會自動生 C prototype,v0.1.49 也接受顯式宣告:
 fn scale(a: int, factor: int = 2) -> int;
 
 fn main() -> int {
-    print(scale(7));    // 14
-    print(scale(7, 3)); // 21
+    print((str)(scale(7)));    // 14
+    print((str)(scale(7, 3))); // 21
     return 0;
 }
 
@@ -215,7 +217,7 @@ fn main() -> int {
         i < 10;
         i += 1
     ) {
-        print(i);
+        print((str)(i));
     }
 
     return 0;
@@ -252,21 +254,21 @@ fn main() -> int {
     let s: Stack = stack.new();
     s.push_str("first");
     s.push_str("second");
-    print(s.pop_str());
+    print((str)(s.pop_str()));
 
     let q: Queue = queue.new();
     q.push_str("first");
     q.push_str("second");
-    print(q.pop_str());
+    print((str)(q.pop_str()));
 
     let m: StringMap = map.new();
     m.put("name", "ZyenLang");
-    print(m.get("name", "none"));
+    print((str)(m.get("name", "none")));
 
     let tags: StringSet = set.new();
     tags.add("robotics");
     tags.add("cv");
-    print(tags.len());
+    print((str)(tags.len()));
 
     return 0;
 }

@@ -21,8 +21,8 @@ struct TStats {
     }
     fn report(name: str) -> int {
         print(name);
-        print(this.pass);
-        print(this.fail);
+        print((str)this.pass);
+        print((str)this.fail);
         return 0;
     }
 }

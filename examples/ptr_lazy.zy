@@ -5,6 +5,6 @@ fn main() -> int {
     set *a = b;
     set *b = 5;
 
-    print(*b);
+    print((str)(*b));
     return 0;
 }

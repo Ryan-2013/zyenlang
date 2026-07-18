@@ -14,7 +14,7 @@ fn main() -> int {
     fs.write("demo_a.csv", "1,2,3\n");
     fs.write("demo_b.csv", "4,5,6\n");
     gpu.vector_add_csv("demo_a.csv", "demo_b.csv", "demo_out.csv");
-    print(fs.read("demo_out.csv"));
+    print((str)(fs.read("demo_out.csv")));
 
     return 0;
 }

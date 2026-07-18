@@ -5,21 +5,21 @@ fn main() -> int {
     list.append("hello");
     list.append(true);
 
-    print(list);
-    print(list.len());
-    print(list.is_empty());
-    print(list.get(0));
-    print(list.get(1));
-    print(list.get(2));
+    print((str)(list));
+    print((str)(list.len()));
+    print((str)(list.is_empty()));
+    print((str)(list.get(0)));
+    print((str)(list.get(1)));
+    print((str)(list.get(2)));
 
     list.set(0, 99);
-    print(list.get(0));
+    print((str)(list.get(0)));
 
-    print(list.pop());
-    print(list.len());
+    print((str)(list.pop()));
+    print((str)(list.len()));
 
     list.clear();
-    print(list.len());
+    print((str)(list.len()));
 
     return 0;
 }

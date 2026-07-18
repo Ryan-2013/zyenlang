@@ -2,22 +2,22 @@ fn main() -> int {
     let xs = [1, "hi", true];
 
     let p: ptr = xs.ptr(0);
-    print(*p);
+    print((str)(*p));
 
     set *p = 99;
-    print(xs.get(0));
-    print(*p);
+    print((str)(xs.get(0)));
+    print((str)(*p));
 
     let q: ptr = xs.append_ptr("new");
-    print(*q);
-    print(xs.len());
+    print((str)(*q));
+    print((str)(xs.len()));
 
     let raw = ptr<int>;
     set *raw = 7;
     xs.append(raw);
 
     let stored: ptr<int> = (ptr)xs.get(4);
-    print(*stored);
+    print((str)(*stored));
 
     return 0;
 }

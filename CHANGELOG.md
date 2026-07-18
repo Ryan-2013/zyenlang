@@ -1,5 +1,16 @@
 # Changelog
 
+## v0.1.73 - 2026-07-18
+
+### Changed
+
+- `print(expr)` now requires `expr` to have type `str`. Use `(str)value` or an
+  f-string for numbers, booleans, Lists, pointers, and dynamic List values.
+- F-strings remain `str` expressions and continue to format supported
+  interpolation values automatically.
+- Pointer-to-string casts preserve full-expression ARC cleanup, so formatting
+  an owned pointer temporary releases it after producing the address text.
+
 ## v0.1.63 - 2026-07-18
 
 Managed function-cell pointers and checked calls through erased pointers.

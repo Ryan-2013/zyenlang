@@ -4,7 +4,7 @@ struct Box {
         set this.value = v;
     }
     fn show() -> void {
-        print(this.value);
+        print((str)(this.value));
     }
 }
 fn main() -> int {

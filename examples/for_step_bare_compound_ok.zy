@@ -1,6 +1,6 @@
 fn main() -> int {
     for (let i = 0; i < 5; i += 1) {
-        print(i);
+        print((str)(i));
     }
     return 0;
 }

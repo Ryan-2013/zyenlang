@@ -17,12 +17,12 @@ fn main() -> int {
     let xs: List;
     let dog: Dog;
 
-    print(a);
-    print(b);
-    print(c);
-    print(s);
-    print(p);
-    print(xs.len());
+    print((str)(a));
+    print((str)(b));
+    print((str)(c));
+    print((str)(s));
+    print((str)(p));
+    print((str)(xs.len()));
     dog.bark();
 
     return 0;

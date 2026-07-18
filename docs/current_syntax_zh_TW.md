@@ -1,6 +1,6 @@
 # ZyenLang 目前語法總覽
 
-狀態：`v0.1.63`（Python 套件版本 `0.1.63`，原生互通 ABI v2）
+狀態：`v0.1.73`（Python 套件版本 `0.1.73`，原生互通 ABI v2）
 更新日期：2026-07-18
 
 這份文件集中記錄目前編譯器實際支援的語法、型別、ownership 規則與
@@ -15,7 +15,7 @@ fn add(a: int, b: int) -> int {
 }
 
 fn main() -> int {
-    print(add(20, 22));
+    print((str)(add(20, 22)));
     return 0;
 }
 ```
@@ -173,6 +173,33 @@ let ready: bool = true;
 print(f"rpm={rpm} ready={ready}");
 ```
 
+`print` 只接受 `str`。`Any` 不再是 `print` 的公開參數型別：
+
+```zy
+print("ready");
+print((str)rpm);
+print(f"rpm={rpm}");
+```
+
+以下會在 `zy check` 階段被拒絕：
+
+```zy
+print(rpm); // error: print expects str, got int
+```
+
+f-string expression 的結果永遠是 `str`，但 `{...}` 插值可放入支援字串轉換的
+值，由編譯器完成格式化。Pointer 必須直接 cast 或放進 f-string：
+
+```zy
+let pointer: ptr<int> = None;
+print((str)pointer);       // None、Freed 或 0x... address
+print(f"pointer={pointer}");
+```
+
+`(str)pointer` 只格式化 pointer 本身；要格式化它指向的值，使用
+`print((str)*pointer);`。若 pointer expression 產生 ARC owned temporary，轉換
+完成後仍會在 full-expression 結尾自動 release。
+
 C-like cast 的右括號必須寫在型別之後：
 
 ```zy
@@ -187,7 +214,7 @@ Pointer cast 的正確拼法：
 
 ```zy
 let typed: ptr<int> = (ptr<int>)opaque;
-print(*((ptr<int>)opaque));
+print((str)(*((ptr<int>)opaque)));
 ```
 
 錯誤拼法 `(ptr<int>opaque)` 會在 `zy check` 階段被拒絕。
@@ -210,7 +237,7 @@ if (score >= 90) {
 
 ```zy
 for (let i = 0; i < 10; set i += 1) {
-    print(i);
+    print((str)(i));
 }
 ```
 
@@ -278,10 +305,10 @@ fn mix(a: int, b: int = 2, c: int = 3) -> int {
 }
 
 fn main() -> int {
-    print(mix(1));
-    print(mix(1, 4, 5));
-    print(mix(c: 9, a: 1));
-    print(mix(1, c: 9));
+    print((str)(mix(1)));
+    print((str)(mix(1, 4, 5)));
+    print((str)(mix(c: 9, a: 1)));
+    print((str)(mix(1, c: 9)));
     return 0;
 }
 ```
@@ -326,8 +353,8 @@ Struct literal 只支援具名 field，不支援 `Counter {10, 2}`。未提供�
 Method 內以 `this.field` 讀取欄位，以 `set this.field = ...;` 修改。呼叫：
 
 ```zy
-print(d.inc(times: 3));
-print(d.value);
+print((str)(d.inc(times: 3)));
+print((str)(d.value));
 ```
 
 Struct field 可以是 `fn`、owned pointer 或另一個含 managed field 的 struct；
@@ -366,10 +393,10 @@ let car: model.Car = model.Car { speed: 10 };
 fn main() -> int {
     let xs: List = [1, 2, "hello", true];
     xs.append(3.5);
-    print(xs.len());
-    print(xs.get(0));
+    print((str)(xs.len()));
+    print((str)(xs.get(0)));
     xs.set(0, 99);
-    print(xs.pop());
+    print((str)(xs.pop()));
     xs.clear();
     return 0;
 }
@@ -434,9 +461,9 @@ fn pick(name: str) -> fn(int,int)->int {
 
 ```zy
 let op: fn(int,int)->int = pick("sub");
-print(op(10, 3));
-print(pick("sub")(10, 3));
-print(make_picker()("sub")(10, 3));
+print((str)(op(10, 3)));
+print((str)pick("sub")(10, 3));
+print((str)make_picker()("sub")(10, 3));
 ```
 
 Fn field：
@@ -455,7 +482,7 @@ Fn 值可以是 `None`：
 ```zy
 let callback: fn(int)->int = None;
 if (callback != None) {
-    print(callback(1));
+    print((str)(callback(1)));
 }
 set callback = None;
 ```
@@ -474,8 +501,8 @@ fn add(a: int, b: int) -> int {
 }
 
 let func_ptr: ptr<fn(int,int)->int> = &add;
-print((*func_ptr)(20, 22));
-print(*func_ptr(20, 22)); // ZyenLang 簡寫，結果同上
+print(f"{(*func_ptr)(20, 22)}");
+print(f"{*func_ptr(20, 22)}"); // ZyenLang 簡寫，結果同上
 ```
 
 使用 `let *` 可以建立 ARC 管理的 owned function cell。若存入 closure，cell
@@ -484,7 +511,7 @@ print(*func_ptr(20, 22)); // ZyenLang 簡寫，結果同上
 ```zy
 let operation: fn(int,int)->int = make_operation();
 let *owned_ptr: ptr<fn(int,int)->int> = operation;
-print(*owned_ptr(20, 22));
+print(f"{*owned_ptr(20, 22)}");
 ```
 
 函式指標可以隱式擦除成 `ptr<void>`，還原時需要顯式 cast：
@@ -492,8 +519,8 @@ print(*owned_ptr(20, 22));
 ```zy
 let opaque: ptr<void> = func_ptr;
 let restored: ptr<fn(int,int)->int> = (ptr<fn(int,int)->int>)opaque;
-print(*restored(12, 10));
-print(*(ptr<fn(int,int)->int>)opaque(12, 10));
+print(f"{*restored(12, 10)}");
+print(f"{*(ptr<fn(int,int)->int>)opaque(12, 10)}");
 ```
 
 這裡是新宣告，所以使用 `let opaque: ptr<void> = func_ptr;`。`set` 只用來修改
@@ -520,8 +547,8 @@ fn make_adder(delta: int) -> fn(int)->int {
 
 fn main() -> int {
     let add2: fn(int)->int = make_adder(2);
-    print(add2(40));
-    print(make_adder(10)(32));
+    print((str)(add2(40)));
+    print((str)make_adder(10)(32));
     return 0;
 }
 ```
@@ -555,7 +582,7 @@ typedef struct ZL_ptr {
 ```zy
 let p: ptr<int>;
 let q: ptr<int> = None;
-print(p); // None
+print((str)(p)); // None
 ```
 
 Bare `ptr` 只有在 initializer 能推斷 target 時相容：
@@ -572,9 +599,9 @@ let p: ptr = &value;
 ```zy
 let value: int = 10;
 let p: ptr<int> = &value;
-print(*p);
+print((str)(*p));
 set *p = 20;
-print(value);
+print((str)(value));
 ```
 
 `&local` 不配置 heap，也不建立 ARC owner。Pointer 只在 local 所屬 lexical scope
@@ -587,7 +614,7 @@ print(value);
 
 ```zy
 let *p: ptr<int> = 10;
-print(*p);
+print((str)(*p));
 set *p = 20;
 ```
 
@@ -600,7 +627,7 @@ import <std/mem>;
 
 let p: ptr<int> = mem.alloc_int(10);
 let alias: ptr<int> = p;
-print(*alias);
+print((str)(*alias));
 ```
 
 Alias 會 retain 同一 owner；最後一個引用離開後 payload 只釋放一次。
@@ -610,7 +637,7 @@ Alias 會 retain 同一 owner；最後一個引用離開後 payload 只釋放一
 ```zy
 let p: ptr<int>;
 set *p = 5;
-print(*p);
+print((str)(*p));
 ```
 
 若 `p` 是 None，第一次 `set *p = value;` 會建立一個 owned cell。
@@ -625,8 +652,8 @@ let value: int = 10;
 let typed: ptr<int> = &value;
 let opaque: ptr<void> = typed;
 let restored: ptr<int> = (ptr<int>)opaque;
-print(*restored);
-print(*((ptr<int>)opaque));
+print((str)(*restored));
+print((str)(*((ptr<int>)opaque)));
 ```
 
 Cast 不改變 address、owner、ownership 或 runtime type tag。`ptr<void>` 不能直接
@@ -642,17 +669,17 @@ Cast 不改變 address、owner、ownership 或 runtime type tag。`ptr<void>` �
 let *value: ptr<int> = 10;
 let *slot: ptr<ptr<int>> = value;
 let loaded: ptr<int> = *slot;
-print(*loaded);
+print((str)(*loaded));
 ```
 
 也可從最內層 scalar 遞迴建立完整 chain：
 
 ```zy
 let *chain: ptr<ptr<int>> = 10;
-print(**chain);
+print((str)(**chain));
 
 let *deep: ptr<ptr<ptr<int>>> = 42;
-print(***deep);
+print((str)(***deep));
 ```
 
 每層都有自己的 owner，釋放最外層時 destructor 會遞迴釋放內層。
@@ -664,7 +691,7 @@ print(***deep);
 let *source: ptr<ptr<int>> = 10;
 let *slot: ptr<ptr> = &**source;
 set **slot = 20;
-print(**source); // 20
+print((str)(**source)); // 20
 ```
 
 `ptr<ptr>` 可作為相容寫法；owned declaration 會從初始化式補出缺少的內層
@@ -674,8 +701,8 @@ print(**source); // 20
 
 ```zy
 let *text_cell: ptr<str> = "hello";
-print(text_cell);  // cell 位址
-print(*text_cell); // hello
+print((str)(text_cell));  // cell 位址
+print((str)(*text_cell)); // hello
 ```
 
 `ptr<str>` 指向的是「保存一個 `str` 值的 cell」，不是直接表示字元陣列的
@@ -683,7 +710,7 @@ print(*text_cell); // hello
 
 ```zy
 let opaque: ptr<void> = text_cell;
-print(*((ptr<str>)opaque)); // hello
+print((str)(*((ptr<str>)opaque))); // hello
 ```
 
 Managed `ZL_ptr` 不支援 `pointer + offset` 或 `pointer - offset`。以下會被拒絕：
@@ -698,8 +725,8 @@ let shifted: ptr<void> = text_cell + 1;
 import <std/string>;
 
 let text: str = *text_cell;
-print(string.char_at(text, 1));
-print(string.substring(text, 1, 4)); // ello
+print((str)(string.char_at(text, 1)));
+print((str)(string.substring(text, 1, 4))); // ello
 ```
 
 Pointer indexing 只應用在確實指向陣列的 pointer。單一 `let *p` cell 沒有第二個
@@ -787,7 +814,7 @@ import <std/c_module> as c_module;
 
 fn main() -> int {
     let math: c_module.Module = c_module.load("native_math.zlcm.h");
-    print(math.add(b: 22, a: 20));
+    print((str)(math.add(b: 22, a: 20)));
     return 0;
 }
 ```
@@ -810,7 +837,7 @@ struct Math {
 
 fn main() -> int {
     let math: Math = Math {};
-    print(math.add(20, 22));
+    print((str)(math.add(20, 22)));
     return 0;
 }
 ```

@@ -12,10 +12,10 @@ fn main() -> int {
         if (i == 3) {
             break;
         }
-        print(i);
+        print((str)(i));
     }
 
-    print(value);
+    print((str)(value));
     cmd.run("echo ZyenLang on Zed");
 
     return 0;

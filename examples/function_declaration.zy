@@ -1,8 +1,8 @@
 fn add(a: int, b: int = 1) -> int;
 
 fn main() -> int {
-    print(add(10));
-    print(add(10, 5));
+    print((str)(add(10)));
+    print((str)(add(10, 5)));
     return 0;
 }
 

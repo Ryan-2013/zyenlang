@@ -1,9 +1,9 @@
 fn main() -> int {
     for (let i = 0; i < 2; i++) {
-        print(i);
+        print((str)(i));
     }
     for (let i = 0; i < 2; i++) {
-        print(i + 10);
+        print((str)(i + 10));
     }
     return 0;
 }

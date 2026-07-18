@@ -4,7 +4,7 @@ fn main() -> int {
         "two",
         true
     ];
-    print(xs.len());
-    print(xs.get(1));
+    print((str)(xs.len()));
+    print((str)(xs.get(1)));
     return 0;
 }

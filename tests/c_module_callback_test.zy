@@ -35,7 +35,7 @@ fn release_owned_pointer() -> void {
     let native: c_module.Module = c_module.load("native_callback.zlcm.h");
     let original: ptr<int> = native.make_owned(41);
     let alias: ptr<int> = original;
-    print(*alias);
+    print((str)*alias);
 }
 
 fn release_pointer_on_loop_jumps() -> void {
@@ -48,7 +48,7 @@ fn release_pointer_on_loop_jumps() -> void {
         if (i == 1) {
             break;
         }
-        print(*value);
+        print((str)*value);
     }
 }
 
@@ -59,7 +59,7 @@ fn release_pointer_from_list() -> void {
     values.append(value);
     set value = None;
     let borrowed_from_list: ptr<int> = (ptr<int>)values.get(0);
-    print(*borrowed_from_list);
+    print((str)*borrowed_from_list);
     values.clear();
 }
 
@@ -71,7 +71,7 @@ fn transfer_pointer_from_list_pop() -> void {
     set value = None;
     let popped: ptr<int> = (ptr<int>)values.pop();
     values.clear();
-    print(*popped);
+    print((str)*popped);
 }
 
 fn raw_pointer_adapter_value() -> int {
@@ -147,7 +147,7 @@ fn main() -> int {
     t.eq_int("fn call owned ptr temporary", pointer_fn(native.make_owned(42)), 42);
     t.eq_int("fn call releases ptr temporary", native.drop_count(), 1);
     native.reset_drop_count();
-    print(native.make_owned(55));
+    print((str)native.make_owned(55));
     t.eq_int("print releases ptr temporary", native.drop_count(), 1);
     native.reset_drop_count();
     t.eq_int("raw C pointer adapter", raw_pointer_adapter_value(), 42);

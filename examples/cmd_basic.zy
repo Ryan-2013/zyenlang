@@ -4,8 +4,8 @@ fn main() -> int {
     let code: int = cmd.run("echo ZyenLang command module");
     let ok: bool = cmd.success(code);
 
-    print(code);
-    print(ok);
+    print((str)(code));
+    print((str)(ok));
 
     return 0;
 }

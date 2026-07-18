@@ -2,13 +2,13 @@ import <std/string>;
 import <std/char>;
 
 fn main() -> int {
-    print(string.len("Zyen"));
-    print(string.eq("abc", "abc"));
-    print(string.starts_with("ZyenLang", "Zyen"));
-    print(string.ends_with("ZyenLang", "Lang"));
-    print(string.index_of("ZyenLang", "Lang"));
-    print(string.count_char("banana", 97));
-    print(char.to_upper(122));
+    print((str)(string.len("Zyen")));
+    print((str)(string.eq("abc", "abc")));
+    print((str)(string.starts_with("ZyenLang", "Zyen")));
+    print((str)(string.ends_with("ZyenLang", "Lang")));
+    print((str)(string.index_of("ZyenLang", "Lang")));
+    print((str)(string.count_char("banana", 97)));
+    print((str)(char.to_upper(122)));
 
     return 0;
 }

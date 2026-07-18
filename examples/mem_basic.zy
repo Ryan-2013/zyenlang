@@ -3,19 +3,19 @@ import <std/mem>;
 fn main() -> int {
     let p: ptr<int> = mem.alloc_int(10);
 
-    print(*p);
+    print((str)(*p));
 
     set *p = 55;
-    print(*p);
+    print((str)(*p));
 
-    print(mem.is_valid(p));
-    print(mem.is_owned(p));
-    print(mem.type_name(p));
+    print((str)(mem.is_valid(p)));
+    print((str)(mem.is_owned(p)));
+    print((str)(mem.type_name(p)));
 
     let code: int = mem.free(p);
-    print(code);
-    print(mem.is_valid(p));
-    print(p);
+    print((str)(code));
+    print((str)(mem.is_valid(p)));
+    print((str)(p));
 
     return 0;
 }

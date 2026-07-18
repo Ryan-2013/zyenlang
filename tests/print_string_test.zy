@@ -1,0 +1,13 @@
+fn main() -> int {
+    let value: int = 42;
+    let missing: ptr<int> = None;
+    let *owned: ptr<int> = 7;
+
+    print("plain");
+    print(f"value={value}");
+    print((str)value);
+    print((str)missing);
+    print(f"pointer={missing}");
+    print((str)*owned);
+    return 0;
+}

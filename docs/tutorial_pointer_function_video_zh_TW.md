@@ -21,8 +21,8 @@
 
 ```zy
 let *p: ptr<ptr<int>> = 10;
-print(**p);
-print(pick("add")(20, 22));
+print((str)(**p));
+print((str)pick("add")(20, 22));
 ```
 
 接著執行：
@@ -46,7 +46,7 @@ zy run examples\pointer_function_tutorial.zy
 ```zy
 fn main() -> int {
     let value: int = 10;
-    print(value);
+    print((str)(value));
     return 0;
 }
 ```
@@ -60,7 +60,7 @@ fn main() -> int {
 ```zy
 let value: int = 10;
 let borrowed: ptr<int> = &value;
-print(*borrowed);
+print((str)(*borrowed));
 ```
 
 `borrowed` 沒有 ARC owner，只能在 `value` 仍存活時使用。不要把 `&local`
@@ -70,7 +70,7 @@ print(*borrowed);
 
 ```zy
 let *owned: ptr<int> = 10;
-print(*owned);
+print((str)(*owned));
 set *owned = 20;
 ```
 
@@ -86,7 +86,7 @@ set *owned = 20;
 ```zy
 let alias: ptr<int> = owned;
 set *alias = 30;
-print(*owned); // 30
+print((str)(*owned)); // 30
 ```
 
 最後一個 reference 離開 scope 時，payload 才會釋放一次。
@@ -95,7 +95,7 @@ print(*owned); // 30
 
 ```zy
 let *p: ptr<ptr<int>> = 10;
-print(**p); // 10
+print((str)(**p)); // 10
 ```
 
 編譯器會遞迴建立完整 chain。`p` 指向一個 `ZL_ptr` cell，內層 pointer 再指向
@@ -106,7 +106,7 @@ tag 的 managed pointer。
 
 ```zy
 let *deep: ptr<ptr<ptr<int>>> = 42;
-print(***deep); // 42
+print((str)(***deep)); // 42
 ```
 
 通常不應為了炫技堆很多層。巢狀 pointer 最適合 handle slot、可替換資源與 C
@@ -118,7 +118,7 @@ print(***deep); // 42
 let *p: ptr<ptr<int>> = 10;
 let *p2: ptr<ptr> = &**p;
 set **p2 = 21;
-print(**p); // 21
+print((str)(**p)); // 21
 ```
 
 `&**p` 不是製造一個失去 owner 的 raw interior address。對 managed pointer 而言，
@@ -142,7 +142,7 @@ fn ret_ptr() -> ptr<int> {
 
 fn main() -> int {
     let a: ptr<int> = ret_ptr();
-    print(*a); // 110
+    print((str)(*a)); // 110
     return 0;
 }
 ```
@@ -190,7 +190,7 @@ fn sub(a: int, b: int) -> int {
 
 ```zy
 let op: fn(int,int)->int = sub;
-print(op(10, 3)); // 7
+print((str)(op(10, 3))); // 7
 ```
 
 函式值可以作為參數：
@@ -216,13 +216,13 @@ fn pick(name: str) -> fn(int,int)->int {
 
 ```zy
 let op: fn(int,int)->int = pick("sub");
-print(op(10, 3));
+print((str)(op(10, 3)));
 ```
 
 或直接連續呼叫：
 
 ```zy
-print(pick("add")(20, 22)); // 42
+print((str)pick("add")(20, 22)); // 42
 ```
 
 函式值使用位置參數。第二段連續呼叫沒有參數名稱資訊，因此不要寫具名參數。
@@ -233,8 +233,8 @@ print(pick("add")(20, 22)); // 42
 
 ```zy
 let func_ptr: ptr<fn(int,int)->int> = &add;
-print((*func_ptr)(20, 22));
-print(*func_ptr(20, 22)); // ZyenLang 簡寫
+print(f"{(*func_ptr)(20, 22)}");
+print(f"{*func_ptr(20, 22)}"); // ZyenLang 簡寫
 ```
 
 `&add` 指向編譯器為 top-level function 建立的靜態 cell。要建立 ARC 管理的
@@ -248,7 +248,7 @@ let *owned_ptr: ptr<fn(int,int)->int> = add;
 
 ```zy
 let opaque: ptr<void> = func_ptr;
-print(*(ptr<fn(int,int)->int>)opaque(12, 10));
+print(f"{*(ptr<fn(int,int)->int>)opaque(12, 10)}");
 ```
 
 呼叫前會檢查 pointer runtime tag 與 fn signature。不同函式簽章禁止互相

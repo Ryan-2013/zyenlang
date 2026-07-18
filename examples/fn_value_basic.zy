@@ -47,13 +47,13 @@ struct Reducer {
 
 fn main() -> int {
     let r1: int = apply(add, 3, 4);
-    print(r1);                                   // 7
+    print((str)(r1));                                   // 7
 
     let f: fn(int,int)->int = pick("sub");
     let r2: int = f(10, 3);
-    print(r2);                                   // 7
-    print(pick("sub")(10, 3));                  // 7
-    print(make_adder(2)(40));                    // 42
+    print((str)(r2));                                   // 7
+    print((str)pick("sub")(10, 3));                    // 7
+    print((str)make_adder(2)(40));                      // 42
 
     let empty: fn(int)->int = None;
     if (empty == None) {
@@ -63,7 +63,7 @@ fn main() -> int {
     let xs: List = [1, 2, 3, 4];
     let red: Reducer = Reducer { op: add, seed: 0 };
     let total: int = red.run(xs);
-    print(total);                                // 10
+    print((str)(total));                                // 10
 
     return 0;
 }

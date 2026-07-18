@@ -7,9 +7,9 @@ fn say(name: str, prefix: str = "hi ") -> str {
 }
 
 fn main() -> int {
-    print(add(5));
-    print(add(5, 2));
-    print(say("Zyen"));
-    print(say("Zyen", "hello "));
+    print((str)(add(5)));
+    print((str)(add(5, 2)));
+    print((str)(say("Zyen")));
+    print((str)(say("Zyen", "hello ")));
     return 0;
 }

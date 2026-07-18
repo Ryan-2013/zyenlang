@@ -8,6 +8,6 @@ fn main() -> int {
         }
     }
 
-    print(hit);
+    print((str)(hit));
     return 0;
 }

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "zyenlang"
-version = "0.1.50"
+version = "0.1.53"
 description = "ZyenLang: a concise C-like language transpiled to C"
 readme = "README.md"
 requires-python = ">=3.10"

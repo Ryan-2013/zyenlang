@@ -1,4 +1,4 @@
-# ZyenLang v0.1.50
+# ZyenLang v0.1.53
 
 [English](README.md) | **繁體中文**
 
@@ -23,12 +23,18 @@ GitHub Release 提供 Windows、Linux 與 macOS 的可直接執行壓縮檔，�
 獨立 `zy` CLI、Zig C toolchain、跨平台 raylib GUI runtime、範例、文件與
 預先編譯的 GUI demo。不必另外安裝 Python、`pip` 或 C 編譯器。
 
+v0.1.53 請下載對應平台的 `zyv153` 壓縮檔。解壓後的根資料夾也叫
+`zyv153`，而且 `zy` 就放在根目錄；可直接把這個資料夾加入 `PATH`，或執行
+內附的安裝腳本：
+
 ```powershell
+cd zyv153
+.\add-to-user-path.cmd
 .\zy.exe run examples\hello.zy
 .\zy.exe run examples\tk_portable_smoke.zy
 ```
 
-Linux 與 macOS 將 `zy.exe` 改成 `./zy`。詳見
+Linux 與 macOS 執行 `./add-to-user-path.sh`，並將 `zy.exe` 改成 `./zy`。詳見
 [portable 發行指南](docs/portable_release.md)。
 
 ## 從原始碼安裝
@@ -65,7 +71,7 @@ fn main() -> int {
 }
 ```
 
-## 語言表面（v0.1.50）
+## 語言表面（v0.1.53）
 
 - **變數**:`let a = v;`、`let a: T = v;`、`const a = v;`
 - **修改一律寫 `set`**:`set a = v;`、`set a += v;`、`set *p = v;`

@@ -26,6 +26,7 @@ jobs:
         run: |
           python tests/test_c_module_python.py
           python tests/test_doctor_python.py
+          python tests/test_portable_python.py
       - name: Language tests
         run: |
           zy run tests/fn_value_test.zy

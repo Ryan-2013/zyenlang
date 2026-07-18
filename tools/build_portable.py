@@ -4,7 +4,9 @@
 from __future__ import annotations
 
 import argparse
+import os
 import platform
+import re
 import shutil
 import subprocess
 import sys
@@ -41,9 +43,27 @@ def raylib_runtime() -> Path:
         raise SystemExit(f"no bundled raylib runtime for {target}") from exc
 
 
-def run(command: list[str], cwd: Path | None = None) -> None:
+def run(command: list[str], cwd: Path | None = None, env: dict[str, str] | None = None) -> None:
     print("+", subprocess.list2cmdline(command))
-    subprocess.run(command, cwd=cwd or ROOT, check=True)
+    subprocess.run(command, cwd=cwd or ROOT, env=env, check=True)
+
+
+def project_version() -> str:
+    source = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    match = re.search(r'^version\s*=\s*"([^"]+)"\s*$', source, re.MULTILINE)
+    if not match:
+        raise SystemExit("project version is missing from pyproject.toml")
+    return match.group(1)
+
+
+def portable_name(version: str) -> str:
+    parts = version.split(".")
+    if parts and parts[0] == "0":
+        parts = parts[1:]
+    compact = "".join(re.sub(r"[^0-9A-Za-z]+", "", part) for part in parts)
+    if not compact:
+        raise SystemExit(f"cannot derive portable name from version: {version}")
+    return f"zyv{compact}"
 
 
 def copy_release_content(stage: Path) -> None:
@@ -54,13 +74,71 @@ def copy_release_content(stage: Path) -> None:
     shutil.copy2(ROOT / "docs/portable_release.md", stage / "PORTABLE.md")
 
 
+def write_path_helpers(stage: Path) -> None:
+    windows_ps1 = r'''param([switch]$DryRun)
+$ErrorActionPreference = "Stop"
+$Root = Split-Path -Parent $MyInvocation.MyCommand.Path
+$UserPath = [Environment]::GetEnvironmentVariable("Path", "User")
+$Entries = @($UserPath -split ";" | Where-Object { $_ })
+if ($Entries -notcontains $Root) {
+    if ($DryRun) {
+        Write-Host "Would add $Root to the user PATH."
+    } else {
+        $NewPath = if ($UserPath) { "$Root;$UserPath" } else { $Root }
+        [Environment]::SetEnvironmentVariable("Path", $NewPath, "User")
+        Write-Host "Added $Root to the user PATH."
+    }
+} else {
+    Write-Host "$Root is already in the user PATH."
+}
+$env:Path = "$Root;$env:Path"
+& (Join-Path $Root "zy.exe") version
+Write-Host "Open a new terminal, then run: zy doctor"
+'''
+    windows_cmd = r'''@echo off
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0add-to-user-path.ps1"
+'''
+    unix_sh = r'''#!/usr/bin/env sh
+set -eu
+ROOT=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+case "${SHELL:-}" in
+  */zsh) RC="$HOME/.zshrc" ;;
+  *) RC="$HOME/.bashrc" ;;
+esac
+LINE="export PATH=\"$ROOT:\$PATH\""
+if [ "${ZY_PATH_DRY_RUN:-0}" = "1" ]; then
+  printf 'Would add %s to PATH in %s.\n' "$ROOT" "$RC"
+else
+  touch "$RC"
+  if ! grep -Fqx "$LINE" "$RC"; then
+    printf '\n%s\n' "$LINE" >> "$RC"
+    printf 'Added %s to PATH in %s.\n' "$ROOT" "$RC"
+  else
+    printf '%s is already configured in %s.\n' "$ROOT" "$RC"
+  fi
+fi
+PATH="$ROOT:$PATH"
+export PATH
+"$ROOT/zy" version
+printf 'Open a new terminal, then run: zy doctor\n'
+'''
+    (stage / "add-to-user-path.ps1").write_text(windows_ps1, encoding="utf-8")
+    (stage / "add-to-user-path.cmd").write_text(windows_cmd, encoding="ascii")
+    shell_helper = stage / "add-to-user-path.sh"
+    shell_helper.write_text(unix_sh, encoding="utf-8")
+    shell_helper.chmod(0o755)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--version", default="0.1.50")
+    parser.add_argument("--version")
     parser.add_argument("--zig-dir", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, default=ROOT / "dist")
     parser.add_argument("--work-dir", type=Path, default=ROOT / "dist/portable-work")
     args = parser.parse_args()
+
+    version = args.version or project_version()
+    bundle = portable_name(version)
 
     zig_dir = args.zig_dir.resolve()
     zig_exe = zig_dir / ("zig.exe" if sys.platform.startswith("win") else "zig")
@@ -74,7 +152,7 @@ def main() -> int:
     pyinstaller_dist = work / "pyinstaller-dist"
     pyinstaller_build = work / "pyinstaller-build"
     pyinstaller_spec = work / "spec"
-    stage = work / f"zyenlang-v{args.version}-{target}"
+    stage = work / bundle
     work.mkdir(parents=True)
     pyinstaller_spec.mkdir(parents=True)
 
@@ -107,6 +185,7 @@ def main() -> int:
     runtime = raylib_runtime()
     shutil.copy2(runtime, stage / runtime.name)
     copy_release_content(stage)
+    write_path_helpers(stage)
 
     zy = stage / ("zy.exe" if sys.platform.startswith("win") else "zy")
     gui_demo = stage / ("zytk-demo.exe" if sys.platform.startswith("win") else "zytk-demo")
@@ -114,9 +193,27 @@ def main() -> int:
     run([str(zy), "check", "examples/hello.zy"], cwd=stage)
     run([str(zy), "run", "examples/hello.zy"], cwd=stage)
     run([str(zy), "build", "apps/zytk_demo.zy", "--exe", str(gui_demo)], cwd=stage)
+    if sys.platform.startswith("win"):
+        run([
+            "powershell",
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            str(stage / "add-to-user-path.ps1"),
+            "-DryRun",
+        ], cwd=stage)
+    else:
+        helper_env = dict(os.environ)
+        helper_env["ZY_PATH_DRY_RUN"] = "1"
+        run(["sh", str(stage / "add-to-user-path.sh")], cwd=stage, env=helper_env)
+    path_env = dict(os.environ)
+    path_env["PATH"] = str(stage) + os.pathsep + os.defpath
+    path_command = "zy.exe" if sys.platform.startswith("win") else "zy"
+    run([path_command, "version"], cwd=stage.parent, env=path_env)
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
-    archive_base = args.output_dir.resolve() / stage.name
+    archive_base = args.output_dir.resolve() / f"{bundle}-{target}"
     if sys.platform.startswith("win"):
         archive = Path(shutil.make_archive(str(archive_base), "zip", stage.parent, stage.name))
     else:

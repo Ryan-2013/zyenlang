@@ -1,6 +1,6 @@
 # ARC, pointers, and c_module callback ABI
 
-Status: ABI v2
+Status: ABI v3
 
 ## Managed pointers
 
@@ -54,13 +54,16 @@ compatibility adapter.
 Plain local values use C automatic storage rather than ARC allocation. Taking
 `&local` creates a borrowed pointer with no owner; it is valid only while that
 local's lexical scope is alive. The compiler rejects obvious returns of stack
-pointers, but ABI v2 is not a complete borrow checker, so borrowed pointers
+pointers, but ABI v3 is not a complete borrow checker, so borrowed pointers
 must not be saved in a closure, container, struct, or C library beyond that
 scope.
 
-List retains owned pointers stored in its `Any` cells. `set` and `clear`
-release removed pointer values; `pop` transfers the cell's reference. Lists do
-not accept function values in ABI v2.
+List retains owned pointers stored in its `Any` cells. It also stores
+user-defined structs in ARC-owned boxes and recursively retains their managed
+fields. `set` and `clear` release removed values; `pop` transfers the cell's
+reference. `get` is borrowed and is retained automatically when copied into
+another List. Lists do not directly accept function values in ABI v3; place a
+function value in a user struct field when a List-held callback is needed.
 
 ## c_module callbacks
 
@@ -96,6 +99,8 @@ context. APIs without `user_data` need a compatibility-layer callback slot or
 another library-specific trampoline. The compiler does not synthesize raw C
 trampolines for arbitrary libraries.
 
-Precompiled wrappers that pass the old `ZL_ptr` layout by value must be rebuilt
-for ABI v2. Source wrappers are rebuilt automatically by `zy run` and
+ABI v3 extends `ZL_Value`/`Any` with boxed-struct address, type, and ARC owner
+fields. Precompiled wrappers that pass `ZL_Value`, `Any`, or `ZL_List` by value
+must be rebuilt. The ABI v2 `ZL_ptr` and `ZL_Function` layouts are otherwise
+unchanged. Source wrappers are rebuilt automatically by `zy run` and
 `zy build`.

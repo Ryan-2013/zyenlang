@@ -1,6 +1,6 @@
 # ZyenLang 目前語法總覽
 
-狀態：`v0.1.73`（Python 套件版本 `0.1.73`，原生互通 ABI v2）
+狀態：`v0.1.83`（Python 套件版本 `0.1.83`，原生互通 ABI v3）
 更新日期：2026-07-18
 
 這份文件集中記錄目前編譯器實際支援的語法、型別、ownership 規則與
@@ -414,12 +414,47 @@ pointers.append(owned);
 let pointer: ptr<int> = (ptr<int>)pointers.get(0);
 ```
 
+List 也可直接保存使用者定義的 struct。編譯器會為區域 List 保留隱藏的
+可能型別集合；若每個可能的 struct 都提供同名且簽章完全相同的方法，便可
+直接結構式呼叫：
+
+```zy
+struct Dog {
+    fn bark() -> void {
+        print("dog");
+    }
+}
+
+struct Cat {
+    fn bark() -> void {
+        print("cat");
+    }
+}
+
+fn main() -> int {
+    let animals: List = [Dog {}, Cat {}];
+    for (let i = 0; i < animals.len(); set i += 1) {
+        animals.get(i).bark();
+    }
+    let last: Cat = (Cat)animals.pop();
+    return 0;
+}
+```
+
+共同方法以名稱、參數型別、回傳型別和預設值表達式比對；呼叫只使用位置
+參數。只要有元素不是 struct、缺少方法或簽章不同，`zy check` 就會拒絕。
+當 List 經過一般 `List` 參數而擦除可能型別集合時，編譯器生成 runtime
+checked dispatch；實際元素不相容時會明確報錯，不會呼叫錯誤的 C 函式。
+
+struct 以值拷貝放入 ARC box。`get()` 回傳借用值，`set()` / `clear()`
+釋放移除的 box，`pop()` 轉移引用；cast 必須使用實際的 struct 型別。
+
 List 可保存 owned pointer：
 
 - `append` / `set` 會 retain 放入的 owned pointer。
 - `set` / `clear` 會 release 被移除的 pointer。
 - `pop` 會把該引用的 ownership 轉移給呼叫端。
-- ABI v2 暫不允許 List 保存 `fn` 值。
+- ABI v3 暫不允許 List 直接保存 `fn` 值；可將函式值放入 struct 欄位後保存該 struct。
 
 List 與動態 `str` 本身目前尚未全面改為 ARC。需要確定釋放 List 中的 managed
 元素時，應主動呼叫 `clear()`。

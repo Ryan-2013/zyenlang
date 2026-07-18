@@ -12,7 +12,7 @@
 extern "C" {
 #endif
 
-#define ZYENLANG_C_ABI_VERSION 2
+#define ZYENLANG_C_ABI_VERSION 3
 #define ZYENLANG_C_ABI_TYPES 1
 
 typedef struct ZL_ArcControl ZL_ArcControl;
@@ -142,7 +142,8 @@ typedef enum ZL_ValueKind {
     ZL_VALUE_STR = 3,
     ZL_VALUE_BOOL = 4,
     ZL_VALUE_PTR = 5,
-    ZL_VALUE_LIST = 6
+    ZL_VALUE_LIST = 6,
+    ZL_VALUE_STRUCT = 7
 } ZL_ValueKind;
 
 typedef struct ZL_ptr {
@@ -167,6 +168,9 @@ typedef struct ZL_Value {
     bool b;
     ZL_ptr p;
     ZL_List* l;
+    void* object;
+    const char* object_type;
+    ZL_ArcControl* object_owner;
 } ZL_Value;
 
 /* Any is runtime-internal in ZyenLang source but layout-compatible in C. */

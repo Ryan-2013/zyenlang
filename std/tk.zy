@@ -1,7 +1,4 @@
 // Cross-platform 2D GUI / Canvas bridge for ZyenLang.
-// c_headers: tk_native.h
-// c_sources: tk_native.c
-// c_libs_linux: dl
 // Usage:
 //   import <std/tk>;
 //   tk.open("Demo", 800, 480);
@@ -11,112 +8,361 @@
 // The C backend dynamically loads the bundled raylib runtime on Windows,
 // Linux, and macOS. No Python or Tk process participates in rendering.
 
+import <std/c_module> as c_module;
+
+struct TkNative {
+    let this.source: c_module.Module = c_module.load("tk.zlcm.h");
+}
+
 fn begin(path: str) -> int {
-    return zl_tk_begin(path);
+    let native: TkNative = TkNative {};
+    return native.source.begin(path);
 }
 
 fn open(title: str, width: int, height: int) -> int {
-    return zl_tk_open(title, width, height);
+    let native: TkNative = TkNative {};
+    return native.source.open(title, width, height);
 }
 
 fn window(title: str, width: int, height: int) -> int {
-    return zl_tk_window(title, width, height);
+    let native: TkNative = TkNative {};
+    return native.source.window(title, width, height);
 }
 
 fn bg(color: str) -> int {
-    return zl_tk_bg(color);
+    let native: TkNative = TkNative {};
+    return native.source.bg(color);
 }
 
 fn clear(color: str) -> int {
-    return zl_tk_clear(color);
+    let native: TkNative = TkNative {};
+    return native.source.clear(color);
 }
 
 fn line(x1: int, y1: int, x2: int, y2: int, color: str, width: int) -> int {
-    return zl_tk_line(x1, y1, x2, y2, color, width);
+    let native: TkNative = TkNative {};
+    return native.source.line(x1, y1, x2, y2, color, width);
 }
 
 fn rect(x: int, y: int, width: int, height: int, color: str) -> int {
-    return zl_tk_rect(x, y, width, height, color);
+    let native: TkNative = TkNative {};
+    return native.source.rect(x, y, width, height, color);
 }
 
 fn rect_outline(x: int, y: int, width: int, height: int, color: str, line_width: int) -> int {
-    return zl_tk_rect_outline(x, y, width, height, color, line_width);
+    let native: TkNative = TkNative {};
+    return native.source.rect_outline(x, y, width, height, color, line_width);
 }
 
 fn circle(x: int, y: int, radius: int, color: str) -> int {
-    return zl_tk_circle(x, y, radius, color);
+    let native: TkNative = TkNative {};
+    return native.source.circle(x, y, radius, color);
 }
 
 fn circle_outline(x: int, y: int, radius: int, color: str, line_width: int) -> int {
-    return zl_tk_circle_outline(x, y, radius, color, line_width);
+    let native: TkNative = TkNative {};
+    return native.source.circle_outline(x, y, radius, color, line_width);
 }
 
 fn text(x: int, y: int, value: str, color: str, size: int) -> int {
-    return zl_tk_text(x, y, value, color, size);
+    let native: TkNative = TkNative {};
+    return native.source.text(x, y, value, color, size);
+}
+
+// Draw text with a cached raylib font. An empty path uses raylib's default font.
+fn font_text(font_path: str, base_size: int, x: int, y: int, value: str, color: str, size: int) -> int {
+    let native: TkNative = TkNative {};
+    return native.source.font_text(font_path, base_size, x, y, value, color, size);
+}
+
+fn font_text_width(font_path: str, base_size: int, value: str, size: int) -> int {
+    let native: TkNative = TkNative {};
+    return native.source.font_text_width(font_path, base_size, value, size);
 }
 
 // File-backed viewport retained for non-session scene compatibility.
 fn codeview(x: int, y: int, width: int, height: int, first_line: int, line_height: int, char_width: int, size: int, stamp: int, lines_path: str) -> int {
-    return zl_tk_codeview(x, y, width, height, first_line, line_height, char_width, size, stamp, lines_path);
+    let native: TkNative = TkNative {};
+    return native.source.codeview(x, y, width, height, first_line, line_height, char_width, size, stamp, lines_path);
 }
 
 // Native session viewport: copies visible text into the C frame buffer.
 fn codeview_text(x: int, y: int, width: int, height: int, first_line: int, line_height: int, char_width: int, size: int, stamp: int, lines: str) -> int {
-    return zl_tk_codeview_text(x, y, width, height, first_line, line_height, char_width, size, stamp, lines);
+    let native: TkNative = TkNative {};
+    return native.source.codeview_text(x, y, width, height, first_line, line_height, char_width, size, stamp, lines);
 }
 
 fn image(path: str, x: int, y: int) -> int {
-    return zl_tk_image(path, x, y);
+    let native: TkNative = TkNative {};
+    return native.source.image(path, x, y);
 }
 
 fn script() -> str {
-    return zl_tk_script();
+    let native: TkNative = TkNative {};
+    return native.source.script();
 }
 
 fn show() -> int {
-    return zl_tk_show();
+    let native: TkNative = TkNative {};
+    return native.source.show();
 }
 
 fn show_for(ms: int) -> int {
-    return zl_tk_show_for(ms);
+    let native: TkNative = TkNative {};
+    return native.source.show_for(ms);
 }
 
 // Long-lived native session. Frames and events stay in C memory.
 fn session_open(title: str, width: int, height: int, session_dir: str) -> int {
-    return zl_tk_session_open(title, width, height, session_dir);
+    let native: TkNative = TkNative {};
+    return native.source.session_open(title, width, height, session_dir);
 }
 
 // Start building the next in-memory frame.
 fn session_begin_frame() -> int {
-    return zl_tk_session_begin_frame();
+    let native: TkNative = TkNative {};
+    return native.source.session_begin_frame();
 }
 
 // Atomically publish the frame and repaint.
 fn session_redraw() -> int {
-    return zl_tk_session_redraw();
+    let native: TkNative = TkNative {};
+    return native.source.session_redraw();
+}
+
+fn session_set_fps(fps: int) -> int {
+    let native: TkNative = TkNative {};
+    return native.source.session_set_fps(fps);
 }
 
 // Block up to `timeout_ms` for the next event. Returns "" on timeout.
 // Event strings are tab-separated, e.g. "key\tEscape", "keychar\ta",
 // "mouse\t100\t200", "ready", "quit".
 fn session_next_event(timeout_ms: int) -> str {
-    return zl_tk_session_next_event(timeout_ms);
+    let native: TkNative = TkNative {};
+    return native.source.session_next_event(timeout_ms);
 }
 
 fn session_pickdir() -> int {
-    return zl_tk_session_pickdir();
+    let native: TkNative = TkNative {};
+    return native.source.session_pickdir();
 }
 
 fn session_close() -> int {
-    return zl_tk_session_close();
+    let native: TkNative = TkNative {};
+    return native.source.session_close();
 }
 
 // Measured glyph advance for the editor font in the live Tk window.
 // Cached after the first call; safe to spam.
 fn session_char_w() -> int {
-    return zl_tk_session_char_w();
+    let native: TkNative = TkNative {};
+    return native.source.session_char_w();
 }
 
 fn session_line_h() -> int {
-    return zl_tk_session_line_h();
+    let native: TkNative = TkNative {};
+    return native.source.session_line_h();
+}
+
+// Parsed event helpers. Mouse kinds are: 1 press, 2 release, 3 motion,
+// 4 drag, and 5 wheel. Non-mouse events return kind 0 and coordinates 0.
+fn event_kind(event: str) -> int {
+    let native: TkNative = TkNative {};
+    return native.source.event_kind(event);
+}
+
+fn event_x(event: str) -> int {
+    let native: TkNative = TkNative {};
+    return native.source.event_x(event);
+}
+
+fn event_y(event: str) -> int {
+    let native: TkNative = TkNative {};
+    return native.source.event_y(event);
+}
+
+// High-level retained-mode widgets. They render through the native session
+// above; no .ztk scene file participates in this path.
+struct FONT {
+    let this.path: str = "";
+    let this.base_size: int = 32;
+}
+
+fn load_font(path: str, base_size: int = 32) -> FONT {
+    return FONT { path: path, base_size: base_size };
+}
+
+struct Window {
+    let this.title: str = "ZyenLang";
+    let this.width: int = 800;
+    let this.height: int = 600;
+    let this.background: str = "#202124";
+    let this.fps: int = 60;
+
+    fn draw() -> void {
+        bg(this.background);
+    }
+
+    fn handle_event(kind: int, x: int, y: int) -> void {
+    }
+}
+
+struct Text {
+    let this.text: str = "";
+    let this.x: int = 0;
+    let this.y: int = 0;
+    let this.color: str = "#ffffff";
+    let this.size: int = 20;
+    let this.font: FONT = FONT {};
+    let this.visible: bool = true;
+
+    fn draw() -> void {
+        if (!this.visible) {
+            return;
+        }
+        font_text(this.font.path, this.font.base_size, this.x, this.y, this.text, this.color, this.size);
+    }
+
+    fn handle_event(kind: int, x: int, y: int) -> void {
+    }
+}
+
+struct Button {
+    let this.text: str = "Button";
+    let this.x: int = 0;
+    let this.y: int = 0;
+    let this.width: int = 140;
+    let this.height: int = 44;
+    let this.background: str = "#2f6fed";
+    let this.hover_background: str = "#3d7cff";
+    let this.pressed_background: str = "#2459c4";
+    let this.border: str = "#8eb2ff";
+    let this.color: str = "#ffffff";
+    let this.size: int = 18;
+    let this.font: FONT = FONT {};
+    let this.if_click: fn()->void;
+    let this.visible: bool = true;
+    let this.enabled: bool = true;
+    let this.hovered: bool;
+    let this.pressed: bool;
+
+    fn contains(x: int, y: int) -> bool {
+        return this.visible && x >= this.x && y >= this.y && x < this.x + this.width && y < this.y + this.height;
+    }
+
+    fn draw() -> void {
+        if (!this.visible) {
+            return;
+        }
+        let fill: str = this.background;
+        if (this.hovered && this.enabled) {
+            set fill = this.hover_background;
+        }
+        if (this.pressed && this.enabled) {
+            set fill = this.pressed_background;
+        }
+        rect(this.x, this.y, this.width, this.height, fill);
+        rect_outline(this.x, this.y, this.width, this.height, this.border, 1);
+        let label_width: int = font_text_width(this.font.path, this.font.base_size, this.text, this.size);
+        let label_x: int = this.x + (this.width - label_width) / 2;
+        let label_y: int = this.y + (this.height - this.size) / 2;
+        font_text(this.font.path, this.font.base_size, label_x, label_y, this.text, this.color, this.size);
+    }
+
+    fn handle_event(kind: int, x: int, y: int) -> void {
+        let inside: bool = this.contains(x, y);
+        if (kind == 3) {
+            set this.hovered = inside;
+        }
+        if (kind == 1) {
+            set this.hovered = inside;
+            set this.pressed = inside && this.enabled;
+        }
+        if (kind == 2) {
+            let activate: bool = this.pressed && inside && this.enabled;
+            set this.pressed = false;
+            set this.hovered = inside;
+            if (activate && this.if_click != None) {
+                this.if_click();
+            }
+        }
+    }
+}
+
+struct Renderer {
+    let this.window: Window = Window {};
+    let this.children: List;
+    let this.opened: bool;
+
+    fn open() -> int {
+        if (this.opened) {
+            return 0;
+        }
+        let result: int = session_open(this.window.title, this.window.width, this.window.height, "");
+        if (result == 0) {
+            session_set_fps(this.window.fps);
+            set this.opened = true;
+        }
+        return result;
+    }
+
+    fn frame() -> bool {
+        if (!this.opened && this.open() != 0) {
+            return false;
+        }
+        if (session_begin_frame() != 0) {
+            set this.opened = false;
+            return false;
+        }
+        this.window.draw();
+        for (let draw_i: int = 0; draw_i < this.children.len(); set draw_i += 1) {
+            this.children.get(draw_i).draw();
+        }
+        if (session_redraw() != 0) {
+            session_close();
+            set this.opened = false;
+            return false;
+        }
+        let event: str = session_next_event(0);
+        for (; event != ""; set event = session_next_event(0)) {
+            if (event == "quit") {
+                session_close();
+                set this.opened = false;
+                return false;
+            }
+            let kind: int = event_kind(event);
+            if (kind != 0) {
+                let x: int = event_x(event);
+                let y: int = event_y(event);
+                for (let event_i: int = 0; event_i < this.children.len(); set event_i += 1) {
+                    this.children.get(event_i).handle_event(kind, x, y);
+                }
+            }
+        }
+        return true;
+    }
+
+    fn close() -> int {
+        if (!this.opened) {
+            return 0;
+        }
+        let result: int = session_close();
+        set this.opened = false;
+        return result;
+    }
+
+    fn run() -> int {
+        let result: int = this.open();
+        if (result != 0) {
+            return result;
+        }
+        for (;;) {
+            if (!this.frame()) {
+                break;
+            }
+        }
+        this.close();
+        return 0;
+    }
 }

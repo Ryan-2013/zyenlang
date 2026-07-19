@@ -1,0 +1,11 @@
+ZLC_MODULE(request_native)
+ZLC_HEADER("request_native.h")
+ZLC_SOURCE("request_native.c")
+ZLC_LIB_WINDOWS("winhttp")
+ZLC_LIB_LINUX("dl")
+
+ZLC_FN(perform, zl_request_perform, int, ZLC_PARAM(method, str), ZLC_PARAM(url, str), ZLC_PARAM(body, str), ZLC_PARAM(content_type, str), ZLC_PARAM(timeout_ms, int))
+ZLC_FN(status, zl_request_status, int)
+ZLC_FN(body, zl_request_body, str)
+ZLC_FN(error, zl_request_error, str)
+ZLC_FN(save, zl_request_save, int, ZLC_PARAM(path, str))

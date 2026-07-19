@@ -146,15 +146,15 @@ address of a top-level function borrows its compiler-emitted static cell;
 ```zy
 let pointer: ptr<fn(int,int)->int> = &add;
 print(f"{(*pointer)(20, 22)}");
-print(f"{*pointer(20, 22)}");
 
 let opaque: ptr<void> = pointer;
-print(f"{*(ptr<fn(int,int)->int>)opaque(12, 10)}");
+print(f"{(*(ptr<fn(int,int)->int>)opaque)(12, 10)}");
 ```
 
 Calls validate pointer state, the runtime cell tag, and the exact function
 signature before dispatch. Different function-pointer signatures cannot be
-cast into one another.
+cast into one another. Postfix binds before prefix, so pointer calls always use
+`(*pointer)(args)`; the removed `*pointer(args)` spelling is rejected.
 
 ## Managed pointers
 
@@ -178,6 +178,15 @@ let *value: ptr<int> = 10;
 let *chain: ptr<ptr<int>> = 10;
 let inner = *chain;
 print((str)(*inner)); // 10
+```
+
+Owned cells can also be struct defaults. Every literal receives a distinct
+ARC-owned cell:
+
+```zy
+struct Counter {
+    let *this.value: ptr<int> = 0;
+}
 ```
 
 An existing pointer can initialize the nested cell as well. Prefer fully typed
@@ -235,7 +244,9 @@ for example `let dog: Dog = (Dog)animals.pop();`.
 `std/math`, `std/mem`, `std/ptr`, `std/random`, `std/stats`, `std/c_module`
 
 ### Domain modules
-`std/tk` (Tk-like GUI bridge), `std/cv`, `std/gpu`, `std/units`,
+`std/tk` ([cross-platform raylib canvas and widgets](docs/std_tk_widgets.md)),
+`std/request` ([cross-platform synchronous HTTP](docs/std_request.md)),
+`std/cv`, `std/gpu`, `std/units`,
 `std/filter`, `std/trajectory`, `std/robot`, `std/pid`, `std/motor`,
 `std/control`, `std/thread`, `std/coroutine`, `std/geometry`,
 `std/buffer`, `std/bit`, `std/range`, `std/ease`, `std/check`

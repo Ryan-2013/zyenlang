@@ -21,7 +21,7 @@ fn get_add_pointer() -> ptr<fn(int,int)->int> {
 }
 
 fn invoke_pointer(operation: ptr<fn(int,int)->int>, a: int, b: int) -> int {
-    return *operation(a, b);
+    return (*operation)(a, b);
 }
 
 fn make_adder(delta: int) -> fn(int)->int {
@@ -35,7 +35,7 @@ struct FunctionCell {
     let this.operation: ptr<fn(int,int)->int>;
 
     fn call(a: int, b: int) -> int {
-        return *this.operation(a, b);
+        return (*this.operation)(a, b);
     }
 }
 
@@ -48,24 +48,27 @@ fn main() -> int {
 
     let func_ptr: ptr<fn(int,int)->int> = &add3;
     t.eq_int("parenthesized pointer call", (*func_ptr)(20, 22), 42);
-    t.eq_int("short pointer call", *func_ptr(19, 23), 42);
-    *func_ptr(1, 2);
+    t.eq_int("repeated pointer call", (*func_ptr)(19, 23), 42);
+    (*func_ptr)(1, 2);
 
     let answer_ptr: ptr<fn()->int> = &answer;
-    t.eq_int("zero-argument short call", *answer_ptr(), 42);
+    t.eq_int("zero-argument pointer call", (*answer_ptr)(), 42);
     let returned_ptr: ptr<fn(int,int)->int> = get_add_pointer();
-    t.eq_int("returned static function pointer", *returned_ptr(17, 25), 42);
+    t.eq_int("returned static function pointer", (*returned_ptr)(17, 25), 42);
     t.eq_int("function pointer parameter", invoke_pointer(returned_ptr, 16, 26), 42);
 
     let erased: ptr<void> = func_ptr;
-    t.eq_int("void erased pointer call", *(ptr<fn(int,int)->int>)erased(12, 10), 22);
+    t.eq_int("void erased pointer call", (*(ptr<fn(int,int)->int>)erased)(12, 10), 22);
 
     let *owned_ptr: ptr<fn(int,int)->int> = add3;
-    t.eq_int("owned function cell", *owned_ptr(21, 21), 42);
+    t.eq_int("owned function cell", (*owned_ptr)(21, 21), 42);
+
+    let *factory_ptr: ptr<fn()->fn(int,int)->int> = add2;
+    t.eq_int("owned factory pointer chain", (*factory_ptr)()(20, 22), 42);
 
     let add5: fn(int)->int = make_adder(5);
     let *closure_ptr: ptr<fn(int)->int> = add5;
-    t.eq_int("owned closure cell", *closure_ptr(37), 42);
+    t.eq_int("owned closure cell", (*closure_ptr)(37), 42);
 
     let escaped_closure_ptr: ptr<fn(int)->int> = None;
     if (true) {
@@ -73,7 +76,7 @@ fn main() -> int {
         let *inner_ptr: ptr<fn(int)->int> = add10;
         set escaped_closure_ptr = inner_ptr;
     }
-    t.eq_int("closure cell survives source scope", *escaped_closure_ptr(32), 42);
+    t.eq_int("closure cell survives source scope", (*escaped_closure_ptr)(32), 42);
 
     let cell: FunctionCell = FunctionCell { operation: func_ptr };
     t.eq_int("struct function pointer field", cell.call(18, 24), 42);

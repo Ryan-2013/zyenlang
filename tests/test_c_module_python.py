@@ -20,6 +20,7 @@ from zyenlang.c_module import (
     configure_bundled_gui_runtime,
     empty_native_metadata,
     gcc_command,
+    native_metadata_from_manifest,
     native_metadata_from_zy,
     native_platform_name,
 )
@@ -89,6 +90,25 @@ def test_platform_native_metadata() -> None:
     assert metadata["libs"] == ["common", expected]
 
 
+def test_platform_template_macros() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        template = Path(tmp) / "platform.zlcm.h"
+        template.write_text(
+            "ZLC_MODULE(platform)\n"
+            "ZLC_LIB(\"common\")\n"
+            "ZLC_LIB_WINDOWS(\"winonly\")\n"
+            "ZLC_LIB_LINUX(\"dl\")\n"
+            "ZLC_LIB_MACOS(\"cocoa\")\n"
+            "ZLC_FN(answer, platform_answer, int)\n",
+            encoding="utf-8",
+        )
+        cases = (("win32", "winonly"), ("linux", "dl"), ("darwin", "cocoa"))
+        for platform, expected in cases:
+            with patch("zyenlang.c_module.sys.platform", platform):
+                metadata = native_metadata_from_manifest(template)
+            assert metadata["libs"] == ["common", expected]
+
+
 def test_compiler_override() -> None:
     with patch.dict("os.environ", {"ZY_CC": "custom-cc --portable"}):
         assert c_compiler_command() == ["custom-cc", "--portable"]
@@ -122,6 +142,7 @@ def main() -> int:
         test_diagnostics,
         test_hidden_types_and_metadata_are_deduplicated,
         test_platform_native_metadata,
+        test_platform_template_macros,
         test_compiler_override,
         test_linux_compiler_enables_posix_api_before_headers,
         test_portable_cli_exports_bundled_gui_runtime,

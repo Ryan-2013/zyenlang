@@ -2,6 +2,6 @@ fn main() -> int {
     let *number: ptr<int> = 42;
     let opaque: ptr<void> = number;
     let wrong: ptr<fn(int)->int> = (ptr<fn(int)->int>)opaque;
-    print((str)*wrong(1));
+    print((str)(*wrong)(1));
     return 0;
 }

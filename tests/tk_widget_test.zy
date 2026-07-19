@@ -1,0 +1,49 @@
+import <std/tk>;
+import <std/test>;
+
+fn main() -> int {
+    let t: TestStats = test.new_stats("tk widgets");
+    let *clicks: ptr<int> = 0;
+    fn clicked() -> void {
+        set *clicks += 1;
+    }
+
+    let font: tk.FONT = tk.load_font("demo.ttf", 28);
+    t.eq_str("font path", font.path, "demo.ttf");
+    t.eq_int("font base size", font.base_size, 28);
+
+    let window: tk.Window = tk.Window {};
+    t.eq_str("window title default", window.title, "ZyenLang");
+    t.eq_int("window width default", window.width, 800);
+    t.eq_int("window fps default", window.fps, 60);
+
+    let label: tk.Text = tk.Text { text: "hello", x: 12, y: 18 };
+    let button: tk.Button = tk.Button { text: "click", x: 10, y: 20, width: 100, height: 40, if_click: clicked };
+    t.check("button contains edge", button.contains(10, 20));
+    t.check("button excludes far edge", !button.contains(110, 60));
+
+    let press: str = "mouse\t30\t40";
+    let release: str = "release\t30\t40";
+    t.eq_int("press event kind", tk.event_kind(press), 1);
+    t.eq_int("release event kind", tk.event_kind(release), 2);
+    t.eq_int("event x", tk.event_x(press), 30);
+    t.eq_int("event y", tk.event_y(press), 40);
+    t.eq_int("wheel x", tk.event_x("wheel\t-1\t70\t80"), 70);
+    t.eq_int("wheel y", tk.event_y("wheel\t-1\t70\t80"), 80);
+
+    button.handle_event(tk.event_kind(press), tk.event_x(press), tk.event_y(press));
+    button.handle_event(tk.event_kind(release), tk.event_x(release), tk.event_y(release));
+    t.eq_int("inside click invokes callback", *clicks, 1);
+    button.handle_event(1, 30, 40);
+    button.handle_event(2, 130, 40);
+    t.eq_int("outside release cancels callback", *clicks, 1);
+    set button.enabled = false;
+    button.handle_event(1, 30, 40);
+    button.handle_event(2, 30, 40);
+    t.eq_int("disabled button ignores click", *clicks, 1);
+
+    let ui: tk.Renderer = tk.Renderer { window: window, children: [label, button] };
+    t.eq_int("renderer stores mixed widgets", ui.children.len(), 2);
+    ui.children.clear();
+    return t.summary();
+}

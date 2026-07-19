@@ -43,9 +43,9 @@ fn main() -> int {
     print((str)pick("add")(20, 22));
 
     let func_ptr: ptr<fn(int,int)->int> = &add;
-    print(f"{*func_ptr(20, 22)}");
+    print(f"{(*func_ptr)(20, 22)}");
     let opaque: ptr<void> = func_ptr;
-    print(f"{*(ptr<fn(int,int)->int>)opaque(12, 10)}");
+    print(f"{(*(ptr<fn(int,int)->int>)opaque)(12, 10)}");
 
     let *owned_func_ptr: ptr<fn(int,int)->int> = op;
     print(f"{(*owned_func_ptr)(10, 3)}");

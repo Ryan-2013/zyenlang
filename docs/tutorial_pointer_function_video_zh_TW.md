@@ -234,7 +234,6 @@ print((str)pick("add")(20, 22)); // 42
 ```zy
 let func_ptr: ptr<fn(int,int)->int> = &add;
 print(f"{(*func_ptr)(20, 22)}");
-print(f"{*func_ptr(20, 22)}"); // ZyenLang 簡寫
 ```
 
 `&add` 指向編譯器為 top-level function 建立的靜態 cell。要建立 ARC 管理的
@@ -248,7 +247,7 @@ let *owned_ptr: ptr<fn(int,int)->int> = add;
 
 ```zy
 let opaque: ptr<void> = func_ptr;
-print(f"{*(ptr<fn(int,int)->int>)opaque(12, 10)}");
+print(f"{(*(ptr<fn(int,int)->int>)opaque)(12, 10)}");
 ```
 
 呼叫前會檢查 pointer runtime tag 與 fn signature。不同函式簽章禁止互相

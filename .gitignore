@@ -12,6 +12,8 @@
 # Native sources that are part of the runtime and c_module fixtures.
 !std/tk_native.c
 !zyenlang/std/tk_native.c
+!std/request_native.c
+!zyenlang/std/request_native.c
 !tests/native_abi.c
 !tests/native_callback.c
 !tests/native_math.c

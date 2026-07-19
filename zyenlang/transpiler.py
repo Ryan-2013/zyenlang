@@ -23,6 +23,7 @@ class StructDef:
     name: str
     fields: Dict[str, str] = field(default_factory=dict)
     defaults: Dict[str, str] = field(default_factory=dict)
+    owned_pointer_fields: Set[str] = field(default_factory=set)
     methods: Dict[str, "FunctionDef"] = field(default_factory=dict)
 
 
@@ -377,18 +378,20 @@ def parse_variable_declaration_syntax(line: str, *, trailing_semicolon: bool, ow
     return kind, name, explicit_type, expr
 
 
-def parse_struct_field_line(line: str) -> Optional[Tuple[str, str, Optional[str]]]:
-    match = re.match(r"let\s+this\.([A-Za-z_]\w*)\s*:\s*", line)
+def parse_struct_field_line(line: str) -> Optional[Tuple[str, str, Optional[str], bool]]:
+    match = re.match(r"let\s+(\*\s*)?this\.([A-Za-z_]\w*)\s*:\s*", line)
     if not match or not line.rstrip().endswith(";"):
         return None
     body = line[match.end():].rstrip()
     body = body[:-1].rstrip()
     field_type, end = parse_type_prefix(body)
     rest = body[end:].strip()
+    owned_pointer = match.group(1) is not None
+    field_name = match.group(2)
     if not rest:
-        return match.group(1), field_type, None
+        return field_name, field_type, None, owned_pointer
     if rest.startswith("=") and rest[1:].strip():
-        return match.group(1), field_type, rest[1:].strip()
+        return field_name, field_type, rest[1:].strip(), owned_pointer
     raise ZyenError(f"invalid struct field declaration `{line}`")
 
 
@@ -405,6 +408,12 @@ def _struct_default_init(struct_name: str, ctx: "TranspileContext") -> str:
     parts = []
     for field_name, default_expr in struct.defaults.items():
         field_type = struct.fields.get(field_name, "")
+        if field_name in struct.owned_pointer_fields:
+            value = owned_pointer_initializer_expr(
+                field_type, default_expr, f"{struct_name}.{field_name}", ctx
+            )
+            parts.append(f".{field_name} = {value}")
+            continue
         coerced = coerce_named_fn_to_fnval(default_expr, field_type, ctx)
         value = coerced if coerced is not None else transform_expr(default_expr, ctx)
         if type_has_managed_value(field_type, ctx) and not expression_produces_owned_value(default_expr, ctx):
@@ -883,6 +892,7 @@ def collect_signatures(lines: List[Tuple[int, str]]) -> TranspileContext:
                 raise ZyenError(f"line {line_no}: `{struct_name}` is a built-in type name and cannot be used as a struct name")
             fields: Dict[str, str] = {}
             struct_defaults: Dict[str, str] = {}
+            owned_pointer_fields: Set[str] = set()
             methods: Dict[str, FunctionDef] = {}
             i += 1
             while i < len(lines):
@@ -896,9 +906,21 @@ def collect_signatures(lines: List[Tuple[int, str]]) -> TranspileContext:
                 #     let this.name: type = expr;   (ZEP-0006)
                 parsed_field = parse_struct_field_line(f_line)
                 if parsed_field:
-                    field_name, field_type, default_expr = parsed_field
+                    field_name, field_type, default_expr, owned_pointer = parsed_field
                     field_type = _strip_module_prefix_type(field_type)
                     validate_user_type(field_type, f_no, "struct field")
+                    if owned_pointer:
+                        if ztype_base(field_type) != "ptr" or ptr_inner_type(field_type) is None:
+                            raise ZyenError(
+                                f"line {f_no}: owned struct field `let *this.{field_name}` "
+                                "must use a concrete `ptr<T>` type"
+                            )
+                        if default_expr is None:
+                            raise ZyenError(
+                                f"line {f_no}: owned struct field `let *this.{field_name}` needs "
+                                "a pointee initializer, for example `= 0;`"
+                            )
+                        owned_pointer_fields.add(field_name)
                     fields[field_name] = field_type
                     if default_expr is not None:
                         struct_defaults[field_name] = default_expr.strip()
@@ -922,7 +944,13 @@ def collect_signatures(lines: List[Tuple[int, str]]) -> TranspileContext:
                 raise ZyenError(f"line {f_no}: invalid struct member; expected `let this.name: type;` or `fn method(...) -> type {{`")
             else:
                 raise ZyenError(f"line {line_no}: struct `{struct_name}` is missing closing `}}`")
-            ctx.structs[struct_name] = StructDef(name=struct_name, fields=fields, defaults=struct_defaults, methods=methods)
+            ctx.structs[struct_name] = StructDef(
+                name=struct_name,
+                fields=fields,
+                defaults=struct_defaults,
+                owned_pointer_fields=owned_pointer_fields,
+                methods=methods,
+            )
             i += 1
             continue
 
@@ -979,6 +1007,12 @@ def convert_struct_literal(expr: str, ctx: TranspileContext) -> str:
                 provided.add(field_name)
                 raw_val = value.strip()
                 field_type = struct.fields.get(field_name, "")
+                if field_name in struct.owned_pointer_fields:
+                    value_c = owned_pointer_initializer_expr(
+                        field_type, raw_val, f"{typ}.{field_name}", ctx
+                    )
+                    parts.append(f".{field_name} = {value_c}")
+                    continue
                 if field_type:
                     ensure_c_module_assignable(
                         field_type,
@@ -999,6 +1033,12 @@ def convert_struct_literal(expr: str, ctx: TranspileContext) -> str:
         for field_name, default_expr in struct.defaults.items():
             if field_name not in provided:
                 field_type = struct.fields.get(field_name, "")
+                if field_name in struct.owned_pointer_fields:
+                    value = owned_pointer_initializer_expr(
+                        field_type, default_expr, f"{typ}.{field_name}", ctx
+                    )
+                    parts.append(f".{field_name} = {value}")
+                    continue
                 coerced = coerce_named_fn_to_fnval(default_expr, field_type, ctx)
                 value = coerced if coerced is not None else transform_expr(default_expr, ctx)
                 if type_has_managed_value(field_type, ctx) and not expression_produces_owned_value(default_expr, ctx):
@@ -1236,6 +1276,97 @@ def split_trailing_call(text: str) -> Optional[Tuple[str, str]]:
     return callee, source[open_i + 1:-1]
 
 
+def split_trailing_field_access(text: str) -> Optional[Tuple[str, str]]:
+    """Split a whole postfix field expression into (receiver, field)."""
+    source = text.strip()
+    if source.startswith(("*", "&")):
+        return None
+    match = re.search(r"\.\s*([A-Za-z_]\w*)\s*$", source)
+    if match is None:
+        return None
+    dot_i = match.start()
+    mask = string_mask(source)
+    depth = 0
+    for index, ch in enumerate(source[:dot_i]):
+        if mask[index]:
+            continue
+        if ch in "([{":
+            depth += 1
+        elif ch in ")]}":
+            depth -= 1
+            if depth < 0:
+                return None
+    if depth != 0 or (dot_i < len(mask) and mask[dot_i]):
+        return None
+    receiver = source[:dot_i].strip()
+    return (receiver, match.group(1)) if receiver else None
+
+
+def _matching_postfix_group(text: str, start: int, opening: str, closing: str) -> int:
+    depth = 0
+    in_str = False
+    escaped = False
+    for index in range(start, len(text)):
+        ch = text[index]
+        if ch == '"' and not escaped:
+            in_str = not in_str
+        elif not in_str:
+            if ch == opening:
+                depth += 1
+            elif ch == closing:
+                depth -= 1
+                if depth == 0:
+                    return index
+        escaped = ch == "\\" and not escaped
+        if ch != "\\":
+            escaped = False
+    return -1
+
+
+def is_postfix_chain_expr(text: str) -> bool:
+    """Whether text is one primary followed only by `.`, `[]`, or `()` suffixes."""
+    source = text.strip()
+    if not source:
+        return False
+    index = 0
+    if source[index] == "(":
+        close = find_matching_paren(source, index)
+        if close < 0:
+            return False
+        index = close + 1
+    else:
+        primary = re.match(r"[A-Za-z_]\w*", source)
+        if primary is None:
+            return False
+        index = primary.end()
+
+    while index < len(source):
+        while index < len(source) and source[index].isspace():
+            index += 1
+        if index >= len(source):
+            return True
+        if source[index] == ".":
+            field_match = re.match(r"\.\s*([A-Za-z_]\w*)", source[index:])
+            if field_match is None:
+                return False
+            index += field_match.end()
+            continue
+        if source[index] == "(":
+            close = find_matching_paren(source, index)
+            if close < 0:
+                return False
+            index = close + 1
+            continue
+        if source[index] == "[":
+            close = _matching_postfix_group(source, index, "[", "]")
+            if close < 0:
+                return False
+            index = close + 1
+            continue
+        return False
+    return True
+
+
 def c_fn_value_call(value_c: str, fn_type: str, args: List[str], ctx: TranspileContext, call_name: str, owns_callee: bool = False) -> str:
     param_types, _ret_type = parse_fn_type(fn_type)
     if any(split_named_call_arg(arg) is not None for arg in args):
@@ -1253,6 +1384,10 @@ def transform_postfix_fn_call(expr: str, ctx: TranspileContext) -> str:
     if trailing is None:
         return expr
     callee, arg_text = trailing
+    # Postfix binds before prefix. `*p(args)` is `*(p(args))`; callers must use
+    # `(*p)(args)` when p is a ptr<fn(...)>.
+    if callee.lstrip().startswith(("*", "&")):
+        return expr
     if re.fullmatch(r"[A-Za-z_]\w*", callee) and callee in ctx.functions:
         return expr
     callee_type = infer_type(callee, ctx)
@@ -1486,7 +1621,7 @@ def transform_method_calls(expr: str, ctx: TranspileContext) -> str:
             # ZEP-0013: fn-typed field is a fat value; call dispatches through .call/.env.
             if method in struct.fields and is_fn_type(struct.fields[method]):
                 field_type = struct.fields[method]
-                base = f"{transform_field_access(obj, ctx)}.{method}"
+                base = f"({transform_expr(obj, ctx)}).{method}"
                 repl = c_fn_value_call(base, field_type, args, ctx, f"{obj}.{method}")
             elif method not in struct.methods:
                 raise ZyenError(f"unknown method `{method}` for struct `{display_ztype(obj_type, ctx)}`")
@@ -1499,7 +1634,7 @@ def transform_method_calls(expr: str, ctx: TranspileContext) -> str:
                 rest = ", " + ", ".join(converted) if converted else ""
                 target = f"{obj_type}_{method}"
                 call_name = direct_owned_args_wrapper_name(target, owned_mask) if owned_mask else target
-                repl = f"{call_name}(&{transform_field_access(obj, ctx)}{rest})"
+                repl = f"{call_name}(&{transform_expr(obj, ctx)}{rest})"
 
         else:
             owner = ptrstruct_inner_type(obj_type) if obj_type else None
@@ -1793,7 +1928,7 @@ def unary_deref_operand(expr: str) -> Optional[str]:
     operand = source[1:].strip()
     if not operand:
         return None
-    if re.fullmatch(r"[A-Za-z_]\w*(?:\.[A-Za-z_]\w*|\[[^\[\]]+\])*", operand):
+    if is_postfix_chain_expr(operand):
         return operand
     cast = is_cast_expr(operand)
     if cast is not None and ztype_base(cast[0]) == "ptr":
@@ -1932,6 +2067,46 @@ def split_top_level_condition(expr: str) -> Optional[Tuple[str, str, str]]:
             if left and right:
                 return left, operator, right
     return None
+
+def field_access_type(expr: str, ctx: TranspileContext) -> Optional[str]:
+    split = split_trailing_field_access(expr)
+    if split is None:
+        return None
+    receiver, field_name = split
+    receiver_type = infer_type(receiver, ctx)
+    if receiver_type in ctx.structs:
+        return ctx.structs[receiver_type].fields.get(field_name)
+    method_owner = ptrstruct_inner_type(receiver_type)
+    if method_owner in ctx.structs:
+        return ctx.structs[method_owner].fields.get(field_name)
+    pointer_owner = ptr_inner_type(receiver_type) if ztype_base(receiver_type) == "ptr" else None
+    if pointer_owner in ctx.structs:
+        raise ZyenError(
+            f"cannot access `{field_name}` directly through `{display_ztype(receiver_type, ctx)}`; "
+            f"write `(*{receiver}).{field_name}`"
+        )
+    return None
+
+
+def transform_exact_field_access(expr: str, ctx: TranspileContext) -> Optional[str]:
+    split = split_trailing_field_access(expr)
+    if split is None or expr.strip().endswith(".addr"):
+        return None
+    receiver, field_name = split
+    receiver_type = infer_type(receiver, ctx)
+    if receiver_type in ctx.structs and field_name in ctx.structs[receiver_type].fields:
+        return f"({transform_expr(receiver, ctx)}).{field_name}"
+    method_owner = ptrstruct_inner_type(receiver_type)
+    if method_owner in ctx.structs and field_name in ctx.structs[method_owner].fields:
+        return f"({transform_expr(receiver, ctx)})->{field_name}"
+    pointer_owner = ptr_inner_type(receiver_type) if ztype_base(receiver_type) == "ptr" else None
+    if pointer_owner in ctx.structs and field_name in ctx.structs[pointer_owner].fields:
+        raise ZyenError(
+            f"cannot access `{field_name}` directly through `{display_ztype(receiver_type, ctx)}`; "
+            f"write `(*{receiver}).{field_name}`"
+        )
+    return None
+
 
 def transform_field_access(expr: str, ctx: TranspileContext) -> str:
     # Convert method-body field access on `this`: this.x -> this->x
@@ -2353,6 +2528,9 @@ def transform_expr(expr: str, ctx: TranspileContext) -> str:
     if condition is not None:
         left, operator, right = condition
         return f"({transform_expr(left, ctx)} {operator} {transform_expr(right, ctx)})"
+    exact_field = transform_exact_field_access(expr, ctx)
+    if exact_field is not None:
+        return exact_field
     postfix_call = transform_postfix_fn_call(expr, ctx)
     if postfix_call != expr:
         return postfix_call
@@ -2368,6 +2546,12 @@ def transform_expr(expr: str, ctx: TranspileContext) -> str:
             signature = json.dumps(target_type.replace(" ", ""))
             return f"zl_fn_ptr_load({pointer_c}, {signature}, {json.dumps(label)})"
         return f"(*({c_type(target_type)}*)zl_ptr_checked_addr({pointer_c}, {json.dumps(label)}))"
+    if is_array_literal(expr):
+        values, _element_type = parse_array_literal(expr, ctx, 0)
+        if not values:
+            return "zl_list_new()"
+        wrapped = [wrap_arg_for_expected(value, "Any", ctx) for value in values]
+        return f"zl_list_from_array((Any[]){{{', '.join(wrapped)}}}, {len(wrapped)})"
     expr = convert_struct_literal(expr, ctx)
     expr = replace_fstrings_in_expr(expr, ctx)
     # String concat must run before object/method rewriting, so expressions like
@@ -2526,12 +2710,17 @@ def infer_type(expr: str, ctx: TranspileContext) -> str:
     if cast:
         return "str" if cast[0] == "char" else cast[0]
     trailing_call = split_trailing_call(raw)
-    if trailing_call is not None:
+    if trailing_call is not None and not trailing_call[0].lstrip().startswith(("*", "&")):
         callee, _arg_text = trailing_call
         callee_type = infer_type(callee, ctx)
         if is_fn_type(callee_type):
             _params, ret_type = parse_fn_type(callee_type)
             return ret_type
+        if ztype_base(callee_type) == "ptr":
+            raise ZyenError(
+                f"cannot call pointer `{callee}` of type `{display_ztype(callee_type, ctx)}`; "
+                f"postfix call binds before `*`, so write `(*{callee})(...)`"
+            )
     # Remove outer parentheses for simple cases.
     while raw.startswith("(") and raw.endswith(")"):
         raw = raw[1:-1].strip()
@@ -2565,6 +2754,11 @@ def infer_type(expr: str, ctx: TranspileContext) -> str:
         return "int"
     if re.match(r"^-?\d+\.\d*([eE][+-]?\d+)?$", raw) or re.match(r"^-?\d+[eE][+-]?\d+$", raw):
         return "float"
+    if raw.endswith(".addr"):
+        return "ptraddr"
+    field_type = field_access_type(raw, ctx)
+    if field_type is not None:
+        return field_type
     address_operand = address_of_operand(raw)
     if address_operand is not None:
         deref_operand = unary_deref_operand(address_operand)
@@ -2584,8 +2778,6 @@ def infer_type(expr: str, ctx: TranspileContext) -> str:
     im = re.match(r"^([A-Za-z_]\w*)\s*\[.*\]$", raw)
     if im and im.group(1) in ctx.ptr_targets:
         return ctx.ptr_targets.get(im.group(1), "int")
-    if raw.endswith(".addr"):
-        return "ptraddr"
     found_mcall = split_method_call_at(raw, 0)
     if found_mcall and found_mcall[0] == 0 and found_mcall[1] == len(raw):
         _start, _end, obj, method, _body = found_mcall
@@ -2769,6 +2961,45 @@ def managed_cell_alloc_expr(ztype: str, ctx: TranspileContext) -> str:
     if drop:
         return f'zl_mem_alloc_cell_drop(sizeof({ctyp}), "{runtime_type}", {drop})'
     return f'zl_mem_alloc_cell(sizeof({ctyp}), "{runtime_type}")'
+
+
+def owned_pointer_factory_name(target_type: str) -> str:
+    slug = re.sub(r"[^A-Za-z0-9_]", "_", target_type.replace(" ", ""))
+    return f"zl_owned_ptr_from_{slug}"
+
+
+def owned_pointer_initializer_expr(
+    pointer_type: str,
+    expr: str,
+    label: str,
+    ctx: TranspileContext,
+    line_no: int = 0,
+) -> str:
+    """Create an owned ptr<T> expression from a pointee initializer.
+
+    This is the expression form of `let *p: ptr<T> = value`. It is used by
+    owned struct-field defaults, where statement-level hidden temporaries are
+    unavailable inside a C designated initializer.
+    """
+    target_type = ptr_inner_type(pointer_type)
+    if target_type is None:
+        raise ZyenError(f"line {line_no}: owned pointer `{label}` needs a concrete `ptr<T>` type")
+    actual_type = infer_type(expr, ctx)
+    try:
+        ensure_assignable(target_type, actual_type, line_no, f"initializing owned field `{label}`")
+    except ZyenError:
+        nested_target = ptr_inner_type(target_type)
+        if nested_target is None or ztype_base(actual_type) == "ptr":
+            raise
+        nested_value = owned_pointer_initializer_expr(target_type, expr, label, ctx, line_no)
+        return f"{owned_pointer_factory_name(target_type)}({nested_value})"
+
+    assert_expr_literals_fit(expr, ctx, line_no, target_type)
+    coerced_fn = coerce_named_fn_to_fnval(expr, target_type, ctx) if is_fn_type(target_type) else None
+    value_c = coerced_fn if coerced_fn is not None else transform_expr(expr, ctx)
+    if type_has_managed_value(target_type, ctx) and not expression_produces_owned_value(expr, ctx):
+        value_c = retain_expr_for_type(value_c, target_type, ctx)
+    return f"{owned_pointer_factory_name(target_type)}({value_c})"
 
 
 def build_recursive_owned_ptr_value(expected_type: str, expr: str, name: str, ctx: TranspileContext, line_no: int) -> Tuple[List[str], str]:
@@ -3516,6 +3747,37 @@ def emit_struct_management(ctx: TranspileContext) -> List[str]:
         out.append("    if (!payload) return;")
         out.append(f"    {release_name}(({struct.name}*)payload);")
         out.append("    free(payload);")
+        out.append("}")
+        out.append("")
+    return out
+
+
+def emit_owned_pointer_factories(ctx: TranspileContext) -> List[str]:
+    """Emit expression-friendly allocators used by `let *this.field` defaults."""
+    target_types: Set[str] = set()
+    for struct in ctx.structs.values():
+        for field_name in struct.owned_pointer_fields:
+            target = ptr_inner_type(struct.fields[field_name])
+            while target is not None:
+                target_types.add(target)
+                target = ptr_inner_type(target)
+    if not target_types:
+        return []
+
+    ordered = sorted(target_types, key=lambda item: (item.count("ptr<"), item))
+    out: List[str] = []
+    for target_type in ordered:
+        out.append(
+            f"static inline ptr {owned_pointer_factory_name(target_type)}"
+            f"({c_type(target_type)} value);"
+        )
+    out.append("")
+    for target_type in ordered:
+        name = owned_pointer_factory_name(target_type)
+        out.append(f"static inline ptr {name}({c_type(target_type)} value) {{")
+        out.append(f"    ptr result = {managed_cell_alloc_expr(target_type, ctx)};")
+        out.append(f"    *(({c_type(target_type)}*)result.addr) = value;")
+        out.append("    return result;")
         out.append("}")
         out.append("")
     return out
@@ -4397,6 +4659,7 @@ def transpile(source: str) -> str:
     out.append("static inline ZL_List zl_list_new(void) { return (ZL_List){ NULL, 0, 0 }; }")
     out.append("static inline void zl_list_ensure(ZL_List* l, int need) { if (l->cap >= need) return; int cap = l->cap ? l->cap * 2 : 4; while (cap < need) cap *= 2; Any* next = (Any*)realloc(l->items, sizeof(Any) * cap); if (!next) { fprintf(stderr, \"List allocation failed\\n\"); exit(1); } l->items = next; l->cap = cap; }")
     out.append("static inline void zl_list_append(ZL_List* l, Any v) { zl_list_ensure(l, l->len + 1); l->items[l->len++] = v; }")
+    out.append("static inline ZL_List zl_list_from_array(Any* items, int count) { ZL_List list = zl_list_new(); if (count <= 0) return list; zl_list_ensure(&list, count); for (int i = 0; i < count; i++) list.items[list.len++] = items[i]; return list; }")
     out.append("static inline int zl_list_len(ZL_List* l) { return l->len; }")
     out.append("static inline bool zl_list_is_empty(ZL_List* l) { return l->len == 0; }")
     out.append("static inline Any zl_list_get(ZL_List* l, int index) { if (index < 0 || index >= l->len) { fprintf(stderr, \"List index out of range: %d\\n\", index); exit(1); } return l->items[index]; }")
@@ -4435,34 +4698,6 @@ def transpile(source: str) -> str:
         out.append("static inline int zl_py_cmd4ii(const char* module, const char* op, const char* a, const char* b, int x, int y) { char qa[512], qb[512], cmd[1800]; zl_quote_arg(qa, sizeof(qa), a); zl_quote_arg(qb, sizeof(qb), b); snprintf(cmd, sizeof(cmd), \"python -m %s %s %s %s %d %d\", module, op, qa, qb, x, y); return system(cmd); }")
         out.append("static inline int zl_py_cmd3s(const char* module, const char* op, const char* a, const char* b, const char* c) { char qa[512], qb[512], qc[512], cmd[2100]; zl_quote_arg(qa, sizeof(qa), a); zl_quote_arg(qb, sizeof(qb), b); zl_quote_arg(qc, sizeof(qc), c); snprintf(cmd, sizeof(cmd), \"python -m %s %s %s %s %s\", module, op, qa, qb, qc); return system(cmd); }")
         out.append("static inline int zl_py_cmd3sf(const char* module, const char* op, const char* a, double x, const char* b) { char qa[512], qb[512], cmd[2100]; zl_quote_arg(qa, sizeof(qa), a); zl_quote_arg(qb, sizeof(qb), b); snprintf(cmd, sizeof(cmd), \"python -m %s %s %s %.17g %s\", module, op, qa, x, qb); return system(cmd); }")
-    # std/tk is backed by native C linked from its module metadata.
-    out.extend([
-        "int zl_tk_begin(const char* path);",
-        "int zl_tk_open(const char* title, int width, int height);",
-        "int zl_tk_window(const char* title, int width, int height);",
-        "int zl_tk_bg(const char* color);",
-        "int zl_tk_clear(const char* color);",
-        "int zl_tk_line(int x1, int y1, int x2, int y2, const char* color, int width);",
-        "int zl_tk_rect(int x, int y, int width, int height, const char* color);",
-        "int zl_tk_rect_outline(int x, int y, int width, int height, const char* color, int line_width);",
-        "int zl_tk_circle(int x, int y, int radius, const char* color);",
-        "int zl_tk_circle_outline(int x, int y, int radius, const char* color, int line_width);",
-        "int zl_tk_text(int x, int y, const char* text, const char* color, int size);",
-        "int zl_tk_codeview(int x, int y, int width, int height, int first_line, int line_height, int char_width, int size, int stamp, const char* lines_path);",
-        "int zl_tk_codeview_text(int x, int y, int width, int height, int first_line, int line_height, int char_width, int size, int stamp, const char* lines);",
-        "int zl_tk_image(const char* path, int x, int y);",
-        "const char* zl_tk_script(void);",
-        "int zl_tk_show(void);",
-        "int zl_tk_show_for(int ms);",
-        "int zl_tk_session_open(const char* title, int width, int height, const char* session_dir);",
-        "int zl_tk_session_begin_frame(void);",
-        "int zl_tk_session_redraw(void);",
-        "const char* zl_tk_session_next_event(int timeout_ms);",
-        "int zl_tk_session_pickdir(void);",
-        "int zl_tk_session_close(void);",
-        "int zl_tk_session_char_w(void);",
-        "int zl_tk_session_line_h(void);",
-    ])
     if needs_python_cli:
         out.append("static inline int zl_cv_info(void) { return zl_py_cmd0(\"zyenlang.cv_cli\", \"info\"); }")
         out.append("static inline int zl_cv_readable(const char* input) { char q[512], cmd[1200]; zl_quote_arg(q, sizeof(q), input); snprintf(cmd, sizeof(cmd), \"python -m zyenlang.cv_cli readable %s\", q); return system(cmd); }")
@@ -4491,6 +4726,7 @@ def transpile(source: str) -> str:
     out.extend(emit_struct_forward_decls(ctx))
     out.extend(emit_struct_defs(ctx))
     out.extend(emit_struct_management(ctx))
+    out.extend(emit_owned_pointer_factories(ctx))
     out.extend(emit_any_struct_box_helpers(ctx))
     out.extend(emit_fn_typedefs(ctx))
     out.extend(emit_lifted_env_structs(ctx))
@@ -4531,6 +4767,8 @@ def transpile(source: str) -> str:
                     reset_function_context(ctx, c_name, c_params)
                     precollect_function_list_item_types(lines, i + 1, ctx)
                     out.append(c_function_signature(c_name, ret_type, c_params) + " {")
+                    for param_name in c_params:
+                        out.append(f"    (void){param_name};")
                     i = emit_function_body(lines, i + 1, out, ctx)
                     continue
                 raise ZyenError(f"line {member_no}: invalid struct member")
@@ -4547,6 +4785,8 @@ def transpile(source: str) -> str:
             reset_function_context(ctx, name, params)
             precollect_function_list_item_types(lines, i + 1, ctx)
             out.append(c_function_signature(name, ret_type, params) + " {")
+            for param_name in params:
+                out.append(f"    (void){param_name};")
             i = emit_function_body(lines, i + 1, out, ctx)
             continue
 
@@ -4702,7 +4942,10 @@ def prefix_module_body(source: str, module_name: str) -> str:
             depth = 0
     out = "\n".join(out_lines) + ("\n" if source.endswith("\n") else "")
     for name in names:
-        out = re.sub(rf"(?<![\.\w]){re.escape(name)}\s*\(", f"{prefix}{name}(" , out)
+        # Top-level declarations were already renamed above. Do not mistake a
+        # same-named struct method declaration (for example `fn open()`) for a
+        # call to the module's top-level `open()` function.
+        out = re.sub(rf"(?<![\.\w])(?<!fn ){re.escape(name)}\s*\(", f"{prefix}{name}(" , out)
     return out
 
 def parse_std_import(cleaned: str):

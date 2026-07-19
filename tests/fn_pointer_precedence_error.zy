@@ -1,0 +1,9 @@
+fn add(a: int, b: int) -> int {
+    return a + b;
+}
+
+fn main() -> int {
+    let pointer: ptr<fn(int,int)->int> = &add;
+    print((str)*pointer(20, 22));
+    return 0;
+}

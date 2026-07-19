@@ -1,5 +1,39 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- High-level `std/tk` `FONT`, `Window`, `Text`, `Button`, and `Renderer`
+  structs over the cross-platform native raylib session.
+- ARC-safe `fn()->void` button callbacks, mouse hit testing, custom font
+  loading and caching, target FPS control, and allocation-free event parsing.
+- List literals inside struct fields, enabling concise retained UI trees such
+  as `Renderer { children: [heading, button] }`.
+- Platform-specific `.zlcm.h` metadata macros for Windows, Linux, macOS, and
+  Unix native headers, sources, include/library paths, libraries, and flags.
+- `let *this.field: ptr<T> = value;` owned struct-field defaults with recursive
+  ARC allocation for nested pointer targets.
+- `std/request`, an ordinary c_module-based synchronous HTTP client using
+  WinHTTP on Windows and system libcurl on Linux/macOS.
+- ZEP-0017 package-manager plan and ZEP-0018 pointer precedence specification.
+
+### Changed
+
+- `std/tk` now imports `std/c_module` and loads `tk.zlcm.h` like an ordinary
+  third-party package. The compiler no longer hard-codes `zl_tk_*` prototypes
+  or native source metadata.
+- Pointer field, index, and call postfix operations now bind before prefix
+  dereference, address-of, and casts. Function pointers use the single
+  unambiguous `(*pointer)(args)` spelling.
+
+### Fixed
+
+- Module namespace expansion no longer renames a struct method declaration
+  that shares a name with a top-level module function.
+- Parenthesized dereferenced struct receivers preserve their type through
+  field access and method calls, including `(*car_ptr).field`.
+
 ## v0.1.83 - 2026-07-18
 
 ### Added

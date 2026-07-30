@@ -492,23 +492,39 @@ def test_v2_thread_module_builds_and_runs(tmp_path: Path) -> None:
 def test_v2_request_module_uses_native_transport(tmp_path: Path) -> None:
     creationflags = subprocess.CREATE_NO_WINDOW if sys.platform.startswith("win") else 0
     server = subprocess.Popen(
-        [sys.executable, str(ROOT / "tests" / "request_fixture_server.py")],
+        [sys.executable, str(ROOT / "tests" / "request_fixture_server.py"), "0"],
         cwd=ROOT,
         creationflags=creationflags,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
     )
     try:
+        assert server.stdout is not None and server.stderr is not None
+        line = server.stdout.readline()
+        if not line:
+            error = server.stderr.read().strip()
+            code = server.wait(timeout=3)
+            raise RuntimeError(f"request fixture server exited with {code}: {error}")
+        port = int(line.strip())
         deadline = time.monotonic() + 5
         while time.monotonic() < deadline:
             try:
-                with socket.create_connection(("127.0.0.1", 18765), timeout=0.2):
+                with socket.create_connection(("127.0.0.1", port), timeout=0.2):
                     break
             except OSError:
                 time.sleep(0.05)
         else:
             raise RuntimeError("request fixture server did not start")
 
+        source = ROOT / "tests" / "v2_request_test.zy"
+        test_source = tmp_path / "v2_request_test.zy"
+        test_source.write_text(
+            source.read_text(encoding="utf-8").replace("127.0.0.1:18765", f"127.0.0.1:{port}"),
+            encoding="utf-8",
+        )
         executable = tmp_path / ("request.exe" if sys.platform.startswith("win") else "request")
-        Compiler().build_file(ROOT / "tests" / "v2_request_test.zy", executable)
+        Compiler().build_file(test_source, executable)
         result = subprocess.run([str(executable)], capture_output=True, text=True, timeout=20, check=False)
 
         assert result.returncode == 0, result.stdout + result.stderr

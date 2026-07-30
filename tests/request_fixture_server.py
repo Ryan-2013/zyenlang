@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+import sys
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -33,4 +34,7 @@ class Handler(BaseHTTPRequestHandler):
 
 
 if __name__ == "__main__":
-    ThreadingHTTPServer(("127.0.0.1", 18765), Handler).serve_forever()
+    requested_port = int(sys.argv[1]) if len(sys.argv) > 1 else 0
+    server = ThreadingHTTPServer(("127.0.0.1", requested_port), Handler)
+    print(server.server_port, flush=True)
+    server.serve_forever()

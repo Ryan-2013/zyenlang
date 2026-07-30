@@ -1,4 +1,8 @@
+#ifdef __APPLE__
+#define _DARWIN_C_SOURCE
+#else
 #define _POSIX_C_SOURCE 200809L
+#endif
 
 #include "thread_native.h"
 
@@ -26,6 +30,9 @@ int32_t zy2_thread_cpu_count(void) {
 #include <sched.h>
 #include <time.h>
 #include <unistd.h>
+#ifdef __APPLE__
+#include <sys/sysctl.h>
+#endif
 
 int32_t zy2_thread_sleep_ms(int32_t milliseconds) {
     struct timespec delay;
@@ -43,8 +50,17 @@ int32_t zy2_thread_yield_now(void) {
 }
 
 int32_t zy2_thread_cpu_count(void) {
+#ifdef __APPLE__
+    int count = 1;
+    size_t size = sizeof(count);
+    if (sysctlbyname("hw.logicalcpu", &count, &size, NULL, 0) != 0 || count < 1) {
+        return 1;
+    }
+    return (int32_t)count;
+#else
     long count = sysconf(_SC_NPROCESSORS_ONLN);
     if (count < 1) return 1;
     return count > INT32_MAX ? INT32_MAX : (int32_t)count;
+#endif
 }
 #endif

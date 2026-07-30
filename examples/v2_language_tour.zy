@@ -1,0 +1,62 @@
+import <std/list> as list
+import <std/io> as io
+
+struct Car {
+    public value: i32
+    private label: str = "car"
+}
+
+private fn (c: Car) validate() throws Error {
+    if c.value <= 0 {
+        stop "value must be positive"
+    }
+}
+
+public fn (c: Car) return_value() i32 throws Error {
+    c.validate()
+    return c.value
+}
+
+public fn (c: Car) name() str {
+    return c.label
+}
+
+fn ret_two_result() (i32, str) {
+    return 12, "tuple"
+}
+
+fn main() i32 {
+    let args: List<str> = GET_ARGS
+    let executable: str = GET_EXE
+    let car: Car = Car{value: 0}
+    io.print(car.name())
+    let value: i32 = car.return_value() catch err {
+        io.print(err.message)
+        recover 0
+    }
+
+    let (num: i32, text: str) = ret_two_result()
+    io.print(text)
+
+    let maybe: i32 | null = null
+    if maybe == null {
+        io.print("null")
+    }
+
+    let some: i32 | null = 7
+    if let actual = some {
+        if actual == 7 {
+            io.print("some")
+        }
+    }
+
+    let matrix: List<List<i16>> = [[1231]]
+    if list.length(matrix) > 0 {
+        io.print("list")
+    }
+
+    if value == 0 && num == 12 && list.length(args) < 1000000 && executable != "" {
+        return 0
+    }
+    return 1
+}

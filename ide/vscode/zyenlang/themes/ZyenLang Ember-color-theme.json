@@ -1,0 +1,71 @@
+{
+  "$schema": "vscode://schemas/color-theme",
+  "name": "ZyenLang Ember",
+  "type": "dark",
+  "colors": {
+    "editor.background": "#20201F",
+    "editor.foreground": "#E8E3DC",
+    "editorLineNumber.foreground": "#6E6B67",
+    "editorLineNumber.activeForeground": "#D97757",
+    "editorCursor.foreground": "#E5B567",
+    "editor.selectionBackground": "#5B4138",
+    "editor.inactiveSelectionBackground": "#40332F",
+    "editor.lineHighlightBackground": "#292826",
+    "editorIndentGuide.background1": "#383633",
+    "editorIndentGuide.activeBackground1": "#766E66",
+    "editorBracketMatch.background": "#D9775733",
+    "editorBracketMatch.border": "#D97757",
+    "editorSuggestWidget.background": "#292826",
+    "editorSuggestWidget.border": "#45413D",
+    "editorSuggestWidget.selectedBackground": "#5B4138",
+    "editorHoverWidget.background": "#292826",
+    "editorHoverWidget.border": "#45413D",
+    "editorError.foreground": "#E06C75",
+    "activityBar.background": "#191918",
+    "activityBar.foreground": "#D97757",
+    "sideBar.background": "#1C1C1B",
+    "sideBar.foreground": "#CBC5BD",
+    "statusBar.background": "#D97757",
+    "statusBar.foreground": "#20201F",
+    "titleBar.activeBackground": "#191918",
+    "titleBar.activeForeground": "#E8E3DC"
+  },
+  "tokenColors": [
+    {
+      "scope": ["comment", "punctuation.definition.comment"],
+      "settings": { "foreground": "#7E8C72", "fontStyle": "italic" }
+    },
+    {
+      "scope": ["keyword", "storage.modifier", "storage.type.struct"],
+      "settings": { "foreground": "#D97757" }
+    },
+    {
+      "scope": ["storage.type", "entity.name.type", "support.type"],
+      "settings": { "foreground": "#7FB4A4" }
+    },
+    {
+      "scope": ["entity.name.function", "support.function"],
+      "settings": { "foreground": "#E5B567" }
+    },
+    {
+      "scope": ["string", "string.unquoted.import-path"],
+      "settings": { "foreground": "#D6B16B" }
+    },
+    {
+      "scope": ["constant.numeric", "constant.language"],
+      "settings": { "foreground": "#B48EAD" }
+    },
+    {
+      "scope": ["variable.parameter", "variable.other.member"],
+      "settings": { "foreground": "#9BB7C2" }
+    },
+    {
+      "scope": ["entity.name.namespace"],
+      "settings": { "foreground": "#83A598" }
+    },
+    {
+      "scope": ["constant.character.escape", "punctuation.section.interpolation"],
+      "settings": { "foreground": "#D97757" }
+    }
+  ]
+}

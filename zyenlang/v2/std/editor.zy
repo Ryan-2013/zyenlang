@@ -1,0 +1,49 @@
+native source "editor_native.c"
+
+private native fn open_native(path: str) i32 = "zy2_editor_open"
+private native fn save_native() i32 = "zy2_editor_save"
+private native fn dispose_native() void = "zy2_editor_dispose"
+private native fn text_native() str = "zy2_editor_text"
+private native fn path_native() str = "zy2_editor_path"
+private native fn status_native() str = "zy2_editor_status"
+private native fn first_line_native() i32 = "zy2_editor_first_line"
+private native fn cursor_line_native() i32 = "zy2_editor_cursor_line"
+private native fn cursor_column_native() i32 = "zy2_editor_cursor_column"
+private native fn revision_native() i32 = "zy2_editor_revision"
+private native fn dirty_native() i32 = "zy2_editor_dirty"
+private native fn line_count_native() i32 = "zy2_editor_line_count"
+private native fn has_selection_native() i32 = "zy2_editor_has_selection"
+private native fn selection_start_line_native() i32 = "zy2_editor_selection_start_line"
+private native fn selection_start_column_native() i32 = "zy2_editor_selection_start_column"
+private native fn selection_end_line_native() i32 = "zy2_editor_selection_end_line"
+private native fn selection_end_column_native() i32 = "zy2_editor_selection_end_column"
+private native fn completion_text_native() str = "zy2_editor_completion_text"
+private native fn completion_count_native() i32 = "zy2_editor_completion_count"
+private native fn completion_selected_native() i32 = "zy2_editor_completion_selected"
+private native fn completion_x_native() i32 = "zy2_editor_completion_x"
+private native fn completion_y_native() i32 = "zy2_editor_completion_y"
+private native fn handle_native(event: str) i32 = "zy2_editor_handle"
+
+public fn open(path: str) i32 { return open_native(path) }
+public fn save() i32 { return save_native() }
+public fn dispose() void { dispose_native() }
+public fn text() str { return text_native() }
+public fn path() str { return path_native() }
+public fn status() str { return status_native() }
+public fn first_line() i32 { return first_line_native() }
+public fn cursor_line() i32 { return cursor_line_native() }
+public fn cursor_column() i32 { return cursor_column_native() }
+public fn revision() i32 { return revision_native() }
+public fn dirty() i32 { return dirty_native() }
+public fn line_count() i32 { return line_count_native() }
+public fn has_selection() i32 { return has_selection_native() }
+public fn selection_start_line() i32 { return selection_start_line_native() }
+public fn selection_start_column() i32 { return selection_start_column_native() }
+public fn selection_end_line() i32 { return selection_end_line_native() }
+public fn selection_end_column() i32 { return selection_end_column_native() }
+public fn completion_text() str { return completion_text_native() }
+public fn completion_count() i32 { return completion_count_native() }
+public fn completion_selected() i32 { return completion_selected_native() }
+public fn completion_x() i32 { return completion_x_native() }
+public fn completion_y() i32 { return completion_y_native() }
+public fn handle(event: str) i32 { return handle_native(event) }

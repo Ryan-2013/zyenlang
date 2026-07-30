@@ -1,0 +1,12 @@
+import <std/thread> as thread
+
+fn calculate() i32 {
+    thread.sleep_ms(10)
+    return 42
+}
+
+fn main() i32 {
+    let task: Task<i32> = spawn calculate()
+    let answer: i32 = await task
+    return answer - 42
+}

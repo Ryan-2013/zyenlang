@@ -1,0 +1,110 @@
+native source "gui_native.c"
+native link linux "dl"
+native link windows "comdlg32"
+
+private native fn session_open(title: str, width: i32, height: i32, session_dir: str) i32 = "zl_tk_session_open"
+private native fn session_begin_frame() i32 = "zl_tk_session_begin_frame"
+private native fn session_redraw() i32 = "zl_tk_session_redraw"
+private native fn session_set_fps(fps: i32) i32 = "zl_tk_session_set_fps"
+private native fn session_next_event(timeout_ms: i32) str = "zl_tk_session_next_event"
+private native fn session_close() i32 = "zl_tk_session_close"
+private native fn session_pick_file() i32 = "zl_tk_session_pickfile"
+private native fn draw_background(color: str) i32 = "zl_tk_bg"
+private native fn draw_line_native(x1: i32, y1: i32, x2: i32, y2: i32, color: str, width: i32) i32 = "zl_tk_line"
+private native fn draw_rect_native(x: i32, y: i32, width: i32, height: i32, color: str) i32 = "zl_tk_rect"
+private native fn draw_circle_native(x: i32, y: i32, radius: i32, color: str) i32 = "zl_tk_circle"
+private native fn draw_text_native(x: i32, y: i32, value: str, color: str, size: i32) i32 = "zl_tk_text"
+private native fn draw_code_view_native(x: i32, y: i32, width: i32, height: i32, first_line: i32, line_height: i32, char_width: i32, size: i32, stamp: i32, lines: str) i32 = "zl_tk_codeview_text"
+private native fn draw_code_editor_native(x: i32, y: i32, width: i32, height: i32, first_line: i32, line_height: i32, char_width: i32, size: i32, stamp: i32, lines: str, selection_start_line: i32, selection_start_column: i32, selection_end_line: i32, selection_end_column: i32) i32 = "zl_tk_codeview_editor_text"
+private native fn draw_completion_native(x: i32, y: i32, width: i32, row_height: i32, size: i32, selected: i32, items: str) i32 = "zl_tk_completion"
+private native fn event_kind_native(event: str) i32 = "zl_tk_event_kind"
+private native fn event_x_native(event: str) i32 = "zl_tk_event_x"
+private native fn event_y_native(event: str) i32 = "zl_tk_event_y"
+
+public struct Window {
+    public title: str = "ZyenLang"
+    public width: i32 = 800
+    public height: i32 = 600
+    public background: str = "#20201F"
+    public fps: i32 = 60
+}
+
+public fn window(title: str, width: i32, height: i32) Window {
+    return Window{title: title, width: width, height: height}
+}
+
+public fn window_colored(title: str, width: i32, height: i32, background: str) Window {
+    return Window{title: title, width: width, height: height, background: background}
+}
+
+public fn (window: Window) open() i32 {
+    let result: i32 = session_open(window.title, window.width, window.height, "")
+    if result == 0 {
+        session_set_fps(window.fps)
+    }
+    return result
+}
+
+public fn (window: Window) begin_frame() i32 {
+    let result: i32 = session_begin_frame()
+    if result == 0 {
+        draw_background(window.background)
+    }
+    return result
+}
+
+public fn (window: Window) present() i32 {
+    return session_redraw()
+}
+
+public fn (window: Window) next_event(timeout_ms: i32) str {
+    return session_next_event(timeout_ms)
+}
+
+public fn (window: Window) close() i32 {
+    return session_close()
+}
+
+public fn pick_file() i32 {
+    return session_pick_file()
+}
+
+public fn line(x1: i32, y1: i32, x2: i32, y2: i32, color: str, width: i32) i32 {
+    return draw_line_native(x1, y1, x2, y2, color, width)
+}
+
+public fn rect(x: i32, y: i32, width: i32, height: i32, color: str) i32 {
+    return draw_rect_native(x, y, width, height, color)
+}
+
+public fn circle(x: i32, y: i32, radius: i32, color: str) i32 {
+    return draw_circle_native(x, y, radius, color)
+}
+
+public fn text(x: i32, y: i32, value: str, color: str, size: i32) i32 {
+    return draw_text_native(x, y, value, color, size)
+}
+
+public fn code_view(x: i32, y: i32, width: i32, height: i32, first_line: i32, line_height: i32, char_width: i32, size: i32, stamp: i32, lines: str) i32 {
+    return draw_code_view_native(x, y, width, height, first_line, line_height, char_width, size, stamp, lines)
+}
+
+public fn code_editor(x: i32, y: i32, width: i32, height: i32, first_line: i32, line_height: i32, char_width: i32, size: i32, stamp: i32, lines: str, selection_start_line: i32, selection_start_column: i32, selection_end_line: i32, selection_end_column: i32) i32 {
+    return draw_code_editor_native(x, y, width, height, first_line, line_height, char_width, size, stamp, lines, selection_start_line, selection_start_column, selection_end_line, selection_end_column)
+}
+
+public fn completion(x: i32, y: i32, width: i32, row_height: i32, size: i32, selected: i32, items: str) i32 {
+    return draw_completion_native(x, y, width, row_height, size, selected, items)
+}
+
+public fn event_kind(event: str) i32 {
+    return event_kind_native(event)
+}
+
+public fn event_x(event: str) i32 {
+    return event_x_native(event)
+}
+
+public fn event_y(event: str) i32 {
+    return event_y_native(event)
+}

@@ -1,0 +1,7 @@
+public fn is_null<T>(value: T | null) bool {
+    return value == null
+}
+
+public fn is_some<T>(value: T | null) bool {
+    return value != null
+}

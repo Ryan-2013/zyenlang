@@ -58,8 +58,8 @@ def project_version() -> str:
 
 def portable_name(version: str) -> str:
     parts = version.split(".")
-    if parts and parts[0] == "0":
-        parts = parts[1:]
+    if len(parts) == 3 and parts[0] == "0" and all(part.isdigit() for part in parts):
+        return f"zyv{int(parts[1])}{int(parts[2]):02d}"
     compact = "".join(re.sub(r"[^0-9A-Za-z]+", "", part) for part in parts)
     if not compact:
         raise SystemExit(f"cannot derive portable name from version: {version}")
@@ -181,6 +181,29 @@ def main() -> int:
     ]
     run(command)
     shutil.copytree(pyinstaller_dist / "zy", stage)
+
+    v2_command = [
+        sys.executable,
+        "-m",
+        "PyInstaller",
+        "--noconfirm",
+        "--clean",
+        "--onedir",
+        "--name",
+        "zy2",
+        "--distpath",
+        str(pyinstaller_dist),
+        "--workpath",
+        str(pyinstaller_build / "zy2"),
+        "--specpath",
+        str(pyinstaller_spec),
+        "--collect-data",
+        "zyenlang",
+        str(ROOT / "zy2.py"),
+    ]
+    run(v2_command)
+    shutil.copy2(pyinstaller_dist / "zy2" / ("zy2.exe" if sys.platform.startswith("win") else "zy2"), stage)
+    shutil.copytree(pyinstaller_dist / "zy2" / "_internal", stage / "_internal", dirs_exist_ok=True)
     shutil.copytree(zig_dir, stage / "toolchain")
     runtime = raylib_runtime()
     shutil.copy2(runtime, stage / runtime.name)
@@ -188,11 +211,22 @@ def main() -> int:
     write_path_helpers(stage)
 
     zy = stage / ("zy.exe" if sys.platform.startswith("win") else "zy")
+    zy2 = stage / ("zy2.exe" if sys.platform.startswith("win") else "zy2")
     gui_demo = stage / ("zytk-demo.exe" if sys.platform.startswith("win") else "zytk-demo")
     run([str(zy), "version"], cwd=stage)
     run([str(zy), "check", "examples/hello.zy"], cwd=stage)
     run([str(zy), "run", "examples/hello.zy"], cwd=stage)
     run([str(zy), "build", "apps/zytk_demo.zy", "--exe", str(gui_demo)], cwd=stage)
+    run([str(zy2), "--version"], cwd=stage)
+    run([str(zy2), "check", "examples/v2_language_tour.zy"], cwd=stage)
+    v2_demo = stage / ("zy2-language-tour.exe" if sys.platform.startswith("win") else "zy2-language-tour")
+    run([str(zy2), "build", "examples/v2_language_tour.zy", "-o", str(v2_demo), "--release"], cwd=stage)
+    for generated in (
+        stage / "apps/zytk_demo.c",
+        gui_demo.with_suffix(".pdb"),
+        v2_demo.with_suffix(".pdb"),
+    ):
+        generated.unlink(missing_ok=True)
     if sys.platform.startswith("win"):
         run([
             "powershell",

@@ -1,0 +1,7 @@
+public fn args() List<str> {
+    return GET_ARGS
+}
+
+public fn executable() str {
+    return GET_EXE
+}

@@ -1,17 +1,40 @@
 {
   "name": "zyenlang",
   "displayName": "ZyenLang",
-  "description": "Syntax highlighting, snippets, and editor support for ZyenLang .zy files.",
-  "version": "0.1.49",
+  "description": "Language support for ZyenLang: highlighting, completion, navigation, diagnostics, run, and build.",
+  "version": "0.2.0",
   "publisher": "zyenlang",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Ryan-2013/zyenlang.git"
+  },
   "engines": {
-    "vscode": "^1.75.0"
+    "vscode": "^1.85.0"
   },
   "categories": [
     "Programming Languages",
-    "Snippets"
+    "Snippets",
+    "Linters",
+    "Themes"
   ],
+  "activationEvents": [
+    "onLanguage:zyen",
+    "onCommand:zyenlang.check",
+    "onCommand:zyenlang.run",
+    "onCommand:zyenlang.build",
+    "onCommand:zyenlang.emitC"
+  ],
+  "main": "./extension.js",
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": "limited",
+      "description": "Editing and highlighting remain available. Compiler execution, diagnostics, Run, and Build require workspace trust.",
+      "restrictedConfigurations": [
+        "zyenlang.compilerPath"
+      ]
+    }
+  },
   "contributes": {
     "languages": [
       {
@@ -38,6 +61,96 @@
         "language": "zyen",
         "path": "./snippets/zyen.code-snippets"
       }
-    ]
+    ],
+    "themes": [
+      {
+        "label": "ZyenLang Ember",
+        "uiTheme": "vs-dark",
+        "path": "./themes/ZyenLang Ember-color-theme.json"
+      }
+    ],
+    "commands": [
+      {
+        "command": "zyenlang.check",
+        "title": "ZyenLang: Check Current File",
+        "icon": "$(check)"
+      },
+      {
+        "command": "zyenlang.run",
+        "title": "ZyenLang: Run Current File",
+        "icon": "$(play)"
+      },
+      {
+        "command": "zyenlang.build",
+        "title": "ZyenLang: Build Executable",
+        "icon": "$(tools)"
+      },
+      {
+        "command": "zyenlang.emitC",
+        "title": "ZyenLang: Emit C Source"
+      }
+    ],
+    "menus": {
+      "editor/title": [
+        {
+          "command": "zyenlang.run",
+          "when": "editorLangId == zyen",
+          "group": "navigation@1"
+        },
+        {
+          "command": "zyenlang.check",
+          "when": "editorLangId == zyen",
+          "group": "navigation@2"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "ZyenLang",
+      "properties": {
+        "zyenlang.compilerPath": {
+          "type": "string",
+          "default": "zy2",
+          "description": "Path to the zy2 compiler executable."
+        },
+        "zyenlang.diagnostics.enable": {
+          "type": "boolean",
+          "default": true,
+          "description": "Check ZyenLang files as you edit."
+        },
+        "zyenlang.diagnostics.delay": {
+          "type": "number",
+          "default": 300,
+          "minimum": 100,
+          "maximum": 5000,
+          "description": "Milliseconds to wait after editing before checking."
+        },
+        "zyenlang.diagnostics.timeout": {
+          "type": "number",
+          "default": 15000,
+          "minimum": 1000,
+          "maximum": 120000,
+          "description": "Maximum time in milliseconds for one live compiler check."
+        },
+        "zyenlang.diagnostics.maxFileSizeKb": {
+          "type": "number",
+          "default": 1024,
+          "minimum": 64,
+          "maximum": 16384,
+          "description": "Maximum document size checked automatically, in KiB."
+        },
+        "zyenlang.build.release": {
+          "type": "boolean",
+          "default": true,
+          "description": "Use release mode for Run and Build commands."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "test": "node test/language.test.js",
+    "package": "vsce package --no-dependencies"
+  },
+  "devDependencies": {
+    "@vscode/vsce": "3.9.2"
   }
 }

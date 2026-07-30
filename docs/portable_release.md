@@ -1,53 +1,57 @@
-# ZyenLang portable release
+# ZyenLang 0.2 release packages
 
-The platform archives contain everything needed to compile and run ZyenLang:
+Every platform archive contains both compiler commands:
 
-- a standalone `zy` CLI with its own Python runtime;
-- Zig 0.16.0 as the bundled C compiler;
-- raylib 6.0 for the cross-platform `std/tk` GUI backend;
-- examples, applications, language documentation, and a prebuilt GUI demo.
+- `zy2`: the ZyenLang 0.2 typed compiler;
+- `zy`: the legacy v0.1 compatibility compiler;
+- a pinned Zig 0.16.0 C toolchain;
+- standard libraries, examples, documentation, and GUI runtime.
 
-No Python installation, `pip`, GCC, or MSYS2 setup is required.
+No Python installation, `pip`, GCC, or MSYS2 is required. Archives extract to
+one `zyv200` directory and require roughly 400 MB of free disk space.
 
-The v0.1.83 downloads are named `zyv183-<platform>`. Every archive extracts
-to one `zyv183` folder. The `zy` executable lives directly in that folder, so
-you can either invoke it in place or add that folder to `PATH`. Allow roughly
-400 MB of free space while extracting the bundled toolchain.
+## Windows MSI
 
-## Windows
+`zyv200-windows-x64.msi` installs for the current user without administrator
+privileges. Files go to `%LOCALAPPDATA%\Programs\ZyenLang`; the installer adds
+that exact directory to the user PATH and removes it during uninstall.
+
+Open a new terminal after installation:
 
 ```powershell
-cd zyv183
-.\add-to-user-path.cmd
-.\zy.exe version
-.\zy.exe run examples\hello.zy
-.\zy.exe run examples\tk_portable_smoke.zy
-.\zytk-demo.exe
+zy2 --version
+zy2 run examples\v2_language_tour.zy
 ```
+
+The MSI is reproducibly generated from the already-tested portable directory.
+Release assets have SHA-256 checksums and GitHub provenance, but v0.2.0 is not
+Authenticode-signed.
+
+## Windows portable
+
+```powershell
+cd zyv200
+.\add-to-user-path.cmd
+.\zy2.exe --version
+.\zy2.exe run examples\v2_language_tour.zy
+```
+
+The helper changes only the current user's PATH. It supports a dry run through
+`add-to-user-path.ps1 -DryRun`.
 
 ## Linux and macOS
 
 ```bash
-cd zyv183
+cd zyv200
 ./add-to-user-path.sh
-./zy version
-./zy run examples/hello.zy
-./zy run examples/tk_portable_smoke.zy
-./zytk-demo
+./zy2 --version
+./zy2 run examples/v2_language_tour.zy
 ```
 
-Linux desktops still need the normal system OpenGL/X11 libraries supplied by
-the distribution. The portable archive does not install operating-system
-drivers or display servers.
+Linux still needs its normal system OpenGL/X11 libraries. The archive does not
+install display drivers or system packages.
 
-The helper scripts only add the extracted folder to the current user's PATH.
-They do not install Python, a compiler, or files into system directories. You
-can also configure PATH manually and skip the helper.
+## Compiler override
 
-## Optional system compiler
-
-The portable CLI uses its bundled Zig toolchain first. Set `ZY_CC` to override
-it, for example `ZY_CC="clang"` or `ZY_CC="gcc"`.
-
-Set `ZYENLANG_RAYLIB` only when testing a different raylib shared library. The
-bundled runtime is selected automatically in normal use.
+The portable v2 compiler selects bundled Zig first. Set `ZY2_CC` to override
+it, for example `ZY2_CC=clang`. The legacy compiler uses `ZY_CC`.

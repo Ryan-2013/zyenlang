@@ -5,9 +5,9 @@ from __future__ import annotations
 
 import argparse
 import hashlib
-import json
 import platform
 import shutil
+import stat
 import sys
 import tarfile
 import tempfile
@@ -16,7 +16,30 @@ import zipfile
 from pathlib import Path
 
 
-INDEX_URL = "https://ziglang.org/download/index.json"
+ZIG_RELEASES = {
+    "0.16.0": {
+        "x86_64-windows": (
+            "https://ziglang.org/download/0.16.0/zig-x86_64-windows-0.16.0.zip",
+            "68659eb5f1e4eb1437a722f1dd889c5a322c9954607f5edcf337bc3684a75a7e",
+        ),
+        "x86_64-linux": (
+            "https://ziglang.org/download/0.16.0/zig-x86_64-linux-0.16.0.tar.xz",
+            "70e49664a74374b48b51e6f3fdfbf437f6395d42509050588bd49abe52ba3d00",
+        ),
+        "aarch64-linux": (
+            "https://ziglang.org/download/0.16.0/zig-aarch64-linux-0.16.0.tar.xz",
+            "ea4b09bfb22ec6f6c6ceac57ab63efb6b46e17ab08d21f69f3a48b38e1534f17",
+        ),
+        "x86_64-macos": (
+            "https://ziglang.org/download/0.16.0/zig-x86_64-macos-0.16.0.tar.xz",
+            "0387557ed1877bc6a2e1802c8391953baddba76081876301c522f52977b52ba7",
+        ),
+        "aarch64-macos": (
+            "https://ziglang.org/download/0.16.0/zig-aarch64-macos-0.16.0.tar.xz",
+            "b23d70deaa879b5c2d486ed3316f7eaa53e84acf6fc9cc747de152450d401489",
+        ),
+    }
+}
 
 
 def target_key() -> str:
@@ -53,13 +76,27 @@ def safe_extract_tar(archive: Path, destination: Path) -> None:
             target = (destination / member.name).resolve()
             if root not in target.parents and target != root:
                 raise SystemExit(f"unsafe path in Zig archive: {member.name}")
+            if member.issym() or member.islnk() or not (member.isdir() or member.isfile()):
+                raise SystemExit(f"unsupported entry in Zig archive: {member.name}")
+        bundle.extractall(destination)
+
+
+def safe_extract_zip(archive: Path, destination: Path) -> None:
+    root = destination.resolve()
+    with zipfile.ZipFile(archive) as bundle:
+        for member in bundle.infolist():
+            target = (destination / member.filename).resolve()
+            if root not in target.parents and target != root:
+                raise SystemExit(f"unsafe path in Zig archive: {member.filename}")
+            mode = (member.external_attr >> 16) & 0o170000
+            if mode == stat.S_IFLNK:
+                raise SystemExit(f"unsupported symlink in Zig archive: {member.filename}")
         bundle.extractall(destination)
 
 
 def extract_archive(archive: Path, destination: Path) -> None:
     if archive.suffix.lower() == ".zip":
-        with zipfile.ZipFile(archive) as bundle:
-            bundle.extractall(destination)
+        safe_extract_zip(archive, destination)
     else:
         safe_extract_tar(archive, destination)
 
@@ -71,22 +108,20 @@ def main() -> int:
     parser.add_argument("--cache", type=Path, default=Path("dist/toolchain-cache"))
     args = parser.parse_args()
 
-    with urllib.request.urlopen(INDEX_URL, timeout=60) as response:
-        index = json.load(response)
-    release = index.get(args.version)
+    release = ZIG_RELEASES.get(args.version)
     if not release:
-        raise SystemExit(f"Zig {args.version} is not in {INDEX_URL}")
+        raise SystemExit(f"Zig {args.version} is not pinned in tools/fetch_zig.py")
     key = target_key()
     artifact = release.get(key)
     if not artifact:
         raise SystemExit(f"Zig {args.version} has no {key} artifact")
+    url, expected = artifact
 
     args.cache.mkdir(parents=True, exist_ok=True)
-    archive = args.cache / Path(artifact["tarball"]).name
-    expected = artifact["shasum"].lower()
+    archive = args.cache / Path(url).name
     if not archive.exists() or sha256(archive) != expected:
-        print(f"downloading {artifact['tarball']}")
-        with urllib.request.urlopen(artifact["tarball"], timeout=300) as response, archive.open("wb") as out:
+        print(f"downloading {url}")
+        with urllib.request.urlopen(url, timeout=300) as response, archive.open("wb") as out:
             shutil.copyfileobj(response, out)
     actual = sha256(archive)
     if actual != expected:

@@ -8,35 +8,61 @@ on:
   pull_request:
   workflow_dispatch:
 
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test:
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
         os: [windows-latest, ubuntu-24.04, macos-15]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          python-version: "3.12"
-      - name: Install
-        run: python -m pip install -e .
-      - name: Python tests
-        run: |
-          python tests/test_c_module_python.py
-          python tests/test_doctor_python.py
-          python tests/test_portable_python.py
-      - name: Language tests
-        run: |
-          zy run tests/fn_value_test.zy
-          zy run tests/fn_chain_test.zy
-          zy run tests/closure_test.zy
-          zy run tests/pointer_escape_test.zy
-          zy run tests/c_module_callback_test.zy
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.10"
+      - name: Install pinned test tools
+        run: python -m pip install --disable-pip-version-check pytest==8.4.2 setuptools==80.9.0 wheel==0.45.1
+      - name: Install ZyenLang
+        run: python -m pip install --disable-pip-version-check --no-build-isolation -e .
+      - name: Validate repository layout
+        run: python tools/check_layout.py
+      - name: Python and language tests
+        run: python -m pytest -q
       - name: Compile cross-platform GUI smoke
         shell: bash
         run: |
           suffix=""
           if [[ "$RUNNER_OS" == "Windows" ]]; then suffix=".exe"; fi
           zy build examples/tk_portable_smoke.zy --exe "gui-smoke${suffix}"
+
+  vscode:
+    timeout-minutes: 10
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: ide/vscode/zyenlang/package-lock.json
+      - name: Install locked extension tools
+        working-directory: ide/vscode/zyenlang
+        run: npm ci --ignore-scripts
+      - name: Test extension index and security policy
+        working-directory: ide/vscode/zyenlang
+        run: npm test
+      - name: Validate VSIX packaging
+        working-directory: ide/vscode/zyenlang
+        run: npx --no-install vsce ls --no-dependencies

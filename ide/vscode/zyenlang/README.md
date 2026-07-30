@@ -1,96 +1,54 @@
-# ZyenLang VS Code Extension v0.1.49
+# ZyenLang for Visual Studio Code
 
-This unpacked VS Code extension adds basic editor support for `.zy` files.
+The official editor extension for ZyenLang 0.2.
 
 ## Features
 
-- `.zy` file association
-- ZyenLang syntax highlighting
-- line comment support: `//`
-- bracket pairing and indentation
-- snippets for `fn`, `main`, `let`, `const`, `for`, `if`, `struct`, `import`, `pass`, `break`, `cmd.run`
+- ZyenLang 0.2 syntax highlighting and bracket-aware editing
+- completion for keywords, types, imports, symbols, struct members, and standard modules
+- hover signatures, parameter hints, Go to Definition, Find References, document outline, and workspace symbols
+- live `zy2 check` diagnostics for the current unsaved buffer
+- Run, Build Executable, and Emit C Source commands
+- optional **ZyenLang Ember** theme using `#20201F` with `#D97757` accents
 
-## Install manually
+The extension debounces checks while typing and cancels stale compiler processes.
+Compiler errors remain authoritative; the extension's lightweight index is only
+used for responsive navigation and completion.
 
-Copy this folder into your VS Code extensions folder:
+Compiler execution is disabled in untrusted workspaces. Run and Build use VS
+Code process tasks rather than shell command strings, and live checks enforce
+time, file-size, and output limits.
 
-Windows:
+## Requirements
 
-```text
-%USERPROFILE%\.vscode\extensions\zyenlang-vscode-0.1.49
-```
+Install ZyenLang and make sure `zy2 --version` works in a new terminal. If the
+compiler is elsewhere, set `zyenlang.compilerPath` to its executable path.
 
-macOS / Linux:
+## Commands
 
-```text
-~/.vscode/extensions/zyenlang-vscode-0.1.49
-```
+Open the Command Palette with `Ctrl+Shift+P`:
 
-Then restart VS Code.
+- `ZyenLang: Check Current File`
+- `ZyenLang: Run Current File`
+- `ZyenLang: Build Executable`
+- `ZyenLang: Emit C Source`
 
-## Install from the ZyenLang project root
+The editor title also shows Run and Check buttons for `.zy` files.
 
-From the ZyenLang project root, run:
+## Settings
 
-```bash
-python tools/install_vscode_extension.py
-```
+- `zyenlang.compilerPath`: compiler executable, default `zy2`
+- `zyenlang.diagnostics.enable`: live checking, default `true`
+- `zyenlang.diagnostics.delay`: typing debounce in milliseconds, default `300`
+- `zyenlang.diagnostics.timeout`: check timeout in milliseconds, default `15000`
+- `zyenlang.diagnostics.maxFileSizeKb`: live-check size limit, default `1024`
+- `zyenlang.build.release`: use release builds for Run and Build, default `true`
 
-Then restart VS Code.
+## Install a VSIX
 
-## v0.1.49
+In VS Code, choose **Extensions: Install from VSIX...** and select the packaged
+`zyenlang-vscode-0.2.0.vsix`, or run:
 
-`if` snippets now use `if (condition) {}` to match C-style `for`.
-
-## v0.1.49
-
-Adds local file namespace import highlighting and snippets:
-
-```zy
-import "list.zy" as list;
-list.say_hi();
-```
-
-
-## v0.1.49
-
-Adds `std/mem` snippets and highlighting for explicit memory-control workflows.
-
-```zy
-import <std/mem>;
-let p: ptr<int> = mem.alloc_int(0);
-set *p = 5;
-mem.free(p);
-```
-
-## v0.1.49
-
-Adds f-string highlighting/snippets and CLI performance monitor examples.
-
-```zy
-print(f"score={score}, ok={ok}");
-```
-
-
-## v0.1.49
-
-Adds highlighting/snippets for `std/fs`, `std/term`, and the Zy-written CLI IDE workflow.
-
-```zy
-import <std/term>;
-import <std/fs>;
-let file: str = term.input("file> ");
-print(fs.read(file));
-```
-
-
-## v0.1.49
-
-Adds `std/tk` snippets for Tk-like GUI/canvas experiments.
-
-```zy
-import <std/tk>;
-tk.open("Demo", 800, 480);
-tk.rect(40, 40, 120, 80, "#ff8800");
-tk.show();
+```powershell
+code --install-extension zyenlang-vscode-0.2.0.vsix --force
 ```

@@ -1,0 +1,9 @@
+import <std/thread> as thread
+
+fn main() i32 {
+    if thread.cpu_count() < 1 {
+        return 1
+    }
+    thread.yield_now()
+    return thread.sleep_ms(1)
+}

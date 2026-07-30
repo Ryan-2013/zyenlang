@@ -1,0 +1,13 @@
+fn add(a: int, b: int) -> int {
+    return a + b;
+}
+
+fn factory() -> fn(int,int)->int {
+    return add;
+}
+
+fn main() -> int {
+    let *factory_ptr: ptr<fn()->fn(int,int)->int> = factory;
+    print((str)(**factory_ptr)()(12, 10));
+    return 0;
+}

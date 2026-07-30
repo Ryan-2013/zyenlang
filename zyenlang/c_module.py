@@ -167,6 +167,25 @@ def read_template_header(path: Path) -> dict:
     }
     for macro, body in _macro_calls(text):
         args = _split_macro_args(body)
+        platform_macro = re.fullmatch(
+            r"ZLC_(HEADER|SOURCE|INCLUDE_DIR|LIB_DIR|LIB|CFLAG|LDFLAG)_(WINDOWS|LINUX|MACOS|UNIX)",
+            macro,
+        )
+        if platform_macro:
+            if len(args) != 1:
+                raise ValueError(f"{macro} expects 1 arg")
+            key_by_macro = {
+                "HEADER": "headers",
+                "SOURCE": "sources",
+                "INCLUDE_DIR": "include_dirs",
+                "LIB_DIR": "lib_dirs",
+                "LIB": "libs",
+                "CFLAG": "cflags",
+                "LDFLAG": "ldflags",
+            }
+            key = f"{key_by_macro[platform_macro.group(1)]}_{platform_macro.group(2).lower()}"
+            data.setdefault(key, []).append(_template_value(args[0]))
+            continue
         if macro == "ZLC_MODULE":
             if len(args) != 1:
                 raise ValueError("ZLC_MODULE expects 1 arg")

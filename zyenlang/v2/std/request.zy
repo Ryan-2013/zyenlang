@@ -1,0 +1,86 @@
+native source "request_native.c"
+native link windows "winhttp"
+native link linux "dl"
+
+private native fn perform(method: str, url: str, body: str, content_type: str, timeout_ms: i32) i32 = "zl_request_perform"
+private native fn response_status() i32 = "zl_request_status"
+private native fn response_body() str = "zl_request_body"
+private native fn response_error() str = "zl_request_error"
+private native fn save_body(path: str) i32 = "zl_request_save"
+
+public struct Response {
+    public status: i32
+    public body: str
+    public error: str
+}
+
+public fn (response: Response) ok() bool {
+    return response.error == "" && response.status >= 200 && response.status < 300
+}
+
+public fn send(method: str, url: str, body: str, content_type: str, timeout_ms: i32) Response {
+    let transport: i32 = perform(method, url, body, content_type, timeout_ms)
+    let status: i32 = response_status()
+    let data: str = response_body()
+    let message: str = response_error()
+    if transport != 0 {
+        return Response{status: status, body: data, error: message}
+    }
+    return Response{status: status, body: data, error: ""}
+}
+
+public fn get(url: str) Response {
+    return send("GET", url, "", "", 30000)
+}
+
+public fn get_with_timeout(url: str, timeout_ms: i32) Response {
+    return send("GET", url, "", "", timeout_ms)
+}
+
+public fn post(url: str, body: str) Response {
+    return send("POST", url, body, "text/plain; charset=utf-8", 30000)
+}
+
+public fn post_with_timeout(url: str, body: str, content_type: str, timeout_ms: i32) Response {
+    return send("POST", url, body, content_type, timeout_ms)
+}
+
+public fn post_json(url: str, json: str) Response {
+    return send("POST", url, json, "application/json", 30000)
+}
+
+public fn put(url: str, body: str) Response {
+    return send("PUT", url, body, "text/plain; charset=utf-8", 30000)
+}
+
+public fn put_with_timeout(url: str, body: str, content_type: str, timeout_ms: i32) Response {
+    return send("PUT", url, body, content_type, timeout_ms)
+}
+
+public fn delete(url: str) Response {
+    return send("DELETE", url, "", "", 30000)
+}
+
+public fn download(url: str, path: str) Response {
+    let response: Response = get(url)
+    if !response.ok() {
+        return response
+    }
+    let saved: i32 = save_body(path)
+    if saved != 0 {
+        return Response{status: response.status, body: "", error: "cannot save response body"}
+    }
+    return Response{status: response.status, body: "", error: ""}
+}
+
+public fn download_with_timeout(url: str, path: str, timeout_ms: i32) Response {
+    let response: Response = get_with_timeout(url, timeout_ms)
+    if !response.ok() {
+        return response
+    }
+    let saved: i32 = save_body(path)
+    if saved != 0 {
+        return Response{status: response.status, body: "", error: "cannot save response body"}
+    }
+    return Response{status: response.status, body: "", error: ""}
+}

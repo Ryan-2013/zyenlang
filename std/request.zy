@@ -1,0 +1,64 @@
+// Synchronous cross-platform HTTP requests backed by a normal c_module.
+import <std/c_module> as c_module;
+import <std/string>;
+
+struct Response {
+    let this.status: int = 0;
+    let this.body: str = "";
+    let this.error: str = "";
+
+    fn ok() -> bool {
+        return this.error == "" && this.status >= 200 && this.status < 300;
+    }
+}
+
+struct RequestNative {
+    let this.source: c_module.Module = c_module.load("request.zlcm.h");
+}
+
+fn send(method: str, url: str, body: str, content_type: str, timeout_ms: int) -> Response {
+    let native: RequestNative = RequestNative{};
+    let transport: int = native.source.perform(method, url, body, content_type, timeout_ms);
+    let status: int = native.source.status();
+    let raw_body: str = native.source.body();
+    let raw_error: str = native.source.error();
+    let body_copy: str = string.replace(raw_body, "", "");
+    let error_copy: str = string.replace(raw_error, "", "");
+    if (transport != 0 && error_copy == "") {
+        set error_copy = "request transport failed";
+    }
+    return Response{status: status, body: body_copy, error: error_copy};
+}
+
+fn get(url: str, timeout_ms: int = 30000) -> Response {
+    return send("GET", url, "", "", timeout_ms);
+}
+
+fn post(url: str, body: str, content_type: str = "text/plain; charset=utf-8", timeout_ms: int = 30000) -> Response {
+    return send("POST", url, body, content_type, timeout_ms);
+}
+
+fn post_json(url: str, json: str, timeout_ms: int = 30000) -> Response {
+    return send("POST", url, json, "application/json", timeout_ms);
+}
+
+fn put(url: str, body: str, content_type: str = "text/plain; charset=utf-8", timeout_ms: int = 30000) -> Response {
+    return send("PUT", url, body, content_type, timeout_ms);
+}
+
+fn delete(url: str, timeout_ms: int = 30000) -> Response {
+    return send("DELETE", url, "", "", timeout_ms);
+}
+
+fn download(url: str, path: str, timeout_ms: int = 30000) -> Response {
+    let response: Response = get(url, timeout_ms);
+    if (response.error != "" || response.status < 200 || response.status >= 300) {
+        return response;
+    }
+    let native: RequestNative = RequestNative{};
+    let saved: int = native.source.save(path);
+    if (saved != 0) {
+        return Response{status: response.status, body: "", error: "cannot save response body"};
+    }
+    return Response{status: response.status, body: "", error: ""};
+}

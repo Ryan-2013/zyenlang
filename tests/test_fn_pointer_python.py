@@ -44,13 +44,15 @@ def test_function_pointer_codegen_and_runtime() -> None:
 
     result = build_and_run("fn_pointer_test.zy")
     assert result.returncode == 0, result.stderr
-    assert "pass=11 fail=0" in result.stdout
+    assert "pass=12 fail=0" in result.stdout
 
 
 def test_function_pointer_diagnostics() -> None:
     expect_compile_error("fn_pointer_signature_error.zy", "function pointer signature mismatch")
     expect_compile_error("fn_pointer_cast_error.zy", "function pointer signatures must match exactly")
     expect_compile_error("fn_pointer_set_decl_error.zy", "`set` only assigns an existing variable")
+    expect_compile_error("fn_pointer_precedence_error.zy", "postfix call binds before `*`")
+    expect_compile_error("fn_pointer_double_deref_error.zy", "cannot dereference non-pointer expression")
 
 
 def test_function_pointer_runtime_guards() -> None:

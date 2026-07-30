@@ -537,8 +537,11 @@ fn add(a: int, b: int) -> int {
 
 let func_ptr: ptr<fn(int,int)->int> = &add;
 print(f"{(*func_ptr)(20, 22)}");
-print(f"{*func_ptr(20, 22)}"); // ZyenLang 簡寫，結果同上
 ```
+
+後綴 `()`、`.field`、`[]` 會先於前綴 `*`、`&`、cast 結合。因此函式指標
+固定寫成 `(*func_ptr)(args)`。`*func_ptr(args)` 代表 `*(func_ptr(args))`，會在
+編譯期被拒絕並提示補上括號。
 
 使用 `let *` 可以建立 ARC 管理的 owned function cell。若存入 closure，cell
 會 retain closure environment：
@@ -546,7 +549,7 @@ print(f"{*func_ptr(20, 22)}"); // ZyenLang 簡寫，結果同上
 ```zy
 let operation: fn(int,int)->int = make_operation();
 let *owned_ptr: ptr<fn(int,int)->int> = operation;
-print(f"{*owned_ptr(20, 22)}");
+print(f"{(*owned_ptr)(20, 22)}");
 ```
 
 函式指標可以隱式擦除成 `ptr<void>`，還原時需要顯式 cast：
@@ -554,8 +557,8 @@ print(f"{*owned_ptr(20, 22)}");
 ```zy
 let opaque: ptr<void> = func_ptr;
 let restored: ptr<fn(int,int)->int> = (ptr<fn(int,int)->int>)opaque;
-print(f"{*restored(12, 10)}");
-print(f"{*(ptr<fn(int,int)->int>)opaque(12, 10)}");
+print(f"{(*restored)(12, 10)}");
+print(f"{(*(ptr<fn(int,int)->int>)opaque)(12, 10)}");
 ```
 
 這裡是新宣告，所以使用 `let opaque: ptr<void> = func_ptr;`。`set` 只用來修改
@@ -666,6 +669,23 @@ print((str)(*alias));
 ```
 
 Alias 會 retain 同一 owner；最後一個引用離開後 payload 只釋放一次。
+
+Owned pointer 也能直接作為 struct field default：
+
+```zy
+struct Car {
+    let *this.value: ptr<int> = 0;
+}
+
+let car: Car = Car{};
+set *car.value = 10; // *(car.value)
+
+let *car_ptr: ptr<Car> = Car{};
+set *((*car_ptr).value) = 20;
+```
+
+每個 `Car{}` 都會配置自己的 `int` cell。struct 複製、回傳、覆寫與 scope exit
+沿用 managed struct 的 ARC 規則。巢狀 `ptr<ptr<T>>` default 會逐層配置。
 
 ### None pointer 的 lazy cell
 
@@ -914,6 +934,22 @@ ZLC_CFLAG("-DMY_FLAG")
 ZLC_LDFLAG("-mwindows")
 ```
 
+所有路徑、library 與 flag metadata 也能加上平台 suffix：
+
+```c
+ZLC_HEADER_WINDOWS("native_win.h")
+ZLC_SOURCE_LINUX("native_linux.c")
+ZLC_INCLUDE_DIR_MACOS("include/macos")
+ZLC_LIB_DIR_WINDOWS("lib/windows")
+ZLC_LIB_LINUX("dl")
+ZLC_CFLAG_MACOS("-DMAC_BACKEND")
+ZLC_LDFLAG_WINDOWS("-mwindows")
+```
+
+支援的 suffix 是 `_WINDOWS`、`_LINUX`、`_MACOS`、`_UNIX`。這些規則對
+標準庫與第三方套件完全相同；例如 `std/tk` 本身就是透過
+`c_module.load("tk.zlcm.h")` 接入 native raylib backend。
+
 Struct 與函式：
 
 ```c
@@ -1010,7 +1046,8 @@ ZL_ptr owned = zl_ptr_adopt(address, "NativeHandle", destroy_handle);
 目前發行包與開發測試以 Windows 為主：
 
 - Compiler/runtime：Windows tested。
-- `std/tk` 與目前 GUI：Windows only。
+- `std/tk` 與目前 GUI 使用 raylib native backend，支援 Windows、Linux、macOS；widget session 不使用 `.ztk` 檔案 I/O。
+- `std/request` 是普通 c_module；Windows 使用 WinHTTP，Linux/macOS 使用系統 libcurl。
 - `c_module` 產物能否跨平台取決於模板使用的 C library、flags 與相容層。
 - 未經 CI 驗證前不宣稱 Linux/macOS 完整支援。
 
@@ -1025,12 +1062,18 @@ tests/fn_chain_test.zy
 tests/closure_test.zy
 tests/ptr_void_test.zy
 tests/nested_ptr_init_test.zy
+tests/owned_struct_pointer_test.zy
+tests/fn_pointer_test.zy
 tests/c_module_facade_test.zy
 tests/c_module_callback_test.zy
+tests/request_test.zy
 ```
 
 深入 ABI 文件：
 
 - `docs/ZEP-0010-function-values.md`
 - `docs/ZEP-0013-closures.md`
+- `docs/ZEP-0015-function-pointers.md`
+- `docs/ZEP-0017-package-manager.md`
+- `docs/ZEP-0018-pointer-postfix-and-owned-fields.md`
 - `docs/arc_callback_abi.md`

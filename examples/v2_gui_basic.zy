@@ -1,0 +1,31 @@
+import <std/gui> as gui
+import <std/thread> as thread
+
+fn main() i32 {
+    let window = gui.window("ZyenLang 0.2", 800, 480)
+    if window.open() != 0 {
+        return 1
+    }
+    let running: bool = true
+    let frames: i32 = 0
+    while running {
+        if window.begin_frame() != 0 {
+            break
+        }
+        gui.text(40, 40, "Hello from ZyenLang 0.2", "#ffffff", 28)
+        gui.rect(40, 96, 240, 80, "#2f6fed")
+        if window.present() != 0 {
+            break
+        }
+        let event: str = window.next_event(0)
+        if event == "quit" {
+            running = false
+        }
+        frames = frames + 1
+        if frames >= 90 {
+            break
+        }
+        thread.sleep_ms(16)
+    }
+    return window.close()
+}

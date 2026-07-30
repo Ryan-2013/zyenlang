@@ -1,0 +1,7 @@
+public fn length<T>(values: List<T>) usize {
+    return values.len()
+}
+
+public fn is_empty<T>(values: List<T>) bool {
+    return values.len() == 0
+}

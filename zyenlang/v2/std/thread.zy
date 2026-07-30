@@ -1,0 +1,5 @@
+native source "thread_native.c"
+
+public native fn sleep_ms(milliseconds: i32) i32 = "zy2_thread_sleep_ms"
+public native fn yield_now() i32 = "zy2_thread_yield_now"
+public native fn cpu_count() i32 = "zy2_thread_cpu_count"

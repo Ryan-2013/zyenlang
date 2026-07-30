@@ -1,322 +1,139 @@
-# ZyenLang v0.1.83
+# ZyenLang 0.2.0
 
-**English** | [繁體中文](README.zh-TW.md)
+[繁體中文](README.zh-TW.md) | **English**
 
-> **Related repositories**
-> - **Specs & conventions (ZEPs)**: [zyenlang-zeps](https://github.com/Ryan-2013/zyenlang-zeps)
-> - **IDE (dogfood)**: [zyenlang-ide](https://github.com/Ryan-2013/zyenlang-ide)
+ZyenLang is a compact, statically checked language that compiles to C. Its
+design goal is to build structured programs from a small language surface:
+values, structs, and functions.
 
-ZyenLang is an experimental C-like programming language with Python-like
-tooling. `.zy` source is transpiled to C, then compiled with Zig, gcc, or
-clang.
+Version 0.2 introduces a new lexer, parser, typed AST/IR, semantic checker,
+module loader, and C backend. The new compiler is invoked with `zy2`. The
+`zy` command remains available for v0.1 source compatibility.
 
-Current language syntax, ARC pointer rules, function values, closures, and the
-native C bridge are collected in the
-[Traditional Chinese syntax reference](docs/current_syntax_zh_TW.md).
+## Download
 
-Aimed at robotics, computer vision, control systems, embedded-style
-experiments, and small engine prototyping.
+The [GitHub Releases](https://github.com/Ryan-2013/zyenlang/releases) page
+provides:
 
-## Portable download
+- `zyv200-windows-x64.msi`: per-user Windows installer with PATH setup;
+- `zyv200-windows-x64.zip`: portable Windows package;
+- `zyv200-linux-x64.tar.gz` and `zyv200-linux-arm64.tar.gz`;
+- `zyv200-macos-x64.tar.gz` and `zyv200-macos-arm64.tar.gz`;
+- `zyenlang-vscode-0.2.0.vsix`: VS Code completion, navigation, diagnostics,
+  Run, Build, and the optional ZyenLang Ember theme;
+- Python wheel and source archive.
 
-The GitHub release provides ready-to-run archives for Windows, Linux, and
-macOS. They contain the standalone `zy` CLI, Zig C toolchain, cross-platform
-raylib GUI runtime, examples, docs, and a prebuilt GUI demo. Python, `pip`, and
-a separate C compiler are not required.
+Portable packages and the MSI include the compiler runtime and a pinned Zig
+0.16.0 C toolchain. Python, `pip`, GCC, and MSYS2 are not required.
 
-For v0.1.83, download the `zyv183` archive for your platform. The extracted
-folder is also named `zyv183`, and the `zy` executable is directly in that
-folder. On Windows, double-click `add-to-user-path.cmd` for one-click setup;
-Linux and macOS users can run `add-to-user-path.sh` once.
-
-```powershell
-# Windows, after extracting the archive
-cd zyv183
-.\add-to-user-path.cmd
-.\zy.exe run examples\hello.zy
-.\zy.exe run examples\tk_portable_smoke.zy
-```
-
-```bash
-# Linux / macOS, after extracting the archive
-cd zyv183
-./add-to-user-path.sh
-./zy run examples/hello.zy
-./zy run examples/tk_portable_smoke.zy
-```
-
-See [the portable release guide](docs/portable_release.md).
-
-## Source install
-
-```powershell
-cd <repo-root>
-python tools\check_layout.py
-python -m pip uninstall zyenlang -y
-python -m pip install -e .
-python tools\install_vscode_extension.py
-```
-
-## CLI
-
-```powershell
-zy check main.zy             # parse + type-check only
-zy run main.zy               # transpile, compile, execute
-zy build main.zy -o main.c   # emit C
-zy build main.zy -o main.exe # emit .exe
-zy c-module gen native.zlcm.h # optional offline wrapper export
-```
+The MSI installs for the current user under
+`%LOCALAPPDATA%\Programs\ZyenLang`, updates only the user PATH, and removes its
+PATH entry on uninstall. Release assets include SHA-256 checksums and GitHub
+artifact provenance. The v0.2.0 MSI is not yet Authenticode-signed.
 
 ## Hello world
 
 ```zy
-fn add(a: int, b: int) -> int {
-    return a + b;
+import <std/io> as io
+
+struct Counter {
+    public value: i32 = 0
 }
 
-fn main() -> int {
-    let x: int = 10;
-    let y: int = 20;
-    print((str)add(x, y));
-    return 0;
+public fn (counter: Counter) add(amount: i32) i32 {
+    return counter.value + amount
 }
-```
 
-## Language surface (v0.1.83)
-
-- **Variables**: `let a = v;`, `let a: T = v;`, `const a = v;`
-- **Mutation requires `set`**: `set a = v;`, `set a += v;`, `set *p = v;`
-- **Control flow**: `if (...) {}`, `else { ... }`, `for (init; cond; step) {}`, infinite loop `for (;;) {}`. There is no `while`.
-- **Functions**: `fn name(args) -> T { ... }`. Calls support positional args, named args such as `add(b: 10, a: 5)`, trailing default params, first-class `fn(...) -> T` values, and managed `ptr<fn(...)>` function-cell pointers. Any fn-typed expression can be called, including `pick("sub")(10, 3)`.
-- **Structs**: `struct S { let this.field: T; fn method() -> T { ... } }`
-- **Structural List calls**: structs stored in one local List can share a method by matching its name and exact signature; no interface declaration is required.
-- **Types**: `int`, `float`, `bool`, `str`, `List`, `ptr<T>`, `ptr<void>`, `fn(...) -> T`, `ptr<fn(...)>`, struct types, `void`, `None`. (`Any` is internal to `List`.)
-- **Printing**: `print(expr)` accepts only `str`. Convert explicitly with `print((str)value)` or use an f-string.
-- **f-strings**: `f"i={i}"` always has type `str`; interpolation formats supported values automatically.
-- **Imports**: `import <std/math>;`, `import <std/math> as m;`, `import "lib.zy" as lib;`. Relative paths are resolved against the importing file's folder.
-- **Qualified types**: `let car: test.Car = test.Car { model: "Honda" };` — imported user structs live in the global namespace, the alias is just stripped.
-- **Multi-line statements**: function signatures, calls, `if` conditions, `for` headers, and list literals can span lines inside their `(...)`, `[...]`, `{...}` delimiters.
-
-## File-scope rules
-
-Only `import`, `struct`, and `fn` are allowed at file scope. There is no
-top-level `let` or `const`. If you need a constant, expose it as a zero-arg
-function:
-
-```zy
-fn max_pwm() -> int {
-    return 1000;
-}
-```
-
-## Mutation
-
-```zy
-let x: int = 1;
-set x += 1;     // OK
-set x = x + 1;  // OK
-
-x += 1;         // ERROR — every mutation needs `set`
-```
-
-## Function values and closures
-
-Function values have one representation for named functions, nested-function
-closures, struct fields, and native callbacks. They may be passed, returned,
-stored, set to `None`, and called through any fn-typed expression:
-
-```zy
-let result: int = pick("sub")(10, 3);
-let callback: fn(int)->int = make_adder(5);
-set callback = None;
-```
-
-The chained part of a function-value call uses positional arguments because a
-function type contains types, not parameter names. Calling `None` reports a
-runtime error instead of jumping through a null C pointer. Closures are created
-by nested named functions and capture a read-only snapshot; there is no
-anonymous lambda syntax.
-
-## Function-cell pointers
-
-`ptr<fn(P...)->R>` points to a checked `ZL_Function` memory cell. Taking the
-address of a top-level function borrows its compiler-emitted static cell;
-`let *` creates an ARC-owned cell that can retain a closure:
-
-```zy
-let pointer: ptr<fn(int,int)->int> = &add;
-print(f"{(*pointer)(20, 22)}");
-print(f"{*pointer(20, 22)}");
-
-let opaque: ptr<void> = pointer;
-print(f"{*(ptr<fn(int,int)->int>)opaque(12, 10)}");
-```
-
-Calls validate pointer state, the runtime cell tag, and the exact function
-signature before dispatch. Different function-pointer signatures cannot be
-cast into one another.
-
-## Managed pointers
-
-Owned `ptr<T>` and closure environments use compiler-inserted atomic ARC.
-Copies retain their owner, assignments release the previous value, and normal,
-`return`, `break`, and `continue` exits release managed locals. Parameters are
-borrowed and managed return values transfer ownership. ARC does not collect
-cycles.
-
-`ptr<T>` converts implicitly to `ptr<void>`. Converting back, or converting
-between concrete pointer types, requires an explicit cast. `ptr<void>` cannot
-be dereferenced until cast. `mem.free` remains available for forced disposal;
-all aliases then observe `Freed`.
-
-`let *name: ptr<T> = value;` allocates an owned cell. Nested pointer types may
-be initialized from their final scalar value; the compiler allocates every
-layer and ARC releases the complete chain:
-
-```zy
-let *value: ptr<int> = 10;
-let *chain: ptr<ptr<int>> = 10;
-let inner = *chain;
-print((str)(*inner)); // 10
-```
-
-An existing pointer can initialize the nested cell as well. Prefer fully typed
-forms such as `ptr<ptr<int>>`; `ptr<ptr>` loses the innermost static type.
-
-## Structural List dispatch
-
-User-defined structs can be stored directly in a heterogeneous `List`. A call
-through `get()` or `pop()` is valid when every inferred element struct provides
-the same method with the same parameter, return, and default declarations:
-
-```zy
-struct Dog {
-    fn bark() -> void {
-        print("dog");
+fn main() i32 {
+    let counter: Counter = Counter{value: 40}
+    let answer: i32 = counter.add(2)
+    if answer == 42 {
+        io.print("hello from ZyenLang 0.2")
     }
-}
-
-struct Cat {
-    fn bark() -> void {
-        print("cat");
-    }
-}
-
-fn main() -> int {
-    let animals: List = [Dog {}, Cat {}];
-    for (let i = 0; i < animals.len(); set i += 1) {
-        animals.get(i).bark();
-    }
-    return 0;
+    return 0
 }
 ```
 
-The compiler keeps the possible element types as hidden metadata; there is no
-public interface, trait, union, or `Any` syntax. Structural calls use positional
-arguments because parameter names are not part of the shared shape. If a List
-crosses an erased `List` boundary, dispatch checks the boxed struct type at
-runtime and reports a clear error for an incompatible value.
+```powershell
+zy2 check main.zy
+zy2 run main.zy
+zy2 build main.zy -o main.exe --release
+zy2 build main.zy -o main.c
+```
 
-List struct values are value copies stored in ARC boxes. `get()` borrows the
-box, `set()` and `clear()` release removed boxes, and `pop()` transfers the
-box reference. Cast a dynamic value back to its exact struct type when needed,
-for example `let dog: Dog = (Dog)animals.pop();`.
+## Language
+
+ZyenLang 0.2 currently provides:
+
+- fixed-width integers, floats, `bool`, `str`, and explicit types;
+- inferred or typed `let` declarations with newline-terminated statements;
+- structs with defaults, public/private fields, and receiver methods;
+- tuple returns and typed destructuring;
+- generic functions and strongly typed `List<T>` values;
+- `T | null` optionals and `if let` unwrapping;
+- `throws Error`, `stop`, `catch`, and `recover`;
+- `while`, assignment, `break`, and `continue`;
+- linear `Task<T>` values with `spawn` and exactly-once `await`;
+- `typeof value Type` compile-time checks;
+- standard and relative modules plus checked native C declarations.
+
+See [the v0.2 architecture](docs/v2_architecture.md),
+[standard library guide](docs/v2_stdlib.md), and
+[language tour](examples/v2_language_tour.zy).
 
 ## Standard library
 
-### Round 3: collections
-`std/list`, `std/stack`, `std/queue`, `std/map`, `std/set`
-
-### Round 2: tooling
-`std/path`, `std/text`, `std/log`, `std/test`, `std/config`, `std/csv`
-
-### Core / runtime
-`std/string`, `std/char`, `std/fs`, `std/cmd`, `std/term`, `std/time`,
-`std/math`, `std/mem`, `std/ptr`, `std/random`, `std/stats`, `std/c_module`
-
-### Domain modules
-`std/tk` (Tk-like GUI bridge), `std/cv`, `std/gpu`, `std/units`,
-`std/filter`, `std/trajectory`, `std/robot`, `std/pid`, `std/motor`,
-`std/control`, `std/thread`, `std/coroutine`, `std/geometry`,
-`std/buffer`, `std/bit`, `std/range`, `std/ease`, `std/check`
-
-## Native C modules
-
-Native C modules are compiler intrinsics. Import `std/c_module`, then directly
-initialize a dependent field or local value from a small `.zlcm.h` template:
+The v0.2 standard library includes typed list/error/option helpers, process
+arguments, OS threads, HTTP client and server modules, and a cross-platform GUI
+backend. Every module uses the same import mechanism as third-party modules.
 
 ```zy
-import <std/c_module> as c_module;
+import <std/request> as request
+import <std/io> as io
 
-fn main() -> int {
-    let math: c_module.Module = c_module.load("native_math.zlcm.h");
-    print((str)(math.add(20, 22)));
-    return 0;
+fn main() i32 {
+    let response: request.Response = request.get("https://example.com")
+    if response.ok() {
+        io.print(response.body)
+    }
+    return 0
 }
 ```
 
-The compiler creates a hidden typed wrapper in memory and automatically links
-the template's C headers, sources, libraries, and flags. Normal `zy check`,
-`zy run`, and `zy build` do not generate a `.zy` wrapper or invoke a Python
-helper. Templates may expose `ZL_List`/`ZL_list`, `ZL_ptr`/`ZL_ptr<T>`,
-`fn(...) -> T`, and value structs declared with `ZLC_STRUCT` plus `ZLC_FIELD`.
-Their stable ABI v3 layouts come from `zyenlang_c_abi.h`, which native builds
-include automatically. C code receives callbacks as `ZL_Function`; use
-`zl_fn_assign` when saving one and `zl_fn_clear` when replacing or unregistering
-it. `zy c-module gen` remains only for optional offline inspection/export.
+## VS Code
 
-```zy
-import <std/stack>;
-import <std/map>;
+Install `zyenlang-vscode-0.2.0.vsix` with **Extensions: Install from
+VSIX...**. The extension does not execute compiler commands in untrusted
+workspaces. Live checks are debounced, cancellable, size-limited, output-limited,
+and time-limited; Run and Build use VS Code process tasks instead of shell
+command strings.
 
-fn main() -> int {
-    let s: Stack = stack.new();
-    s.push_str("first");
-    print((str)(s.pop_str()));
-
-    let m: StringMap = map.new();
-    m.put("name", "ZyenLang");
-    print((str)(m.get("name", "none")));
-    return 0;
-}
-```
-
-## Examples and tests
+## Source install
 
 ```powershell
-zy run examples\add.zy
-zy run examples\pointer_function_tutorial.zy
-zy run tests\text_test.zy
+git clone https://github.com/Ryan-2013/zyenlang.git
+cd zyenlang
+python -m pip install -e .
+zy2 --version
+python -m pytest -q
 ```
 
-The Traditional Chinese [pointer and function-value video tutorial](docs/tutorial_pointer_function_video_zh_TW.md)
-is both a runnable lesson and a ready-to-record script.
+## Security boundary
 
-- `examples/` — 92 single-file demos
-- `tests/` — 43 test suites
-- `apps/` — full programs (`apps/zyide.zy`, `apps/zyide_gui.zy`, `apps/zytk_demo.zy`)
+`zy2 check` parses and type-checks code but does not compile or execute native
+C. `zy2 build` and `zy2 run` intentionally compile `native source` declarations,
+so treat an unfamiliar ZyenLang project like an unfamiliar C project and
+review it before building. Module depth, module count, source size, archive
+extraction, native symbol names, and linker library names are validated.
 
-## Layout
+ZyenLang remains an experimental language. ARC does not make borrowed native
+resources or external C libraries memory-safe, and the project does not claim
+Rust-equivalent safety.
 
-```
-zyenlang/             # Python transpiler + installed std
-zyenlang/std/         # canonical stdlib (loaded by `import <std/...>`)
-std/                  # source-tree mirror of stdlib (browse-friendly)
-examples/             # 92 .zy demos
-tests/                # 43 test suites
-docs/                 # specs and notes
-apps/                 # full programs
-tools/                # install / repair scripts
-ide/                  # VSCode + Zed editor configs
-```
+## Compatibility
 
-## Status
+Existing v0.1 programs continue to use `zy`. Their syntax reference and ZEPs
+remain in [docs/current_syntax_zh_TW.md](docs/current_syntax_zh_TW.md) and the
+[ZyenLang ZEP repository](https://github.com/Ryan-2013/zyenlang-zeps).
 
-v0.1.50 is the first cross-platform portable release. The surface (syntax +
-stdlib API) is intentionally small and **locked** — there are no plans to add lambdas,
-spread / destructuring, `**kwargs`, comprehensions, or other JS / Python-
-style sugar. Effort goes into fixing rough edges, not adding surface area.
-
-## License
-
-MIT. See [`LICENSE`](LICENSE).
+License: MIT.

@@ -3,56 +3,27 @@
   "name": "ZyenLang",
   "scopeName": "source.zyen",
   "patterns": [
-    {
-      "include": "#comments"
-    },
-    {
-      "include": "#strings"
-    },
-    {
-      "include": "#imports"
-    },
-    {
-      "include": "#functions"
-    },
-    {
-      "include": "#structs"
-    },
-    {
-      "include": "#keywords"
-    },
-    {
-      "include": "#casts"
-    },
-    {
-      "include": "#types"
-    },
-    {
-      "include": "#constants"
-    },
-    {
-      "include": "#numbers"
-    },
-    {
-      "include": "#namespacedCalls"
-    },
-    {
-      "include": "#thisSelf"
-    },
-    {
-      "include": "#functionCalls"
-    },
-    {
-      "include": "#operators"
-    }
+    { "include": "#comments" },
+    { "include": "#strings" },
+    { "include": "#nativeDirectives" },
+    { "include": "#imports" },
+    { "include": "#structs" },
+    { "include": "#methods" },
+    { "include": "#functions" },
+    { "include": "#fields" },
+    { "include": "#variables" },
+    { "include": "#keywords" },
+    { "include": "#types" },
+    { "include": "#constants" },
+    { "include": "#numbers" },
+    { "include": "#members" },
+    { "include": "#calls" },
+    { "include": "#operators" }
   ],
   "repository": {
     "comments": {
       "patterns": [
-        {
-          "name": "comment.line.double-slash.zyen",
-          "match": "//.*$"
-        }
+        { "name": "comment.line.double-slash.zyen", "match": "//.*$" }
       ]
     },
     "strings": {
@@ -60,38 +31,24 @@
         {
           "name": "string.interpolated.zyen",
           "begin": "f\"",
+          "beginCaptures": { "0": { "name": "punctuation.definition.string.begin.zyen" } },
           "end": "\"",
+          "endCaptures": { "0": { "name": "punctuation.definition.string.end.zyen" } },
           "patterns": [
-            {
-              "name": "constant.character.escape.zyen",
-              "match": "\\\\(\\\\|\"|n|r|t|0|\\{|\\})"
-            },
+            { "name": "constant.character.escape.zyen", "match": "\\\\(\\\\|\"|n|r|t|0|\\{|\\})" },
             {
               "name": "meta.interpolation.zyen",
               "begin": "\\{",
+              "beginCaptures": { "0": { "name": "punctuation.section.interpolation.begin.zyen" } },
               "end": "\\}",
+              "endCaptures": { "0": { "name": "punctuation.section.interpolation.end.zyen" } },
               "patterns": [
-                {
-                  "include": "#keywords"
-                },
-                {
-                  "include": "#casts"
-                },
-                {
-                  "include": "#types"
-                },
-                {
-                  "include": "#constants"
-                },
-                {
-                  "include": "#numbers"
-                },
-                {
-                  "include": "#functionCalls"
-                },
-                {
-                  "include": "#operators"
-                }
+                { "include": "#types" },
+                { "include": "#constants" },
+                { "include": "#numbers" },
+                { "include": "#members" },
+                { "include": "#calls" },
+                { "include": "#operators" }
               ]
             }
           ]
@@ -99,13 +56,35 @@
         {
           "name": "string.quoted.double.zyen",
           "begin": "\"",
+          "beginCaptures": { "0": { "name": "punctuation.definition.string.begin.zyen" } },
           "end": "\"",
+          "endCaptures": { "0": { "name": "punctuation.definition.string.end.zyen" } },
           "patterns": [
-            {
-              "name": "constant.character.escape.zyen",
-              "match": "\\\\(\\\\|\"|n|r|t|0)"
-            }
+            { "name": "constant.character.escape.zyen", "match": "\\\\(\\\\|\"|n|r|t|0)" }
           ]
+        }
+      ]
+    },
+    "nativeDirectives": {
+      "patterns": [
+        {
+          "name": "meta.native.source.zyen",
+          "match": "\\b(native)\\s+(source)\\s+(\"[^\"]+\")",
+          "captures": {
+            "1": { "name": "storage.modifier.native.zyen" },
+            "2": { "name": "keyword.other.directive.zyen" },
+            "3": { "name": "string.quoted.double.zyen" }
+          }
+        },
+        {
+          "name": "meta.native.link.zyen",
+          "match": "\\b(native)\\s+(link)\\s+(windows|linux|macos)\\s+(\"[^\"]+\")",
+          "captures": {
+            "1": { "name": "storage.modifier.native.zyen" },
+            "2": { "name": "keyword.other.directive.zyen" },
+            "3": { "name": "constant.language.platform.zyen" },
+            "4": { "name": "string.quoted.double.zyen" }
+          }
         }
       ]
     },
@@ -113,39 +92,12 @@
       "patterns": [
         {
           "name": "meta.import.zyen",
-          "match": "\\b(import)\\s+(<[^>]+>|\"[^\"]+\")\\s*(?:(as)\\s+([A-Za-z_]\\w*))?\\s*;",
+          "match": "\\b(import)\\s+(<[^>]+>|\"[^\"]+\")\\s*(?:(as)\\s+([A-Za-z_]\\w*))?",
           "captures": {
-            "1": {
-              "name": "keyword.control.import.zyen"
-            },
-            "2": {
-              "name": "string.unquoted.import-path.zyen"
-            },
-            "3": {
-              "name": "keyword.control.as.zyen"
-            },
-            "4": {
-              "name": "entity.name.namespace.zyen"
-            }
-          }
-        }
-      ]
-    },
-    "functions": {
-      "patterns": [
-        {
-          "name": "meta.function.definition.zyen",
-          "match": "\\b(fn)\\s+([A-Za-z_]\\w*)\\s*(\\()",
-          "captures": {
-            "1": {
-              "name": "keyword.declaration.function.zyen"
-            },
-            "2": {
-              "name": "entity.name.function.zyen"
-            },
-            "3": {
-              "name": "punctuation.definition.parameters.begin.zyen"
-            }
+            "1": { "name": "keyword.control.import.zyen" },
+            "2": { "name": "string.unquoted.import-path.zyen" },
+            "3": { "name": "keyword.control.as.zyen" },
+            "4": { "name": "entity.name.namespace.zyen" }
           }
         }
       ]
@@ -154,139 +106,121 @@
       "patterns": [
         {
           "name": "meta.struct.definition.zyen",
-          "match": "\\b(struct)\\s+([A-Za-z_]\\w*)",
+          "match": "\\b(?:(public|private)\\s+)?(struct)\\s+([A-Za-z_]\\w*)",
           "captures": {
-            "1": {
-              "name": "storage.type.struct.zyen"
-            },
-            "2": {
-              "name": "entity.name.type.struct.zyen"
-            }
+            "1": { "name": "storage.modifier.visibility.zyen" },
+            "2": { "name": "storage.type.struct.zyen" },
+            "3": { "name": "entity.name.type.struct.zyen" }
+          }
+        }
+      ]
+    },
+    "methods": {
+      "patterns": [
+        {
+          "name": "meta.function.method.definition.zyen",
+          "match": "\\b(?:(public|private)\\s+)?(fn)\\s+(\\()\\s*([A-Za-z_]\\w*)\\s*(:)\\s*([^\\)]+)(\\))\\s*([A-Za-z_]\\w*)\\s*(?=\\()",
+          "captures": {
+            "1": { "name": "storage.modifier.visibility.zyen" },
+            "2": { "name": "keyword.declaration.function.zyen" },
+            "3": { "name": "punctuation.definition.parameters.begin.zyen" },
+            "4": { "name": "variable.parameter.receiver.zyen" },
+            "5": { "name": "punctuation.separator.type.zyen" },
+            "6": { "name": "entity.name.type.zyen" },
+            "7": { "name": "punctuation.definition.parameters.end.zyen" },
+            "8": { "name": "entity.name.function.method.zyen" }
+          }
+        }
+      ]
+    },
+    "functions": {
+      "patterns": [
+        {
+          "name": "meta.function.definition.zyen",
+          "match": "\\b(?:(public|private)\\s+)?(?:(native)\\s+)?(fn)\\s+([A-Za-z_]\\w*)\\s*(?=\\()",
+          "captures": {
+            "1": { "name": "storage.modifier.visibility.zyen" },
+            "2": { "name": "storage.modifier.native.zyen" },
+            "3": { "name": "keyword.declaration.function.zyen" },
+            "4": { "name": "entity.name.function.zyen" }
+          }
+        }
+      ]
+    },
+    "fields": {
+      "patterns": [
+        {
+          "name": "meta.field.declaration.zyen",
+          "match": "^\\s*(?:(public|private)\\s+)?([A-Za-z_]\\w*)\\s*(:)\\s*([A-Za-z_][A-Za-z0-9_<>| ,()]*)",
+          "captures": {
+            "1": { "name": "storage.modifier.visibility.zyen" },
+            "2": { "name": "variable.other.member.zyen" },
+            "3": { "name": "punctuation.separator.type.zyen" },
+            "4": { "name": "entity.name.type.zyen" }
+          }
+        }
+      ]
+    },
+    "variables": {
+      "patterns": [
+        {
+          "name": "meta.variable.declaration.zyen",
+          "match": "\\b(let)\\s+([A-Za-z_]\\w*)",
+          "captures": {
+            "1": { "name": "storage.type.variable.zyen" },
+            "2": { "name": "variable.other.definition.zyen" }
           }
         }
       ]
     },
     "keywords": {
       "patterns": [
-        {
-          "name": "keyword.control.zyen",
-          "match": "\\b(if|else|for|return|break|pass|stop)\\b"
-        },
-        {
-          "name": "storage.modifier.zyen",
-          "match": "\\b(let|const|set)\\b"
-        },
-        {
-          "name": "keyword.operator.arrow.zyen",
-          "match": "->"
-        }
-      ]
-    },
-    "casts": {
-      "patterns": [
-        {
-          "name": "meta.cast.zyen",
-          "match": "\\(\\s*(int|float|bool|str|ptr)\\s*\\)",
-          "captures": {
-            "1": {
-              "name": "storage.type.cast.zyen"
-            }
-          }
-        }
+        { "name": "keyword.control.zyen", "match": "\\b(if|else|while|return|break|continue|stop|recover|catch|throws|spawn|await)\\b" },
+        { "name": "keyword.declaration.zyen", "match": "\\b(let|fn|struct|import|as|native|source)\\b" },
+        { "name": "storage.modifier.mutable.zyen", "match": "\\bmut\\b" },
+        { "name": "storage.modifier.zyen", "match": "\\b(public|private)\\b" },
+        { "name": "keyword.operator.typeof.zyen", "match": "\\btypeof\\b" }
       ]
     },
     "types": {
       "patterns": [
-        {
-          "name": "storage.type.primitive.zyen",
-          "match": "\\b(int|float|bool|str|ptr|void|List)\\b"
-        },
-        {
-          "name": "storage.type.pointer.zyen",
-          "match": "\\bptr\\s*<\\s*[A-Za-z_]\\w*\\s*>"
-        }
+        { "name": "storage.type.primitive.zyen", "match": "\\b(i8|i16|i32|i64|u8|u16|u32|u64|isize|usize|f32|f64|bool|str|void|Error)\\b" },
+        { "name": "storage.type.generic.zyen", "match": "\\b(List|Task|Box|Ref|Raw|Channel)\\b(?=\\s*<)" }
       ]
     },
     "constants": {
       "patterns": [
-        {
-          "name": "constant.language.boolean.zyen",
-          "match": "\\b(true|false|None)\\b"
-        }
+        { "name": "constant.language.boolean.zyen", "match": "\\b(true|false)\\b" },
+        { "name": "constant.language.null.zyen", "match": "\\bnull\\b" },
+        { "name": "constant.language.process.zyen", "match": "\\b(GET_ARGS|GET_EXE)\\b" }
       ]
     },
     "numbers": {
       "patterns": [
+        { "name": "constant.numeric.hex.zyen", "match": "\\b0x[0-9A-Fa-f](?:_?[0-9A-Fa-f])*\\b" },
+        { "name": "constant.numeric.binary.zyen", "match": "\\b0b[01](?:_?[01])*\\b" },
+        { "name": "constant.numeric.float.zyen", "match": "\\b[0-9](?:_?[0-9])*\\.[0-9](?:_?[0-9])*(?:[eE][+-]?[0-9]+)?\\b" },
+        { "name": "constant.numeric.integer.zyen", "match": "\\b[0-9](?:_?[0-9])*\\b" }
+      ]
+    },
+    "members": {
+      "patterns": [
         {
-          "name": "constant.numeric.float.zyen",
-          "match": "\\b[0-9]+\\.[0-9]+\\b"
-        },
-        {
-          "name": "constant.numeric.integer.zyen",
-          "match": "\\b[0-9]+\\b"
+          "name": "meta.member.access.zyen",
+          "match": "\\.\\s*([A-Za-z_]\\w*)",
+          "captures": { "1": { "name": "variable.other.member.zyen" } }
         }
       ]
     },
-    "namespacedCalls": {
+    "calls": {
       "patterns": [
-        {
-          "name": "meta.function-call.namespaced.zyen",
-          "match": "\\b([A-Za-z_]\\w*)\\.([A-Za-z_]\\w*)\\s*(?=\\()",
-          "captures": {
-            "1": {
-              "name": "entity.name.namespace.zyen"
-            },
-            "2": {
-              "name": "entity.name.function.zyen"
-            }
-          }
-        }
-      ]
-    },
-    "functionCalls": {
-      "patterns": [
-        {
-          "name": "support.function.builtin.zyen",
-          "match": "\\b(print)\\s*(?=\\()"
-        },
-        {
-          "name": "entity.name.function.call.zyen",
-          "match": "\\b([A-Za-z_]\\w*)\\s*(?=\\()"
-        }
+        { "name": "support.function.runtime.zyen", "match": "\\b(__runtime_[A-Za-z_]\\w*)\\s*(?=\\()" },
+        { "name": "entity.name.function.call.zyen", "match": "\\b([A-Za-z_]\\w*)\\s*(?=\\()" }
       ]
     },
     "operators": {
       "patterns": [
-        {
-          "name": "keyword.operator.zyen",
-          "match": "(==|!=|<=|>=|\\+\\+|--|\\+=|-=|\\*=|/=|&&|\\|\\||[+\\-*/%<>=!&|*])"
-        }
-      ]
-    },
-    "thisSelf": {
-      "patterns": [
-        {
-          "name": "variable.language.this.zyen",
-          "match": "\\bthis\\b"
-        },
-        {
-          "name": "meta.struct.field.declaration.zyen",
-          "match": "\\b(let)\\s+(this)\\.([A-Za-z_]\\w*)\\s*(:)",
-          "captures": {
-            "1": {
-              "name": "storage.modifier.zyen"
-            },
-            "2": {
-              "name": "variable.language.this.zyen"
-            },
-            "3": {
-              "name": "variable.other.member.zyen"
-            },
-            "4": {
-              "name": "punctuation.separator.type.zyen"
-            }
-          }
-        }
+        { "name": "keyword.operator.zyen", "match": "(->|==|!=|<=|>=|&&|\\|\\||[+\\-*/%<>=!|])" }
       ]
     }
   }

@@ -32,6 +32,7 @@ enum {
     ZLTK_COMMAND_CODEVIEW_TEXT = 2,
     ZLTK_EVENT_CAPACITY = 2048,
     ZLTK_IMAGE_CAPACITY = 64,
+    ZLTK_FONT_CAPACITY = 64,
     ZLTK_KEY_ESCAPE = 256,
     ZLTK_KEY_ENTER = 257,
     ZLTK_KEY_TAB = 258,
@@ -83,6 +84,15 @@ typedef struct {
 } Zltk_Texture;
 
 typedef struct {
+    int baseSize;
+    int glyphCount;
+    int glyphPadding;
+    Zltk_Texture texture;
+    Zltk_Rectangle* recs;
+    void* glyphs;
+} Zltk_Font;
+
+typedef struct {
     void (*SetConfigFlags)(unsigned int flags);
     void (*SetTraceLogLevel)(int level);
     void (*InitWindow)(int width, int height, const char* title);
@@ -101,6 +111,11 @@ typedef struct {
     void (*DrawCircleLines)(int x, int y, float radius, Zltk_Color color);
     void (*DrawText)(const char* text, int x, int y, int size, Zltk_Color color);
     int (*MeasureText)(const char* text, int size);
+    Zltk_Font (*LoadFontEx)(const char* path, int font_size, int* codepoints, int codepoint_count);
+    bool (*IsFontValid)(Zltk_Font font);
+    void (*UnloadFont)(Zltk_Font font);
+    void (*DrawTextEx)(Zltk_Font font, const char* text, Zltk_Vector2 position, float font_size, float spacing, Zltk_Color tint);
+    Zltk_Vector2 (*MeasureTextEx)(Zltk_Font font, const char* text, float font_size, float spacing);
     Zltk_Texture (*LoadTexture)(const char* path);
     bool (*IsTextureValid)(Zltk_Texture texture);
     void (*UnloadTexture)(Zltk_Texture texture);
@@ -145,6 +160,13 @@ typedef struct {
 } Zltk_Image;
 
 typedef struct {
+    char path[ZLTK_PATH_CAPACITY];
+    int base_size;
+    int valid;
+    Zltk_Font font;
+} Zltk_FontEntry;
+
+typedef struct {
     char script_path[ZLTK_PATH_CAPACITY];
     int is_session;
     int window_open;
@@ -158,6 +180,8 @@ typedef struct {
     int event_count;
     Zltk_Image images[ZLTK_IMAGE_CAPACITY];
     int image_count;
+    Zltk_FontEntry fonts[ZLTK_FONT_CAPACITY];
+    int font_count;
     Zltk_Vector2 last_mouse;
     double last_motion_time;
     double last_drag_time;
@@ -337,6 +361,11 @@ static int zltk_load_raylib(void) {
     ZLTK_LOAD(DrawCircleLines);
     ZLTK_LOAD(DrawText);
     ZLTK_LOAD(MeasureText);
+    ZLTK_LOAD(LoadFontEx);
+    ZLTK_LOAD(IsFontValid);
+    ZLTK_LOAD(UnloadFont);
+    ZLTK_LOAD(DrawTextEx);
+    ZLTK_LOAD(MeasureTextEx);
     ZLTK_LOAD(LoadTexture);
     ZLTK_LOAD(IsTextureValid);
     ZLTK_LOAD(UnloadTexture);
@@ -463,6 +492,44 @@ static void zltk_images_clear(void) {
     g_zltk.image_count = 0;
 }
 
+static Zltk_Font* zltk_font_resource(const char* path, int base_size) {
+    if (!path || !path[0]) return NULL;
+    if (base_size <= 0) base_size = 32;
+    for (int i = 0; i < g_zltk.font_count; i++) {
+        Zltk_FontEntry* entry = &g_zltk.fonts[i];
+        if (entry->base_size == base_size && strcmp(entry->path, path) == 0) return entry->valid ? &entry->font : NULL;
+    }
+    if (g_zltk.font_count >= ZLTK_FONT_CAPACITY) return NULL;
+    Zltk_FontEntry* entry = &g_zltk.fonts[g_zltk.font_count++];
+    memset(entry, 0, sizeof(*entry));
+    strncpy(entry->path, path, sizeof(entry->path) - 1);
+    entry->base_size = base_size;
+    entry->font = g_rl.LoadFontEx(path, base_size, NULL, 0);
+    entry->valid = g_rl.IsFontValid(entry->font) ? 1 : 0;
+    return entry->valid ? &entry->font : NULL;
+}
+
+static void zltk_fonts_clear(void) {
+    if (g_rl.UnloadFont) {
+        for (int i = 0; i < g_zltk.font_count; i++) {
+            if (g_zltk.fonts[i].valid) g_rl.UnloadFont(g_zltk.fonts[i].font);
+        }
+    }
+    memset(g_zltk.fonts, 0, sizeof(g_zltk.fonts));
+    g_zltk.font_count = 0;
+}
+
+static void zltk_draw_font_text(const char* path, int base_size, int x, int y, const char* text, const char* color, int size) {
+    Zltk_Color tint = zltk_color(color, zltk_rgba(255, 255, 255, 255));
+    Zltk_Font* font = zltk_font_resource(path, base_size);
+    if (font) {
+        Zltk_Vector2 position = { (float)x, (float)y };
+        g_rl.DrawTextEx(*font, text ? text : "", position, (float)(size > 0 ? size : 16), 0.0f, tint);
+    } else {
+        g_rl.DrawText(text ? text : "", x, y, size > 0 ? size : 16, tint);
+    }
+}
+
 static void zltk_draw_code_lines(int x, int y, int height, int line_height, int size, const char* text) {
     if (!text) return;
     int row_height = line_height > 0 ? line_height : 20;
@@ -527,6 +594,8 @@ static void zltk_draw_raw_command(char* line) {
         for (int i = 0; i < width; i++) g_rl.DrawCircleLines(zltk_to_int(columns[1], 0), zltk_to_int(columns[2], 0), radius - (float)i, zltk_color(columns[4], white));
     } else if (strcmp(operation, "text") == 0 && count >= 6) {
         g_rl.DrawText(columns[3], zltk_to_int(columns[1], 0), zltk_to_int(columns[2], 0), zltk_to_int(columns[5], 16), zltk_color(columns[4], white));
+    } else if (strcmp(operation, "font_text") == 0 && count >= 8) {
+        zltk_draw_font_text(columns[1], zltk_to_int(columns[2], 32), zltk_to_int(columns[3], 0), zltk_to_int(columns[4], 0), columns[5], columns[6], zltk_to_int(columns[7], 16));
     } else if (strcmp(operation, "codeview") == 0) {
         zltk_draw_codeview_file(columns, count);
     } else if (strcmp(operation, "image") == 0 && count >= 4) {
@@ -709,6 +778,7 @@ static int zltk_open_window(const char* title, int width, int height) {
 static void zltk_close_window(void) {
     if (!g_zltk.window_open) return;
     zltk_images_clear();
+    zltk_fonts_clear();
     g_rl.CloseWindow();
     g_zltk.window_open = 0;
     g_zltk.closed = 1;
@@ -843,6 +913,28 @@ int zl_tk_text(int x, int y, const char* text, const char* color, int size) {
     return zltk_append_raw(line);
 }
 
+int zl_tk_font_text(const char* font_path, int base_size, int x, int y, const char* text, const char* color, int size) {
+    char clean_path[ZLTK_PATH_CAPACITY];
+    char clean_text[1024];
+    char clean_color[256];
+    char line[ZLTK_PATH_CAPACITY + 1600];
+    zltk_clean_copy(clean_path, sizeof(clean_path), font_path);
+    zltk_clean_copy(clean_text, sizeof(clean_text), text);
+    zltk_clean_copy(clean_color, sizeof(clean_color), color);
+    snprintf(line, sizeof(line), "font_text\t%s\t%d\t%d\t%d\t%s\t%s\t%d", clean_path, base_size, x, y, clean_text, clean_color, size);
+    return zltk_append_raw(line);
+}
+
+int zl_tk_font_text_width(const char* font_path, int base_size, const char* text, int size) {
+    const char* value = text ? text : "";
+    int font_size = size > 0 ? size : 16;
+    if (!g_zltk.window_open) return (int)strlen(value) * font_size / 2;
+    Zltk_Font* font = zltk_font_resource(font_path, base_size);
+    if (!font) return g_rl.MeasureText(value, font_size);
+    Zltk_Vector2 measured = g_rl.MeasureTextEx(*font, value, (float)font_size, 0.0f);
+    return (int)(measured.x + 0.5f);
+}
+
 int zl_tk_codeview(int x, int y, int width, int height, int first_line, int line_height, int char_width, int size, int stamp, const char* lines_path) {
     char clean[1024];
     char line[2200];
@@ -942,6 +1034,12 @@ int zl_tk_session_redraw(void) {
     return g_zltk.closed ? -2 : 0;
 }
 
+int zl_tk_session_set_fps(int fps) {
+    if (!g_zltk.is_session || !g_zltk.window_open) return -1;
+    g_rl.SetTargetFPS(fps > 0 ? fps : 0);
+    return 0;
+}
+
 const char* zl_tk_session_next_event(int timeout_ms) {
     static char buffers[16][512];
     static int index = 0;
@@ -1002,4 +1100,44 @@ int zl_tk_session_char_w(void) {
 
 int zl_tk_session_line_h(void) {
     return 20;
+}
+
+int zl_tk_event_kind(const char* event) {
+    if (!event) return 0;
+    if (strncmp(event, "mouse\t", 6) == 0 || strncmp(event, "ctrl_mouse\t", 11) == 0) return 1;
+    if (strncmp(event, "release\t", 8) == 0) return 2;
+    if (strncmp(event, "motion\t", 7) == 0) return 3;
+    if (strncmp(event, "drag\t", 5) == 0) return 4;
+    if (strncmp(event, "wheel\t", 6) == 0) return 5;
+    return 0;
+}
+
+static void zltk_event_coordinates(const char* event, int* x, int* y) {
+    *x = 0;
+    *y = 0;
+    int kind = zl_tk_event_kind(event);
+    if (kind == 0 || !event) return;
+    const char* payload = strchr(event, '\t');
+    if (!payload) return;
+    payload++;
+    if (kind == 5) {
+        int wheel = 0;
+        (void)sscanf(payload, "%d\t%d\t%d", &wheel, x, y);
+    } else {
+        (void)sscanf(payload, "%d\t%d", x, y);
+    }
+}
+
+int zl_tk_event_x(const char* event) {
+    int x = 0;
+    int y = 0;
+    zltk_event_coordinates(event, &x, &y);
+    return x;
+}
+
+int zl_tk_event_y(const char* event) {
+    int x = 0;
+    int y = 0;
+    zltk_event_coordinates(event, &x, &y);
+    return y;
 }

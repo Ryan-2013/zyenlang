@@ -1,0 +1,9 @@
+import <std/request> as request
+
+fn main() i32 {
+    let response: request.Response = request.get("http://127.0.0.1:18765/")
+    if response.ok() && response.status == 200 && response.body == "hello from request fixture" {
+        return 0
+    }
+    return 1
+}

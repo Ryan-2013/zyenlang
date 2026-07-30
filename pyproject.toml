@@ -1,28 +1,37 @@
 [build-system]
-requires = ["setuptools>=68"]
+requires = ["setuptools==80.9.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "zyenlang"
-version = "0.1.83"
+version = "0.2.0"
 description = "ZyenLang: a concise C-like language transpiled to C"
 readme = "README.md"
 requires-python = ">=3.10"
-license = {text = "MIT"}
+license = "MIT"
+license-files = ["LICENSE"]
 authors = [{name = "ZyenLang"}]
 
 [project.scripts]
 zy = "zyenlang.transpiler:main"
 zyen = "zyenlang.transpiler:main"
+zyenv = "zyenlang.cli.zyenv:main"
+zy2 = "zyenlang.v2.__main__:main"
 
-[tool.setuptools]
-packages = ["zyenlang", "zyenlang.cli"]
+[tool.setuptools.packages.find]
+include = ["zyenlang*"]
+namespaces = true
 
 [tool.setuptools.package-data]
 zyenlang = [
     "std/*.zy",
     "std/*.c",
     "std/*.h",
+    "v2/std/*.zy",
+    "v2/std/*.md",
+    "v2/std/*.c",
+    "v2/std/*.h",
+    "v2/runtime/*.h",
     "vendor/raylib/LICENSE",
     "vendor/raylib/README.md",
     "vendor/raylib/VERSION",

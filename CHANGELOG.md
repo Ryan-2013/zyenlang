@@ -1,5 +1,64 @@
 # Changelog
 
+## Unreleased
+
+No changes yet.
+
+## v0.2.0 - 2026-07-30
+
+### Added
+
+- New `zy2` compiler frontend, typed IR, semantic checker, C backend, and
+  explicit LLVM backend boundary.
+- Fixed-width types, receiver methods, tuples, generics, typed Lists,
+  optionals, structured errors, tasks, `typeof`, modules, and native C
+  declarations.
+- Cross-platform v2 process, thread, request, server, GUI, and editor modules.
+- Full VS Code extension with completion, navigation, diagnostics, Run, Build,
+  C emission, snippets, and the ZyenLang Ember theme.
+- Per-user Windows MSI with bundled Zig, automatic PATH setup, clean uninstall,
+  deterministic components, and major-upgrade metadata.
+
+- High-level `std/tk` `FONT`, `Window`, `Text`, `Button`, and `Renderer`
+  structs over the cross-platform native raylib session.
+- ARC-safe `fn()->void` button callbacks, mouse hit testing, custom font
+  loading and caching, target FPS control, and allocation-free event parsing.
+- List literals inside struct fields, enabling concise retained UI trees such
+  as `Renderer { children: [heading, button] }`.
+- Platform-specific `.zlcm.h` metadata macros for Windows, Linux, macOS, and
+  Unix native headers, sources, include/library paths, libraries, and flags.
+- `let *this.field: ptr<T> = value;` owned struct-field defaults with recursive
+  ARC allocation for nested pointer targets.
+- `std/request`, an ordinary c_module-based synchronous HTTP client using
+  WinHTTP on Windows and system libcurl on Linux/macOS.
+- ZEP-0017 package-manager plan and ZEP-0018 pointer precedence specification.
+
+### Security
+
+- Restricted compiler execution in untrusted VS Code workspaces and replaced
+  shell command strings with process tasks.
+- Added diagnostic timeout, input-size, and output-size limits.
+- Added source, import-depth, module-count, and graph-expansion limits.
+- Rejected archive traversal, symlinks, and unsupported archive entries.
+- Pinned Zig downloads, checksums, GitHub Actions commits, and build tool
+  versions; release artifacts now receive GitHub provenance attestations.
+
+### Changed
+
+- `std/tk` now imports `std/c_module` and loads `tk.zlcm.h` like an ordinary
+  third-party package. The compiler no longer hard-codes `zl_tk_*` prototypes
+  or native source metadata.
+- Pointer field, index, and call postfix operations now bind before prefix
+  dereference, address-of, and casts. Function pointers use the single
+  unambiguous `(*pointer)(args)` spelling.
+
+### Fixed
+
+- Module namespace expansion no longer renames a struct method declaration
+  that shares a name with a top-level module function.
+- Parenthesized dereferenced struct receivers preserve their type through
+  field access and method calls, including `(*car_ptr).field`.
+
 ## v0.1.83 - 2026-07-18
 
 ### Added

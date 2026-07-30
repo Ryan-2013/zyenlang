@@ -12,6 +12,9 @@
 # Native sources that are part of the runtime and c_module fixtures.
 !std/tk_native.c
 !zyenlang/std/tk_native.c
+!std/request_native.c
+!zyenlang/std/request_native.c
+!zyenlang/v2/std/*.c
 !tests/native_abi.c
 !tests/native_callback.c
 !tests/native_math.c
@@ -20,6 +23,7 @@
 
 # Python package artefacts
 __pycache__/
+node_modules/
 *.pyc
 *.pyo
 *.pyd
@@ -28,6 +32,7 @@ build/
 dist/
 .portable/
 *.whl
+*.vsix
 
 # IDE session state / transient files
 ide_session/

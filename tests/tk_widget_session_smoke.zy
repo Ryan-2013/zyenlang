@@ -1,0 +1,18 @@
+import <std/tk>;
+
+fn main() -> int {
+    let window: tk.Window = tk.Window { title: "Zyen widget smoke", width: 360, height: 200, fps: 60 };
+    let label: tk.Text = tk.Text { text: "native widget frame", x: 24, y: 28 };
+    let button: tk.Button = tk.Button { text: "ready", x: 24, y: 82, width: 120 };
+    let ui: tk.Renderer = tk.Renderer { window: window, children: [label, button] };
+    let result: int = ui.open();
+    if (result != 0) {
+        return result;
+    }
+    for (let frame_i: int = 0; frame_i < 3; set frame_i += 1) {
+        if (!ui.frame()) {
+            break;
+        }
+    }
+    return ui.close();
+}

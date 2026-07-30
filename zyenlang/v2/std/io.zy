@@ -1,0 +1,7 @@
+public fn print(value: str) {
+    __runtime_write_line(value)
+}
+
+public fn eprint(value: str) {
+    __runtime_write_error(value)
+}

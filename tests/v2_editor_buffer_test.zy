@@ -1,0 +1,61 @@
+import <std/editor> as editor
+
+fn main() i32 {
+    if editor.open("editor-buffer-output.zy") != 0 {
+        return 1
+    }
+
+    editor.handle("keychar\tabcdef")
+    editor.handle("mouse\t88\t60")
+    editor.handle("drag\t118\t60")
+    editor.handle("release\t118\t60")
+    if editor.has_selection() == 0 || editor.selection_start_column() != 1 || editor.selection_end_column() != 4 {
+        editor.dispose()
+        return 2
+    }
+    editor.handle("keychar\tX")
+    if editor.text() != "aXef" || editor.has_selection() != 0 {
+        editor.dispose()
+        return 3
+    }
+
+    if editor.open("editor-buffer-output.zy") != 0 {
+        editor.dispose()
+        return 4
+    }
+    editor.handle("keychar\tfn calculate() i32 {")
+    editor.handle("key\tReturn")
+    editor.handle("key\tTab")
+    editor.handle("keychar\tret")
+    if editor.completion_count() == 0 {
+        editor.dispose()
+        return 5
+    }
+    editor.handle("key\tTab")
+    editor.handle("keychar\t 42")
+    editor.handle("key\tReturn")
+    editor.handle("keychar\t}")
+    editor.handle("key\tReturn")
+    editor.handle("keychar\tcal")
+    if editor.completion_text() != "calculate" {
+        editor.dispose()
+        return 6
+    }
+    editor.handle("key\tTab")
+    if editor.text() != "fn calculate() i32 {\n    return 42\n}\ncalculate" {
+        editor.dispose()
+        return 7
+    }
+    if editor.save() != 0 {
+        editor.dispose()
+        return 8
+    }
+
+    editor.handle("pickfile\tpicked-input.zy")
+    if editor.text() != "fn picked() i32 { return 9 }" {
+        editor.dispose()
+        return 9
+    }
+    editor.dispose()
+    return 0
+}

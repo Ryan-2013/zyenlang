@@ -13,11 +13,11 @@ let pointer: ptr<fn(int,int)->int> = &add;
 
 print((str)(value(20, 22)));
 print(f"{(*pointer)(20, 22)}");
-print(f"{*pointer(20, 22)}");
 ```
 
-The last two calls are equivalent. The short form is intentional ZyenLang
-syntax; it does not use C's postfix-before-unary precedence.
+Postfix operations bind before prefix operations. Calling a function pointer
+therefore requires `(*pointer)(args)`. The removed `*pointer(args)` spelling is
+parsed as `*(pointer(args))` and receives a migration diagnostic.
 
 ## Storage and ownership
 
@@ -49,10 +49,10 @@ explicit cast:
 let pointer: ptr<fn(int,int)->int> = &add;
 let opaque: ptr<void> = pointer;
 let restored: ptr<fn(int,int)->int> = (ptr<fn(int,int)->int>)opaque;
-print(f"{*restored(12, 10)}");
+print(f"{(*restored)(12, 10)}");
 
 // Equivalent immediate form.
-print(f"{*(ptr<fn(int,int)->int>)opaque(12, 10)}");
+print(f"{(*(ptr<fn(int,int)->int>)opaque)(12, 10)}");
 ```
 
 The cast preserves the address, owner, ownership state, and runtime type tag.

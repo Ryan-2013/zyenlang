@@ -626,7 +626,7 @@ static int zltk_keyword(const char* word) {
     static const char* words[] = {
         "as", "await", "break", "catch", "continue", "else", "false", "fn", "for",
         "if", "import", "let", "native", "null", "private", "public", "recover",
-        "return", "spawn", "stop", "struct", "throws", "true", "typeof", "while"
+        "return", "spawn", "stop", "struct", "throws", "true", "TYPEOF__", "while"
     };
     for (size_t index = 0; index < sizeof(words) / sizeof(words[0]); index++) {
         if (strcmp(word, words[index]) == 0) return 1;

@@ -10,6 +10,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 
@@ -219,6 +220,9 @@ def main() -> int:
     run([str(zy), "build", "apps/zytk_demo.zy", "--exe", str(gui_demo)], cwd=stage)
     run([str(zy2), "--version"], cwd=stage)
     run([str(zy2), "check", "examples/v2_language_tour.zy"], cwd=stage)
+    with tempfile.TemporaryDirectory() as package_smoke:
+        run([str(zy), "pkg", "--project", package_smoke, "init", "--name", "portable-smoke"], cwd=stage)
+        run([str(zy2), "pkg", "--project", package_smoke, "install", "--locked"], cwd=stage)
     v2_demo = stage / ("zy2-language-tour.exe" if sys.platform.startswith("win") else "zy2-language-tour")
     run([str(zy2), "build", "examples/v2_language_tour.zy", "-o", str(v2_demo), "--release"], cwd=stage)
     for generated in (

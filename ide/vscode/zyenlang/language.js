@@ -3,7 +3,7 @@
 const KEYWORDS = [
   'as', 'await', 'break', 'catch', 'continue', 'else', 'false', 'fn', 'if',
   'import', 'let', 'mut', 'native', 'null', 'private', 'public', 'recover', 'return',
-  'source', 'spawn', 'stop', 'struct', 'throws', 'true', 'typeof', 'while'
+  'source', 'spawn', 'stop', 'struct', 'throws', 'true', 'TYPEOF__', 'while'
 ];
 
 const TYPES = [
@@ -12,7 +12,7 @@ const TYPES = [
   'u64', 'usize', 'void'
 ];
 
-const SPECIAL_VALUES = ['GET_ARGS', 'GET_EXE'];
+const SPECIAL_VALUES = ['GET_ARGS__', 'GET_EXE__'];
 
 const BUILTINS = {
   io: [

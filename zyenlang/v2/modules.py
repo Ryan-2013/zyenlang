@@ -5,6 +5,14 @@ from pathlib import Path
 
 from . import ast
 from .diagnostics import CompileError
+from .package_manager import (
+    LockFile,
+    MANIFEST_NAME,
+    PackageError,
+    find_project_root,
+    load_manifest,
+    locked_packages_for_project,
+)
 from .parser import parse
 
 
@@ -19,9 +27,13 @@ class ModuleLoader:
         self.std_root = Path(__file__).resolve().parent / "std"
         self._unique_modules: set[Path] = set()
         self._module_expansions = 0
+        self.project_root: Path | None = None
+        self.package_lock: LockFile | None = None
+        self.package_roots: dict[str, Path] = {}
 
     def load(self, root: Path, source_override: str | None = None) -> ast.Program:
         root = root.resolve()
+        self.project_root = find_project_root(root, required=False)
         self._account_module(root, 0)
         if source_override is not None and len(source_override.encode("utf-8")) > MAX_SOURCE_BYTES:
             raise CompileError(f"source exceeds the {MAX_SOURCE_BYTES}-byte safety limit", source_name=str(root))
@@ -67,18 +79,81 @@ class ModuleLoader:
             )
 
     def resolve(self, parent: Path, item: ast.ImportDef) -> Path:
-        if item.is_std:
+        if item.is_angle:
             parts = item.path.split("/")
-            if not parts or parts[0] != "std" or len(parts) < 2:
-                raise CompileError("standard imports must use `<std/module>`", item.span)
-            relative = Path(*parts[1:]).with_suffix(".zy")
-            resolved = (self.std_root / relative).resolve()
-            if self.std_root.resolve() not in resolved.parents:
-                raise CompileError("standard import escapes the v2 std root", item.span)
-            return resolved
+            if parts and parts[0] == "std":
+                if len(parts) < 2:
+                    raise CompileError("standard imports must use `<std/module>`", item.span)
+                relative = Path(*parts[1:]).with_suffix(".zy")
+                resolved = (self.std_root / relative).resolve()
+                if self.std_root.resolve() not in resolved.parents:
+                    raise CompileError("standard import escapes the v2 std root", item.span)
+                return resolved
+            return self.resolve_package(parent, parts, item)
         resolved = (parent.parent / item.path).resolve()
         if resolved.suffix == "":
             resolved = resolved.with_suffix(".zy")
+        package_root = self.containing_package(parent)
+        if package_root is not None and package_root != resolved and package_root not in resolved.parents:
+            raise CompileError("relative import escapes the package root", item.span)
+        return resolved
+
+    def load_package_state(self, span) -> None:
+        if self.package_lock is not None:
+            return
+        if self.project_root is None:
+            raise CompileError(
+                f"package imports require a {MANIFEST_NAME} project and zy.lock",
+                span,
+            )
+        try:
+            self.package_lock, self.package_roots = locked_packages_for_project(self.project_root)
+        except PackageError as exc:
+            raise CompileError(str(exc), span) from exc
+
+    def containing_package(self, path: Path) -> Path | None:
+        resolved = path.resolve()
+        for root in self.package_roots.values():
+            if resolved == root or root in resolved.parents:
+                return root
+        return None
+
+    def resolve_package(self, parent: Path, parts: list[str], item: ast.ImportDef) -> Path:
+        if not parts or not parts[0]:
+            raise CompileError("package imports require a package name", item.span)
+        self.load_package_state(item.span)
+        assert self.package_lock is not None
+        package_name = parts[0]
+        records = self.package_lock.by_name()
+        owner_name = next(
+            (
+                name
+                for name, root in self.package_roots.items()
+                if parent.resolve() == root or root in parent.resolve().parents
+            ),
+            None,
+        )
+        allowed = (
+            set(self.package_lock.root_dependencies)
+            if owner_name is None
+            else set(records[owner_name].dependencies)
+        )
+        if package_name not in allowed:
+            owner = "root project" if owner_name is None else f"package `{owner_name}`"
+            raise CompileError(f"package `{package_name}` is not a declared dependency of the {owner}", item.span)
+        package_root = self.package_roots.get(package_name)
+        if package_root is None:
+            raise CompileError(f"package `{package_name}` is missing from zy.lock", item.span)
+        try:
+            if len(parts) == 1:
+                relative = Path(*load_manifest(package_root).entry.split("/"))
+            else:
+                relative = Path("src", *parts[1:]).with_suffix(".zy")
+        except PackageError as exc:
+            raise CompileError(str(exc), item.span) from exc
+        resolved = (package_root / relative).resolve()
+        if resolved != package_root and package_root not in resolved.parents:
+            raise CompileError("package import escapes the package root", item.span)
         return resolved
 
     def load_namespaced(self, path: Path, namespace: str, stack: list[Path]) -> list[ast.Definition]:

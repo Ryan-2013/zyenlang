@@ -179,7 +179,7 @@
         { "name": "keyword.declaration.zyen", "match": "\\b(let|fn|struct|import|as|native|source)\\b" },
         { "name": "storage.modifier.mutable.zyen", "match": "\\bmut\\b" },
         { "name": "storage.modifier.zyen", "match": "\\b(public|private)\\b" },
-        { "name": "keyword.operator.typeof.zyen", "match": "\\btypeof\\b" }
+        { "name": "keyword.operator.typeof.zyen", "match": "\\bTYPEOF__\\b" }
       ]
     },
     "types": {
@@ -192,7 +192,7 @@
       "patterns": [
         { "name": "constant.language.boolean.zyen", "match": "\\b(true|false)\\b" },
         { "name": "constant.language.null.zyen", "match": "\\bnull\\b" },
-        { "name": "constant.language.process.zyen", "match": "\\b(GET_ARGS|GET_EXE)\\b" }
+        { "name": "constant.language.process.zyen", "match": "\\b(GET_ARGS__|GET_EXE__)\\b" }
       ]
     },
     "numbers": {

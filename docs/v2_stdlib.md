@@ -11,7 +11,7 @@ let args: List<str> = process.args()
 let executable: str = process.executable()
 ```
 
-The direct special values `GET_ARGS` and `GET_EXE` provide the same borrowed
+The direct special values `GET_ARGS__` and `GET_EXE__` provide the same borrowed
 process-lifetime data.
 
 `List<T>.len()` returns `usize`. `List<T>.get(i32)` performs bounds checking

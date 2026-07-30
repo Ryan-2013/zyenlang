@@ -23,7 +23,7 @@ It does not import or mirror the v0.1 modules.
 | `error` | Implemented | `require` uses `throws Error` and `stop`. |
 | `option` | Implemented | Helpers for the restricted `T | null` optional type. |
 | `io` | Implemented | Public `print(str)` and `eprint(str)` wrappers over runtime I/O primitives. |
-| `process` | Implemented | Typed access to `GET_ARGS` and `GET_EXE`. |
+| `process` | Implemented | Typed access to `GET_ARGS__` and `GET_EXE__`. |
 | `thread` | Implemented | Portable sleep, yield, and CPU count; language `spawn` creates OS threads. |
 | `request` | Implemented | WinHTTP on Windows and dynamically loaded libcurl on Linux/macOS. |
 | `server` | Implemented | Blocking HTTP text server with bounded request count and typed errors. |

@@ -75,8 +75,8 @@
     "description": "Wait for a task result"
   },
   "Type check": {
-    "prefix": "typeof",
-    "body": "typeof ${1:value} ${2:i32}",
+    "prefix": "TYPEOF__",
+    "body": "TYPEOF__ ${1:value} ${2:i32}",
     "description": "Test a value's runtime type"
   },
   "HTTP GET": {

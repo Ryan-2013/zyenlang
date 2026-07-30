@@ -4,6 +4,22 @@
 
 No changes yet.
 
+## v0.2.1 - 2026-07-30
+
+### Changed
+
+- Compiler special words now use uppercase names ending in `__`:
+  `GET_ARGS__`, `GET_EXE__`, and `TYPEOF__`. The old spellings report a
+  migration diagnostic naming their replacements.
+
+### Added
+
+- ZEP-0017 phase 1 package manager through `zy pkg`, `zy2 pkg`, and `zypkg`.
+- Local path dependencies, deterministic `zy.lock`, SHA-256 content cache,
+  transitive dependency edges, and checked `<package/module>` imports.
+- Package integrity, size, symlink, direct-dependency, and import-root safety
+  checks in both installation and compilation.
+
 ## v0.2.0 - 2026-07-30
 
 ### Added

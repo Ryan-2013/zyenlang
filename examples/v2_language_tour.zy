@@ -26,8 +26,8 @@ fn ret_two_result() (i32, str) {
 }
 
 fn main() i32 {
-    let args: List<str> = GET_ARGS
-    let executable: str = GET_EXE
+    let args: List<str> = GET_ARGS__
+    let executable: str = GET_EXE__
     let car: Car = Car{value: 0}
     io.print(car.name())
     let value: i32 = car.return_value() catch err {

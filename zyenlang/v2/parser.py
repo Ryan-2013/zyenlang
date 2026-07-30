@@ -86,21 +86,29 @@ class Parser:
 
     def parse_import(self, start: SourceSpan) -> ast.ImportDef:
         if self.match("<"):
-            parts = [self.expect("IDENT", "expected a standard-library module path").value]
+            parts = [self.parse_import_path_part("expected a package or standard-library module path")]
             while self.match("/"):
-                parts.append(self.expect("IDENT", "expected a module name after `/`").value)
-            self.expect(">", "expected `>` after standard-library import")
+                parts.append(self.parse_import_path_part("expected a module name after `/`"))
+            self.expect(">", "expected `>` after package import")
             path = "/".join(parts)
-            is_std = True
+            is_angle = True
         elif token := self.match("STRING"):
             path = token.value
-            is_std = False
+            is_angle = False
         else:
-            raise CompileError("import expects `<std/module>` or a quoted relative path", self.current.span, self.source_name)
+            raise CompileError("import expects `<package/module>` or a quoted relative path", self.current.span, self.source_name)
         alias = path.rsplit("/", 1)[-1].rsplit(".", 1)[0]
         if self.match("AS"):
             alias = self.expect("IDENT", "expected an import alias").value
-        return ast.ImportDef(path, alias, is_std, start)
+        elif "-" in alias:
+            raise CompileError("imports ending in a hyphenated name require `as alias`", start, self.source_name)
+        return ast.ImportDef(path, alias, is_angle, start)
+
+    def parse_import_path_part(self, message: str) -> str:
+        values = [self.expect("IDENT", message).value]
+        while self.match("-"):
+            values.append(self.expect("IDENT", "expected a name after `-`").value)
+        return "-".join(values)
 
     def parse_visibility(self) -> ast.Visibility:
         if self.match("PUBLIC"):
@@ -461,7 +469,7 @@ class Parser:
             return ast.SpawnExpr(token.span, value)
         if token := self.match("AWAIT"):
             return ast.AwaitExpr(token.span, self.parse_unary(allow_struct_literal=allow_struct_literal))
-        if token := self.match("TYPEOF"):
+        if token := self.match("TYPEOF__"):
             value = self.parse_unary(allow_struct_literal=allow_struct_literal)
             target_type = self.parse_type()
             return ast.TypeOfExpr(token.span, value, target_type)

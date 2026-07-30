@@ -8,11 +8,11 @@ Every platform archive contains both compiler commands:
 - standard libraries, examples, documentation, and GUI runtime.
 
 No Python installation, `pip`, GCC, or MSYS2 is required. Archives extract to
-one `zyv200` directory and require roughly 400 MB of free disk space.
+one `zyv201` directory and require roughly 400 MB of free disk space.
 
 ## Windows MSI
 
-`zyv200-windows-x64.msi` installs for the current user without administrator
+`zyv201-windows-x64.msi` installs for the current user without administrator
 privileges. Files go to `%LOCALAPPDATA%\Programs\ZyenLang`; the installer adds
 that exact directory to the user PATH and removes it during uninstall.
 
@@ -24,13 +24,13 @@ zy2 run examples\v2_language_tour.zy
 ```
 
 The MSI is reproducibly generated from the already-tested portable directory.
-Release assets have SHA-256 checksums and GitHub provenance, but v0.2.0 is not
+Release assets have SHA-256 checksums and GitHub provenance, but v0.2.1 is not
 Authenticode-signed.
 
 ## Windows portable
 
 ```powershell
-cd zyv200
+cd zyv201
 .\add-to-user-path.cmd
 .\zy2.exe --version
 .\zy2.exe run examples\v2_language_tour.zy
@@ -42,7 +42,7 @@ The helper changes only the current user's PATH. It supports a dry run through
 ## Linux and macOS
 
 ```bash
-cd zyv200
+cd zyv201
 ./add-to-user-path.sh
 ./zy2 --version
 ./zy2 run examples/v2_language_tour.zy

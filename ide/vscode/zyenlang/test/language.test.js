@@ -46,6 +46,9 @@ assert.deepStrictEqual(language.wordAt('return counter.add(number)', 16), { valu
 assert.deepStrictEqual(language.qualifierAt('    io.pr', 9), { qualifier: 'io', prefix: 'pr' });
 assert.deepStrictEqual(language.callAt('    pair(1, other(', 11), { name: 'pair', activeParameter: 1 });
 assert.deepStrictEqual(language.splitTopLevel('List<i32>, fn(i32, str), i32 | null'), ['List<i32>', 'fn(i32, str)', 'i32 | null']);
+assert(language.KEYWORDS.includes('TYPEOF__'));
+assert(!language.KEYWORDS.includes('typeof'));
+assert.deepStrictEqual(language.SPECIAL_VALUES, ['GET_ARGS__', 'GET_EXE__']);
 
 const nativeSource = `native source "bridge.c"
 private native fn editor_open(path: str) i32 = "zy2_editor_open"`;

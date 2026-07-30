@@ -1,4 +1,4 @@
-# ZyenLang 0.2.0
+# ZyenLang 0.2.1
 
 [繁體中文](README.zh-TW.md) | **English**
 
@@ -15,11 +15,11 @@ module loader, and C backend. The new compiler is invoked with `zy2`. The
 The [GitHub Releases](https://github.com/Ryan-2013/zyenlang/releases) page
 provides:
 
-- `zyv200-windows-x64.msi`: per-user Windows installer with PATH setup;
-- `zyv200-windows-x64.zip`: portable Windows package;
-- `zyv200-linux-x64.tar.gz` and `zyv200-linux-arm64.tar.gz`;
-- `zyv200-macos-x64.tar.gz` and `zyv200-macos-arm64.tar.gz`;
-- `zyenlang-vscode-0.2.0.vsix`: VS Code completion, navigation, diagnostics,
+- `zyv201-windows-x64.msi`: per-user Windows installer with PATH setup;
+- `zyv201-windows-x64.zip`: portable Windows package;
+- `zyv201-linux-x64.tar.gz` and `zyv201-linux-arm64.tar.gz`;
+- `zyv201-macos-x64.tar.gz` and `zyv201-macos-arm64.tar.gz`;
+- `zyenlang-vscode-0.2.1.vsix`: VS Code completion, navigation, diagnostics,
   Run, Build, and the optional ZyenLang Ember theme;
 - Python wheel and source archive.
 
@@ -29,7 +29,7 @@ Portable packages and the MSI include the compiler runtime and a pinned Zig
 The MSI installs for the current user under
 `%LOCALAPPDATA%\Programs\ZyenLang`, updates only the user PATH, and removes its
 PATH entry on uninstall. Release assets include SHA-256 checksums and GitHub
-artifact provenance. The v0.2.0 MSI is not yet Authenticode-signed.
+artifact provenance. The v0.2.1 MSI is not yet Authenticode-signed.
 
 ## Hello world
 
@@ -74,12 +74,29 @@ ZyenLang 0.2 currently provides:
 - `throws Error`, `stop`, `catch`, and `recover`;
 - `while`, assignment, `break`, and `continue`;
 - linear `Task<T>` values with `spawn` and exactly-once `await`;
-- `typeof value Type` compile-time checks;
-- standard and relative modules plus checked native C declarations.
+- `TYPEOF__ value Type` compile-time checks;
+- standard, package, and relative modules plus checked native C declarations.
 
 See [the v0.2 architecture](docs/v2_architecture.md),
 [standard library guide](docs/v2_stdlib.md), and
 [language tour](examples/v2_language_tour.zy).
+
+## Package manager
+
+The first ZEP-0017 package workflow supports local path dependencies with a
+deterministic lockfile and SHA-256 content cache:
+
+```powershell
+zy pkg init --name my-app
+zy pkg add ../math-lib
+zy pkg install --locked
+zy pkg list
+```
+
+Packages are imported from their `src/` directory with
+`import <math-lib/math> as math`. See the
+[package manager guide](docs/package_manager.md) for manifests, cache safety,
+and current v1 limits.
 
 ## Standard library
 
@@ -102,7 +119,7 @@ fn main() i32 {
 
 ## VS Code
 
-Install `zyenlang-vscode-0.2.0.vsix` with **Extensions: Install from
+Install `zyenlang-vscode-0.2.1.vsix` with **Extensions: Install from
 VSIX...**. The extension does not execute compiler commands in untrusted
 workspaces. Live checks are debounced, cancellable, size-limited, output-limited,
 and time-limited; Run and Build use VS Code process tasks instead of shell

@@ -282,7 +282,7 @@ Definition = StructDef | FunctionDef | NativeSourceDef | NativeLinkDef | NativeF
 class ImportDef:
     path: str
     alias: str
-    is_std: bool
+    is_angle: bool
     span: SourceSpan
 
 

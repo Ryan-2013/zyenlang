@@ -239,9 +239,9 @@ static void editor_add_completion(const char* value, size_t length, const char* 
 static void editor_refresh_completion(void) {
     static const char* language_words[] = {
         "as", "await", "bool", "break", "catch", "continue", "else", "Error", "f32", "f64",
-        "false", "fn", "i8", "i16", "i32", "i64", "if", "import", "isize", "let", "List",
+        "false", "fn", "GET_ARGS__", "GET_EXE__", "i8", "i16", "i32", "i64", "if", "import", "isize", "let", "List",
         "native", "null", "private", "public", "recover", "return", "spawn", "stop", "str",
-        "struct", "throws", "true", "typeof", "u8", "u16", "u32", "u64", "usize", "void", "while",
+        "struct", "throws", "true", "TYPEOF__", "u8", "u16", "u32", "u64", "usize", "void", "while",
         "begin_frame", "close", "eprint", "get", "len", "next_event", "open", "present", "print", "save", "window"
     };
     editor_clear_completion();

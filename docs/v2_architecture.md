@@ -29,29 +29,29 @@ same checked IR that the future LLVM backend will consume.
 - restricted `T | null` optionals and `if let` unwrapping;
 - typed `throws Error`, `stop`, `catch`, and `recover`;
 - compile-time propagation and a default unhandled-error process exit;
-- standard and relative module loading;
+- standard, locked package, and relative module loading;
 - separate debug (`-O0`) and release (`-O2`) C builds;
 - a backend protocol and explicit LLVM backend boundary.
-- process special values `GET_ARGS` and `GET_EXE`;
+- process special values `GET_ARGS__` and `GET_EXE__`;
 - structured native C declarations with checked symbols, sources, and links;
 - `while`, direct assignment, `break`, and `continue`;
 - linear `Task<T>` values using `spawn call()` and exactly-once `await task`.
-- compile-time `typeof value Type` boolean expressions;
+- compile-time `TYPEOF__ value Type` boolean expressions;
 - checked `List<T>.get(i32) T throws Error` access.
 
 ## Type tests
 
-`typeof` is an expression whose result is a compile-time `bool`:
+`TYPEOF__` is an expression whose result is a compile-time `bool`:
 
 ```zy
 let value: i32 = 12
-let is_integer: bool = typeof value i32
-let is_text: bool = typeof value str
-let is_argument_list: bool = typeof GET_ARGS List<str>
+let is_integer: bool = TYPEOF__ value i32
+let is_text: bool = TYPEOF__ value str
+let is_argument_list: bool = TYPEOF__ GET_ARGS__ List<str>
 ```
 
 The operand is type-checked but never evaluated at runtime. Use parentheses
-around compound operands, for example `typeof (left + right) i32`. This is a
+around compound operands, for example `TYPEOF__ (left + right) i32`. This is a
 static type test, not runtime reflection or a string-returning type query.
 
 ## Standard library reset
@@ -80,18 +80,25 @@ Uppercase special values expose process context without pretending that they
 were ordinary local variables:
 
 ```zy
-let args: List<str> = GET_ARGS
-let executable: str = GET_EXE
+let args: List<str> = GET_ARGS__
+let executable: str = GET_EXE__
 ```
 
-`GET_ARGS` contains only user arguments, so the executable name is excluded.
-`GET_EXE` contains `argv[0]`. Both values borrow process-owned memory and stay
+`GET_ARGS__` contains only user arguments, so the executable name is excluded.
+`GET_EXE__` contains `argv[0]`. Both values borrow process-owned memory and stay
 valid for the complete program lifetime. They are reserved and cannot be
-shadowed by local declarations.
+shadowed by local declarations. Compiler special words are uppercase and end
+in `__`, making them visually distinct from variables and ordinary functions.
 
 The v2 standard library receives no private native-module privilege. Future
 GUI and HTTP modules must use the same public v2 c_module ABI available to
 third-party packages.
+
+Project package imports use `<package/module>`. The module loader accepts only
+dependencies declared by the importing project or package, resolves them from
+`zy.lock`, verifies their content-addressed cache entry, and prevents relative
+imports from escaping a package root. Package installation and lockfile rules
+are documented in [the package manager guide](package_manager.md).
 
 `List<T>.get(index)` performs a checked access and returns `T throws Error`.
 Out-of-range errors carry the `.zy` call site's file, line, and column.

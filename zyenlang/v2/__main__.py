@@ -9,6 +9,7 @@ from . import __version__
 from .compiler import Compiler, CompilerOptions
 from .diagnostics import CompileError
 from .modules import MAX_SOURCE_BYTES
+from .package_manager import PackageError, configure_parser as configure_package_parser, handle_command as handle_package_command
 
 
 def read_stdin_source(source_name: str, limit: int = MAX_SOURCE_BYTES) -> str:
@@ -44,11 +45,20 @@ def make_parser() -> argparse.ArgumentParser:
     run = subparsers.add_parser("run", help="build and run a source file")
     run.add_argument("input", type=Path)
     run.add_argument("--release", action="store_true")
+
+    package = subparsers.add_parser("pkg", help="manage project dependencies")
+    configure_package_parser(package)
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
     args = make_parser().parse_args(argv)
+    if args.command == "pkg":
+        try:
+            return handle_package_command(args)
+        except PackageError as exc:
+            print(f"zy2 pkg: {exc}", file=sys.stderr)
+            return 2
     compiler = Compiler(
         CompilerOptions(
             release=getattr(args, "release", False),

@@ -29,6 +29,9 @@ from .types import (
 )
 
 
+PROCESS_SPECIAL_VALUES = {"GET_ARGS__", "GET_EXE__"}
+
+
 @dataclass(frozen=True)
 class FieldSymbol:
     name: str
@@ -418,7 +421,7 @@ class Lowerer:
         return typ
 
     def define_local(self, name: str, typ: Type, span: SourceSpan) -> None:
-        if name in {"GET_ARGS", "GET_EXE"}:
+        if name in PROCESS_SPECIAL_VALUES:
             raise self.error(f"`{name}` is a reserved process value and cannot be shadowed", span)
         scope = self.scopes[-1]
         if name in scope:
@@ -517,7 +520,7 @@ class Lowerer:
 
     def lower_assignment(self, statement: ast.AssignStmt) -> ir.IRAssign:
         if isinstance(statement.target, ast.NameExpr):
-            if statement.target.name in {"GET_ARGS", "GET_EXE"}:
+            if statement.target.name in PROCESS_SPECIAL_VALUES:
                 raise self.error("process special values cannot be assigned", statement.target.span)
             target_type = self.lookup_local(statement.target.name, statement.target.span)
             if is_task(target_type):
@@ -617,14 +620,14 @@ class Lowerer:
                 raise self.error("`null` needs an explicit optional type such as `i32 | null`", expression.span)
             return ir.IRNull(expected, expression.span)
         if isinstance(expression, ast.NameExpr):
-            if expression.name == "GET_ARGS":
+            if expression.name == "GET_ARGS__":
                 args_type = NamedType("List", (STR,))
                 return self.coerce(
                     ir.IRCall(args_type, expression.span, "__zy2_get_args", ()),
                     expected,
                     expression.span,
                 )
-            if expression.name == "GET_EXE":
+            if expression.name == "GET_EXE__":
                 return self.coerce(
                     ir.IRCall(STR, expression.span, "__zy2_get_exe", ()),
                     expected,

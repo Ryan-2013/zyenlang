@@ -316,8 +316,8 @@ def test_v2_get_args_and_get_exe_use_process_arguments(tmp_path: Path) -> None:
         """import <std/list> as list
 
 fn main() i32 {
-    let args: List<str> = GET_ARGS
-    let executable: str = GET_EXE
+    let args: List<str> = GET_ARGS__
+    let executable: str = GET_EXE__
     if list.length(args) == 2 && executable != "" {
         return 0
     }
@@ -343,7 +343,7 @@ def test_v2_list_get_is_typed_and_reads_process_arguments(tmp_path: Path) -> Non
     source = tmp_path / "list_get.zy"
     source.write_text(
         """fn main() i32 {
-    let args: List<str> = GET_ARGS
+    let args: List<str> = GET_ARGS__
     let first: str = args.get(0) catch err {
         recover "missing"
     }
@@ -406,13 +406,28 @@ def test_v2_editor_buffer_edits_utf8_text_and_saves(tmp_path: Path) -> None:
 
 
 def test_v2_process_special_values_are_typed_and_reserved() -> None:
-    wrong_type = "fn main() i32 {\n    let args: i32 = GET_ARGS\n    return 0\n}\n"
-    shadowed = "fn main() i32 {\n    let GET_ARGS: i32 = 1\n    return 0\n}\n"
+    wrong_type = "fn main() i32 {\n    let args: i32 = GET_ARGS__\n    return 0\n}\n"
+    shadowed = "fn main() i32 {\n    let GET_ARGS__: i32 = 1\n    return 0\n}\n"
 
     with pytest.raises(CompileError, match="expected `i32`, got `List<str>`"):
         Compiler().check_source(wrong_type)
     with pytest.raises(CompileError, match="reserved process value"):
         Compiler().check_source(shadowed)
+
+
+@pytest.mark.parametrize(
+    ("source", "old_name", "new_name"),
+    [
+        ("fn main() i32 {\n    let value = GET_ARGS\n    return 0\n}\n", "GET_ARGS", "GET_ARGS__"),
+        ("fn main() i32 {\n    let value = GET_EXE\n    return 0\n}\n", "GET_EXE", "GET_EXE__"),
+        ("fn main() i32 {\n    let value = typeof 1 i32\n    return 0\n}\n", "typeof", "TYPEOF__"),
+    ],
+)
+def test_v2_old_special_words_report_their_replacements(source: str, old_name: str, new_name: str) -> None:
+    with pytest.raises(CompileError) as caught:
+        Compiler().check_source(source)
+
+    assert f"`{old_name}` was renamed to `{new_name}`" in str(caught.value)
 
 
 def test_v2_check_file_source_uses_unsaved_root_text_and_disk_imports(tmp_path: Path) -> None:
@@ -686,7 +701,7 @@ def test_v2_typeof_is_a_compile_time_boolean_expression(tmp_path: Path) -> None:
 
 fn main() i32 {
     let value: i32 = 12
-    if typeof value i32 && !(typeof value str) && typeof "hello" str && typeof [1, 2] List<i32> && typeof (make_value()) i32 {
+    if TYPEOF__ value i32 && !(TYPEOF__ value str) && TYPEOF__ "hello" str && TYPEOF__ [1, 2] List<i32> && TYPEOF__ (make_value()) i32 {
         return 0
     }
     return 1
@@ -705,7 +720,7 @@ fn main() i32 {
 
 
 def test_v2_typeof_reports_unknown_target_type_at_its_line() -> None:
-    source = "fn main() i32 {\n    let value = typeof 1 MissingType\n    return 0\n}\n"
+    source = "fn main() i32 {\n    let value = TYPEOF__ 1 MissingType\n    return 0\n}\n"
 
     with pytest.raises(CompileError, match="unknown type `MissingType`") as caught:
         Compiler().check_source(source, "typeof_error.zy")

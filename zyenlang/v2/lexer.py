@@ -30,8 +30,14 @@ KEYWORDS = {
     "struct",
     "throws",
     "true",
-    "typeof",
+    "TYPEOF__",
     "while",
+}
+
+RENAMED_SPECIAL_WORDS = {
+    "GET_ARGS": "GET_ARGS__",
+    "GET_EXE": "GET_EXE__",
+    "typeof": "TYPEOF__",
 }
 
 TWO_CHAR_SYMBOLS = {"==", "!=", "<=", ">=", "&&", "||", "->"}
@@ -159,6 +165,8 @@ def lex(source: str, source_name: str = "<source>") -> list[Token]:
                 i += 1
                 column += 1
             value = source[start_i:i]
+            if replacement := RENAMED_SPECIAL_WORDS.get(value):
+                raise CompileError(f"`{value}` was renamed to `{replacement}`", start, source_name)
             kind = value.upper() if value in KEYWORDS else "IDENT"
             tokens.append(Token(kind, value, start))
             continue

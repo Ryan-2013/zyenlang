@@ -1,4 +1,4 @@
-# ZyenLang 0.2.0
+# ZyenLang 0.2.1
 
 **繁體中文** | [English](README.md)
 
@@ -12,10 +12,10 @@ C backend。新語法使用 `zy2`；舊的 `zy` 指令仍保留，用來相容 v
 
 [GitHub Releases](https://github.com/Ryan-2013/zyenlang/releases) 提供：
 
-- `zyv200-windows-x64.msi`：Windows 使用者層級安裝程式，自動設定 PATH；
-- `zyv200-windows-x64.zip`：Windows 免安裝版；
+- `zyv201-windows-x64.msi`：Windows 使用者層級安裝程式，自動設定 PATH；
+- `zyv201-windows-x64.zip`：Windows 免安裝版；
 - Linux x64、Linux arm64、macOS x64 與 macOS arm64 壓縮檔；
-- `zyenlang-vscode-0.2.0.vsix`：VS Code 補全、跳轉、診斷、執行與建置；
+- `zyenlang-vscode-0.2.1.vsix`：VS Code 補全、跳轉、診斷、執行與建置；
 - Python wheel 與原始碼套件。
 
 portable 與 MSI 都內含編譯器 runtime 和固定版本、經 SHA-256 驗證的 Zig
@@ -23,7 +23,7 @@ portable 與 MSI 都內含編譯器 runtime 和固定版本、經 SHA-256 驗證
 
 MSI 會安裝到 `%LOCALAPPDATA%\Programs\ZyenLang`，只修改目前使用者的
 PATH；解除安裝時只移除自己的 PATH 項目。正式版附 SHA-256 checksums 與
-GitHub artifact provenance。0.2.0 的 MSI 尚未使用付費 Authenticode 憑證
+GitHub artifact provenance。0.2.1 的 MSI 尚未使用付費 Authenticode 憑證
 簽章，因此 Windows 仍可能顯示 SmartScreen 提示。
 
 ## 第一個程式
@@ -68,17 +68,31 @@ zy2 build main.zy -o main.c
 - `throws Error`、`stop`、`catch`、`recover`；
 - `while`、賦值、`break`、`continue`；
 - `spawn` 與只能 `await` 一次的線性 `Task<T>`；
-- `typeof value Type` 編譯期型別判斷；
-- 一般模組、標準模組，以及受檢查的 native C 宣告。
+- `TYPEOF__ value Type` 編譯期型別判斷；
+- 一般模組、標準模組、套件模組，以及受檢查的 native C 宣告。
 
 完整內容請看 [0.2 編譯器架構](docs/v2_architecture.md)、
 [標準庫說明](docs/v2_stdlib.md) 與
 [語言範例](examples/v2_language_tour.zy)。
 
+## 套件管理器
+
+ZEP-0017 第一階段支援本機路徑依賴、固定 lockfile 與 SHA-256 內容快取：
+
+```powershell
+zy pkg init --name my-app
+zy pkg add ../math-lib
+zy pkg install --locked
+zy pkg list
+```
+
+套件從 `src/` 匯入，例如 `import <math-lib/math> as math`。完整格式、
+安全規則與第一版限制請看[套件管理器說明](docs/package_manager.md)。
+
 ## VS Code
 
 在 VS Code 執行 **Extensions: Install from VSIX...**，選擇
-`zyenlang-vscode-0.2.0.vsix`。擴充套件具有語法高亮、自動補全、Hover、
+`zyenlang-vscode-0.2.1.vsix`。擴充套件具有語法高亮、自動補全、Hover、
 參數提示、F12 定義跳轉、尋找參考、文件大綱、即時 `zy2 check`、Run 與
 Build。
 

@@ -4,19 +4,21 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "zyenlang"
-version = "0.2.0"
+version = "0.2.1"
 description = "ZyenLang: a concise C-like language transpiled to C"
 readme = "README.md"
 requires-python = ">=3.10"
+dependencies = ["tomli==2.2.1; python_version < '3.11'"]
 license = "MIT"
 license-files = ["LICENSE"]
 authors = [{name = "ZyenLang"}]
 
 [project.scripts]
-zy = "zyenlang.transpiler:main"
-zyen = "zyenlang.transpiler:main"
+zy = "zyenlang.cli.main:main"
+zyen = "zyenlang.cli.main:main"
 zyenv = "zyenlang.cli.zyenv:main"
 zy2 = "zyenlang.v2.__main__:main"
+zypkg = "zyenlang.v2.package_manager:main"
 
 [tool.setuptools.packages.find]
 include = ["zyenlang*"]

@@ -1,6 +1,6 @@
 # ZEP-0017: ZyenLang package manager
 
-Status: Planned
+Status: Phase 1 implemented in ZyenLang 0.2.1
 
 ## Goal
 
@@ -107,3 +107,15 @@ of scope because they weaken portability and auditability.
 
 Each phase must test Windows, Linux, and macOS path handling and ensure that
 the portable ZyenLang archive needs no system Python installation.
+
+## Implemented phase 1
+
+ZyenLang 0.2.1 provides `zy pkg` and the equivalent `zy2 pkg` command with
+`init`, `add`, `remove`, `install`, `install --locked`, and `list`. It supports
+local path dependencies, transitive dependency locking, SHA-256 addressed
+cache entries, compiler resolution of `<package/module>`, and package-root
+escape prevention. See [the package manager guide](package_manager.md).
+
+Git dependencies, offline registry archives, version-constraint resolution,
+cache garbage collection, authentication, and publishing remain planned for
+the later phases above.

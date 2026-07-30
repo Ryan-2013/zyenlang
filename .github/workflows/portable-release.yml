@@ -52,12 +52,16 @@ jobs:
           import os
           import re
           from pathlib import Path
-          from tools.build_portable import portable_name
           source = Path("pyproject.toml").read_text(encoding="utf-8")
           version = re.search(r'^version\s*=\s*"([^"]+)"\s*$', source, re.MULTILINE).group(1)
+          parts = version.split(".")
+          if len(parts) == 3 and parts[0] == "0" and all(part.isdigit() for part in parts):
+              bundle = f"zyv{int(parts[1])}{int(parts[2]):02d}"
+          else:
+              bundle = "zyv" + "".join(re.sub(r"[^0-9A-Za-z]+", "", part) for part in parts)
           with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
               output.write(f"version={version}\n")
-              output.write(f"bundle={portable_name(version)}\n")
+              output.write(f"bundle={bundle}\n")
       - name: Install Linux GUI runtime
         if: runner.os == 'Linux'
         run: |
@@ -131,6 +135,8 @@ jobs:
         run: |
           version=$(node -p "require('./ide/vscode/zyenlang/package.json').version")
           echo "version=$version" >> "$GITHUB_OUTPUT"
+      - name: Prepare extension output
+        run: mkdir -p dist
       - name: Package extension
         working-directory: ide/vscode/zyenlang
         run: npx --no-install vsce package --no-dependencies --out ../../../dist/zyenlang-vscode-${{ steps.extension.outputs.version }}.vsix

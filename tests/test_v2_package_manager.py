@@ -73,7 +73,7 @@ def test_package_manager_path_dependency_compiles_from_locked_cache(
         "import <math-lib/math> as math\n\nfn main() i32 {\n    return math.answer() - 42\n}\n",
         encoding="utf-8",
     )
-    executable = tmp_path / ("app.exe" if sys.platform.startswith("win") else "app")
+    executable = tmp_path / ("compiled-app.exe" if sys.platform.startswith("win") else "compiled-app")
     Compiler().build_file(source, executable)
     result = subprocess.run([str(executable)], capture_output=True, text=True, check=False)
 

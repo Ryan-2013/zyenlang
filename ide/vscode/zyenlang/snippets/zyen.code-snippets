@@ -99,6 +99,16 @@
     "body": ["LIST_SET__(${1:list}, ${2:index}, ${3:value}) catch ${4:err} {", "    recover", "}"],
     "description": "Replace a checked List element"
   },
+  "Colored terminal output": {
+    "prefix": "PRINT_CMD__",
+    "body": "PRINT_CMD__(${1:text}, \"${2:#FFFFFF}\")",
+    "description": "Print one line with a terminal color"
+  },
+  "String characters": {
+    "prefix": "STR_TO_LIST__",
+    "body": "let ${1:chars}: List<str> = STR_TO_LIST__(${2:text})",
+    "description": "Split UTF-8 text into a List of characters"
+  },
   "HTTP GET": {
     "prefix": "requestget",
     "body": ["import <std/request> as request", "", "let response: request.Response = request.get(\"${1:https://example.com}\")", "if response.ok() {", "    ${0}", "}"],

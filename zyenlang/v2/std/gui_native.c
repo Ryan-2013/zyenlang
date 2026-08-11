@@ -625,8 +625,8 @@ static void zltk_draw_system_text(int x, int y, const char* text, const char* co
 static int zltk_keyword(const char* word) {
     static const char* words[] = {
         "as", "await", "break", "catch", "continue", "else", "false", "fn", "for",
-        "FILE__", "if", "import", "let", "native", "null", "private", "public", "recover",
-        "return", "spawn", "stop", "struct", "throws", "true", "TYPEOF__", "while"
+        "FILE__", "if", "import", "let", "LIST_LEN__", "LIST_PUSH__", "LIST_SET__", "native", "null", "PRINT_CMD__", "private", "public", "recover",
+        "return", "spawn", "stop", "struct", "STR_TO_LIST__", "throws", "true", "TYPEOF__", "while"
     };
     for (size_t index = 0; index < sizeof(words) / sizeof(words[0]); index++) {
         if (strcmp(word, words[index]) == 0) return 1;

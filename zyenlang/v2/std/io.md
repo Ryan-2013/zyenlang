@@ -7,8 +7,15 @@ io.print("normal output")
 io.eprint("error output")
 ```
 
-- `print(value: str)` 寫入 stdout 並換行。
-- `eprint(value: str)` 寫入 stderr 並換行；互動終端預設顯示紅色。
+- `print(value: str)` 以白色寫入終端並換行。
+- `eprint(value: str)` 以紅色寫入終端並換行。
+
+兩者都是 ZyenLang facade，底層分別呼叫 `PRINT_CMD__(value, "#FFFFFF")` 與
+`PRINT_CMD__(value, "#ff0000")`。也可以直接使用任意 `#RRGGBB` 顏色：
+
+```zy
+PRINT_CMD__("ember", "#D97757")
+```
 
 兩者只接收 `str`。數字與 bool 可用 `(str)value` 或 f-string：
 

@@ -505,6 +505,18 @@ List literal 是 owned storage。`GET_ARGS__` 與 `value.__attributes__` 則先�
 borrowed view；把它存進區域變數後第一次修改會 copy-on-write，不會改動作業系統
 參數或 struct metadata。`List<List<T>>` 與 `List<Box<T>>` 會遞迴 retain/release。
 
+`STR_TO_LIST__(text)` 依 UTF-8 Unicode 字元切成 `List<str>`，中文與 emoji 各算
+一個元素：
+
+```zy
+let text = "I am your father."
+let chars: List<str> = STR_TO_LIST__(text)
+```
+
+這份 List 的 ARC owner 同時持有字元 backing storage，最後一個 List alias 離開
+scope 時會自動釋放。從 List 取出的單一 `str` 是借用值，不可比原 List 活得更久；
+必須先把結果存入區域變數，編譯器會拒絕 `STR_TO_LIST__(text)[index]` 這種直接取值。
+
 List 可以直接成為 struct field。含 List 的 struct 也會成為 managed value；
 編譯器會替它產生遞迴 retain/release，套用到複製、整體或欄位賦值、參數、回傳、
 `stop`、`break`、`continue` 與 scope exit：
@@ -526,8 +538,9 @@ let alias = store
 
 也支援 `List<Inventory>` 及跨模組 public struct。`Node { children: List<Node> }`
 這類遞迴 managed type 目前會在 `zy check` 明確拒絕；List 放進 tuple 或 optional
-也仍待對應 destructor。`str` 本身仍是 borrowed，因此 List 只保存字串位址，
-不會複製字串內容。完整範例見 `examples/v2_struct_list.zy`。
+也仍待對應 destructor。`str` 本身仍是 borrowed，因此一般 List 只保存字串位址，
+不會複製字串內容；`STR_TO_LIST__` 的字元 backing storage 是上述的特殊 owned
+情況。完整範例見 `examples/v2_struct_list.zy`。
 
 ## 11. null 與 optional
 
@@ -630,9 +643,13 @@ Box 使用 C11 atomic ARC。複製、傳參、賦值、回傳，以及正常離�
 - 不接收輸入的特殊值不加括號，例如 `FILE__`、`GET_ARGS__`、`GET_EXE__`。
 - 接收輸入的特殊形式一律使用括號與逗號，例如 `LIST_LEN__(list)`、
   `LIST_PUSH__(list, value)`、`LIST_SET__(list, index, value)`、
+  `STR_TO_LIST__(text)`、`PRINT_CMD__(text, "#RRGGBB")`、
   `TYPEOF__(expression, Type)`。
 
 這些名稱不是普通函式，不能取函式值、覆寫或作為 callback。
+
+`PRINT_CMD__` 在支援顏色的互動終端輸出 ANSI truecolor；重新導向時自動輸出
+純文字。`NO_COLOR`、`ZYEN_COLOR=always` 與 `ZYEN_COLOR=never` 可控制色彩。
 
 ### TYPEOF__
 

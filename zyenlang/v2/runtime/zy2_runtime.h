@@ -31,16 +31,17 @@
 static _Thread_local char zy2_format_buffers[ZY2_FORMAT_BUFFER_COUNT][ZY2_FORMAT_BUFFER_SIZE];
 static _Thread_local unsigned int zy2_format_buffer_index;
 
-static inline bool zy2_stderr_color_enabled(void) {
+static inline bool zy2_stream_color_enabled(FILE* stream) {
     const char* setting;
+    int descriptor = stream == stderr ? 2 : 1;
     if (getenv("NO_COLOR") != NULL) return false;
     setting = getenv("ZYEN_COLOR");
     if (setting && strcmp(setting, "always") == 0) return true;
     if (setting && strcmp(setting, "never") == 0) return false;
 #ifdef _WIN32
-    if (!_isatty(2)) return false;
+    if (!_isatty(descriptor)) return false;
     {
-        HANDLE handle = GetStdHandle(STD_ERROR_HANDLE);
+        HANDLE handle = GetStdHandle(stream == stderr ? STD_ERROR_HANDLE : STD_OUTPUT_HANDLE);
         DWORD mode = 0;
         if (handle != INVALID_HANDLE_VALUE && GetConsoleMode(handle, &mode)) {
             SetConsoleMode(handle, mode | ENABLE_VIRTUAL_TERMINAL_PROCESSING);
@@ -48,8 +49,12 @@ static inline bool zy2_stderr_color_enabled(void) {
     }
     return true;
 #else
-    return isatty(2) != 0;
+    return isatty(descriptor) != 0;
 #endif
+}
+
+static inline bool zy2_stderr_color_enabled(void) {
+    return zy2_stream_color_enabled(stderr);
 }
 
 static inline void zy2_error_begin(void) {
@@ -100,6 +105,29 @@ static inline void zy2_format_append_f64(char* buffer, double value, int precisi
 
 static inline void zy2_format_append_bool(char* buffer, bool value) {
     zy2_format_append(buffer, value ? "true" : "false");
+}
+
+static inline size_t zy2_utf8_character_size(const unsigned char* text, size_t remaining) {
+    unsigned char first;
+    if (!text || remaining == 0u) return 0u;
+    first = text[0];
+    if (first <= 0x7fu) return 1u;
+    if (first >= 0xc2u && first <= 0xdfu) {
+        return remaining >= 2u && (text[1] & 0xc0u) == 0x80u ? 2u : 0u;
+    }
+    if (first >= 0xe0u && first <= 0xefu) {
+        if (remaining < 3u || (text[1] & 0xc0u) != 0x80u || (text[2] & 0xc0u) != 0x80u) return 0u;
+        if (first == 0xe0u && text[1] < 0xa0u) return 0u;
+        if (first == 0xedu && text[1] >= 0xa0u) return 0u;
+        return 3u;
+    }
+    if (first >= 0xf0u && first <= 0xf4u) {
+        if (remaining < 4u || (text[1] & 0xc0u) != 0x80u || (text[2] & 0xc0u) != 0x80u || (text[3] & 0xc0u) != 0x80u) return 0u;
+        if (first == 0xf0u && text[1] < 0x90u) return 0u;
+        if (first == 0xf4u && text[1] >= 0x90u) return 0u;
+        return 4u;
+    }
+    return 0u;
 }
 
 typedef void (*zy2_ArcDrop)(void* payload);
@@ -192,14 +220,34 @@ static inline void zy2_set_process_args(int argc, char** argv) {
     zy2_process_argv = argv;
 }
 
-static inline void zy2_print(const char* value) {
-    puts(value ? value : "null");
+static inline int zy2_hex_digit(char value) {
+    if (value >= '0' && value <= '9') return value - '0';
+    if (value >= 'a' && value <= 'f') return value - 'a' + 10;
+    if (value >= 'A' && value <= 'F') return value - 'A' + 10;
+    return -1;
 }
 
-static inline void zy2_eprint(const char* value) {
-    zy2_error_begin();
-    fprintf(stderr, "%s\n", value ? value : "null");
-    zy2_error_end();
+static inline bool zy2_parse_hex_color(const char* color, unsigned int* red, unsigned int* green, unsigned int* blue) {
+    int digits[6];
+    if (!color || strlen(color) != 7u || color[0] != '#') return false;
+    for (size_t index = 0u; index < 6u; ++index) {
+        digits[index] = zy2_hex_digit(color[index + 1u]);
+        if (digits[index] < 0) return false;
+    }
+    *red = (unsigned int)(digits[0] * 16 + digits[1]);
+    *green = (unsigned int)(digits[2] * 16 + digits[3]);
+    *blue = (unsigned int)(digits[4] * 16 + digits[5]);
+    return true;
+}
+
+static inline void zy2_print_cmd(const char* value, const char* color) {
+    unsigned int red = 0u;
+    unsigned int green = 0u;
+    unsigned int blue = 0u;
+    bool colored = zy2_parse_hex_color(color, &red, &green, &blue) && zy2_stream_color_enabled(stdout);
+    if (colored) fprintf(stdout, "\x1b[38;2;%u;%u;%um", red, green, blue);
+    fprintf(stdout, "%s\n", value ? value : "null");
+    if (colored) fputs("\x1b[0m", stdout);
 }
 
 static inline void zy2_unhandled_error(zy2_Error error) {

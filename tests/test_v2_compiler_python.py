@@ -631,6 +631,60 @@ fn main() i32 {
     assert result.returncode == 0, result.stdout + result.stderr
 
 
+def test_v2_string_to_list_splits_utf8_characters_and_releases_storage(tmp_path: Path) -> None:
+    source = tmp_path / "string_chars.zy"
+    source.write_text(
+        """fn main() i32 {
+    let text = "I am你🙂"
+    let chars: List<str> = STR_TO_LIST__(text)
+    let chinese: str = chars[4] catch err {
+        recover ""
+    }
+    let emoji: str = chars[5] catch err {
+        recover ""
+    }
+    if LIST_LEN__(chars) != 6 || chinese != "你" || emoji != "🙂" {
+        return 1
+    }
+    PRINT_CMD__("ember", "#D97757")
+    return 0
+}
+""",
+        encoding="utf-8",
+    )
+
+    compiler = Compiler()
+    generated = compiler.emit_file(source)
+    executable = tmp_path / ("string-chars.exe" if sys.platform.startswith("win") else "string-chars")
+    compiler.build_file(source, executable)
+    environment = os.environ.copy()
+    environment["ZYEN_COLOR"] = "never"
+    result = subprocess.run([str(executable)], capture_output=True, text=True, check=False, env=environment)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert result.stdout == "ember\n"
+    assert "zy2_list_str_from_utf8" in generated
+    assert "owned_text" in generated
+
+
+def test_v2_print_cmd_emits_truecolor_when_forced(tmp_path: Path) -> None:
+    source = tmp_path / "print_color.zy"
+    source.write_text(
+        'fn main() i32 {\n    PRINT_CMD__("ember", "#D97757")\n    return 0\n}\n',
+        encoding="utf-8",
+    )
+    executable = tmp_path / ("print-color.exe" if sys.platform.startswith("win") else "print-color")
+    Compiler().build_file(source, executable)
+    environment = os.environ.copy()
+    environment.pop("NO_COLOR", None)
+    environment["ZYEN_COLOR"] = "always"
+    result = subprocess.run([str(executable)], capture_output=True, text=True, check=False, env=environment)
+
+    assert result.returncode == 0
+    assert result.stdout == "\x1b[38;2;217;119;87member\n\x1b[0m"
+    assert result.stderr == ""
+
+
 @pytest.mark.parametrize(
     "module_name",
     [
@@ -1082,6 +1136,22 @@ def test_v2_list_uses_builtin_len_and_checked_index_syntax(tmp_path: Path) -> No
             'fn main() i32 {\n    let values = [1]\n    LIST_SET__(values, "zero", 2)\n    return 0\n}\n',
             "expected `i32`, got `str`",
         ),
+        (
+            "fn main() i32 {\n    let chars = STR_TO_LIST__(1)\n    return 0\n}\n",
+            "expected `str`, got `i32`",
+        ),
+        (
+            'fn main() i32 {\n    let char = STR_TO_LIST__("hello")[0]\n    return 0\n}\n',
+            "store `STR_TO_LIST__` in a local before indexing",
+        ),
+        (
+            'fn main() i32 {\n    PRINT_CMD__("hello")\n    return 0\n}\n',
+            "PRINT_CMD__ expects text and a #RRGGBB color",
+        ),
+        (
+            'fn main() i32 {\n    PRINT_CMD__("hello", "red")\n    return 0\n}\n',
+            "PRINT_CMD__ color literal must use #RRGGBB",
+        ),
     ],
 )
 def test_v2_list_builtin_syntax_rejects_invalid_operands(source: str, message: str) -> None:
@@ -1451,7 +1521,7 @@ def test_v2_cli_compile_error_is_red_when_color_is_forced(tmp_path: Path) -> Non
     assert result.stderr.rstrip().endswith("\x1b[0m")
 
 
-def test_v2_eprint_is_red_when_color_is_forced(tmp_path: Path) -> None:
+def test_v2_eprint_uses_red_print_command_when_color_is_forced(tmp_path: Path) -> None:
     source = tmp_path / "red_eprint.zy"
     source.write_text(
         'import <std/io> as io\n\nfn main() i32 {\n    io.eprint("warning")\n    return 0\n}\n',
@@ -1471,7 +1541,8 @@ def test_v2_eprint_is_red_when_color_is_forced(tmp_path: Path) -> None:
     )
 
     assert result.returncode == 0
-    assert result.stderr == "\x1b[31mwarning\n\x1b[0m"
+    assert result.stdout == "\x1b[38;2;255;0;0mwarning\n\x1b[0m"
+    assert result.stderr == ""
 
 
 def test_v2_compile_error_reports_exact_source_line() -> None:

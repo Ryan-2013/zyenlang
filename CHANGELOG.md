@@ -4,6 +4,10 @@
 
 ### Added
 
+- `PRINT_CMD__(text, color)` terminal truecolor output and pure-ZyenLang
+  `std/io` wrappers for white `print` and red `eprint`.
+- `STR_TO_LIST__(text)`, which splits valid UTF-8 into an ARC-managed
+  `List<str>` with one Unicode code point per element.
 - Typed v2 f-strings with expression interpolation, escaped braces, once-only
   evaluation, and checked formatting for strings, numeric values, booleans,
   and optional strings.

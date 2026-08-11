@@ -4,7 +4,7 @@ const KEYWORDS = [
   'as', 'await', 'break', 'catch', 'continue', 'else', 'false', 'fn', 'if',
   'import', 'let', 'mut', 'native', 'null', 'private', 'public', 'recover', 'return',
   'source', 'spawn', 'stop', 'struct', 'throws', 'true', 'TYPEOF__',
-  'LIST_LEN__', 'LIST_PUSH__', 'LIST_SET__', 'while'
+  'LIST_LEN__', 'LIST_PUSH__', 'LIST_SET__', 'PRINT_CMD__', 'STR_TO_LIST__', 'while'
 ];
 
 const TYPES = [
@@ -33,6 +33,18 @@ const SPECIAL_FORMS = [
     detail: 'LIST_SET__(list: List<T>, index: i32, value: T) void throws Error',
     snippet: 'LIST_SET__(${1:list}, ${2:index}, ${3:value})',
     documentation: 'Replace a List<T> element with checked bounds.'
+  },
+  {
+    name: 'PRINT_CMD__',
+    detail: 'PRINT_CMD__(text: str, color: str) void',
+    snippet: 'PRINT_CMD__(${1:text}, "${2:#FFFFFF}")',
+    documentation: 'Write one line using a #RRGGBB terminal color when color output is enabled.'
+  },
+  {
+    name: 'STR_TO_LIST__',
+    detail: 'STR_TO_LIST__(text: str) List<str>',
+    snippet: 'STR_TO_LIST__(${1:text})',
+    documentation: 'Split UTF-8 text into an ARC-managed List with one Unicode character per element.'
   },
   {
     name: 'TYPEOF__',

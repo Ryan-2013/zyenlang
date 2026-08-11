@@ -51,3 +51,10 @@ should use the uppercase compiler forms and index syntax.
 
 The `<std/list>` module contains generic helpers such as `length` and
 `is_empty`; it does not define the `List<T>` type itself.
+
+`STR_TO_LIST__(text)` splits valid UTF-8 by Unicode code point and returns
+`List<str>`. Chinese characters and emoji each occupy one element. The List ARC
+owner also owns the generated character backing storage, which is released
+when the last List alias leaves scope. Character strings borrowed from the List
+must not outlive that List. Bind the returned List to a local before indexing;
+direct `STR_TO_LIST__(text)[index]` access is rejected by the compiler.

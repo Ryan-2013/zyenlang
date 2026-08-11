@@ -211,6 +211,10 @@ library struct. `LIST_LEN__(list)` lowers to the specialized storage length help
 `LIST_PUSH__(list, value)` and `LIST_SET__(list, index, value)` lower directly to the
 specialized mutation helpers; `LIST_SET__` returns `void throws Error`.
 Out-of-range errors carry the `.zy` call site's file, line, and column.
+`STR_TO_LIST__(text)` specializes `List<str>` and attaches a packed UTF-8
+character buffer to the List storage, so the same ARC owner releases both the
+item table and character data. `PRINT_CMD__(text, color)` lowers to the shared
+terminal truecolor runtime and emits plain text when color is disabled.
 
 ## Commands
 

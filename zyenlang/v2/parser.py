@@ -35,6 +35,8 @@ CAST_OPERAND_STARTS = {
     "LIST_LEN__",
     "LIST_PUSH__",
     "LIST_SET__",
+    "PRINT_CMD__",
+    "STR_TO_LIST__",
     "(",
     "[",
     "SPAWN",
@@ -606,7 +608,7 @@ class Parser:
             return ast.BoolExpr(token.span, token.kind == "TRUE")
         if token := self.match("NULL"):
             return ast.NullExpr(token.span)
-        if token := self.match("LIST_LEN__", "LIST_PUSH__", "LIST_SET__"):
+        if token := self.match("LIST_LEN__", "LIST_PUSH__", "LIST_SET__", "PRINT_CMD__", "STR_TO_LIST__"):
             self.expect("(", f"{token.value} requires `(`")
             args: list[ast.Expr] = []
             self.skip_newlines()

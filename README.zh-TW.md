@@ -52,7 +52,8 @@ zy build main.zy -o main.c
 - 泛型函式、強型別 `List<T>`、tuple 多回傳值；
 - `T | null`、`if let`、`throws Error`、`stop`、`catch`、`recover`；
 - `while`、`break`、`continue`、`Task<T>`、`spawn` 與 `await`；
-- `TYPEOF__`、`FILE__`、`GET_ARGS__`、`GET_EXE__`；
+- `TYPEOF__`、`FILE__`、`GET_ARGS__`、`GET_EXE__`、彩色 `PRINT_CMD__` 與
+  UTF-8 `STR_TO_LIST__`；
 - 標準模組、套件模組、相對模組與受檢查的 native C 宣告；
 - ARC 管理的 `Box<T>`、`List<T>` 與含 managed 欄位的結構體。
 

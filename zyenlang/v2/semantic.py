@@ -916,6 +916,15 @@ class Lowerer:
                 return self.coerce(self.lower_function_ref(symbol, expression.span), expected, expression.span)
             return self.coerce(self.lower_field(expression), expected, expression.span)
         if isinstance(expression, ast.IndexExpr):
+            if (
+                isinstance(expression.receiver, ast.CallExpr)
+                and isinstance(expression.receiver.callee, ast.NameExpr)
+                and expression.receiver.callee.name == "STR_TO_LIST__"
+            ):
+                raise self.error(
+                    "store `STR_TO_LIST__` in a local before indexing so the borrowed str cannot outlive its List",
+                    expression.receiver.span,
+                )
             receiver = self.lower_expr(expression.receiver)
             if not is_list(receiver.typ):
                 raise self.error(
@@ -1151,6 +1160,21 @@ class Lowerer:
                 index = self.lower_expr(expression.args[1], PrimitiveType("i32"))
                 value = self.lower_expr(expression.args[2], receiver.typ.args[0])
                 return ir.IRCall(VOID, expression.span, "__zy2_list_set", (receiver, index, value), ERROR)
+            if name == "PRINT_CMD__":
+                if len(expression.args) != 2:
+                    raise self.error("PRINT_CMD__ expects text and a #RRGGBB color", expression.span)
+                if isinstance(expression.args[1], ast.StringExpr) and not re.fullmatch(
+                    r"#[0-9A-Fa-f]{6}", expression.args[1].value
+                ):
+                    raise self.error("PRINT_CMD__ color literal must use #RRGGBB", expression.args[1].span)
+                text = self.lower_expr(expression.args[0], STR)
+                color = self.lower_expr(expression.args[1], STR)
+                return ir.IRCall(VOID, expression.span, "zy2_print_cmd", (text, color))
+            if name == "STR_TO_LIST__":
+                if len(expression.args) != 1:
+                    raise self.error("STR_TO_LIST__ expects exactly one str", expression.span)
+                text = self.lower_expr(expression.args[0], STR)
+                return ir.IRCall(NamedType("List", (STR,)), expression.span, "__zy2_str_to_list", (text,))
             if name == "Box":
                 if len(expression.args) != 1:
                     raise self.error("Box expects exactly one value", expression.span)
@@ -1159,12 +1183,6 @@ class Lowerer:
                 box_type = NamedType("Box", (value.typ,))
                 self.validate_box_payload(box_type, expression.span)
                 return ir.IRBox(box_type, expression.span, value)
-            if name in {"__runtime_write_line", "__runtime_write_error"}:
-                if len(expression.args) != 1:
-                    raise self.error(f"{name} expects exactly one str", expression.span)
-                arg = self.lower_expr(expression.args[0], STR)
-                target = "zy2_print" if name == "__runtime_write_line" else "zy2_eprint"
-                return ir.IRCall(VOID, expression.span, target, (arg,))
             local_type = self.find_local(name)
             if local_type is not None:
                 callee = self.lower_expr(expression.callee)

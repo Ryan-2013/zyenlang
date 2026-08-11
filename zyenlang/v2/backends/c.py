@@ -378,6 +378,7 @@ class CBackend:
                         f"    {self.c_type(element)}* items;",
                         "    uintptr_t len;",
                         "    uintptr_t capacity;",
+                        *(["    char* owned_text;"] if element == STR else []),
                         f"}} {storage};",
                         f"typedef struct {name} {{",
                         f"    {storage}* storage;",
@@ -393,6 +394,7 @@ class CBackend:
                         f"        {release_item}",
                         "    }",
                         "    free(storage->items);",
+                        *(["    free(storage->owned_text);"] if element == STR else []),
                         "    free(storage);",
                         "}",
                         f"static inline ZY2_MAYBE_UNUSED {name} {name}_new(uintptr_t capacity) {{",
@@ -467,6 +469,43 @@ class CBackend:
                         "",
                     ]
                 )
+                if element == STR:
+                    self.type_lines.extend(
+                        [
+                            f"static inline ZY2_MAYBE_UNUSED {name} {name}_from_utf8(const char* text) {{",
+                            "    const unsigned char* bytes = (const unsigned char*)(text ? text : \"\");",
+                            "    size_t byte_len = strlen((const char*)bytes);",
+                            "    size_t offset = 0u;",
+                            "    uintptr_t count = 0u;",
+                            "    while (offset < byte_len) {",
+                            "        size_t width = zy2_utf8_character_size(bytes + offset, byte_len - offset);",
+                            "        if (width == 0u) zy2_arc_panic(\"STR_TO_LIST__ expects valid UTF-8\");",
+                            "        offset += width;",
+                            "        count += 1u;",
+                            "    }",
+                            f"    {name} result = {name}_new(count);",
+                            "    if (count == 0u) return result;",
+                            "    if (byte_len > SIZE_MAX - (size_t)count) zy2_arc_panic(\"STR_TO_LIST__ input is too large\");",
+                            "    char* backing = (char*)malloc(byte_len + (size_t)count);",
+                            "    if (!backing) zy2_arc_panic(\"cannot allocate STR_TO_LIST__ backing storage\");",
+                            "    result.storage->owned_text = backing;",
+                            "    offset = 0u;",
+                            "    uintptr_t index = 0u;",
+                            "    char* cursor = backing;",
+                            "    while (offset < byte_len) {",
+                            "        size_t width = zy2_utf8_character_size(bytes + offset, byte_len - offset);",
+                            "        result.storage->items[index++] = (const char*)cursor;",
+                            "        memcpy(cursor, bytes + offset, width);",
+                            "        cursor[width] = '\\0';",
+                            "        cursor += width + 1u;",
+                            "        offset += width;",
+                            "    }",
+                            "    result.storage->len = count;",
+                            "    return result;",
+                            "}",
+                            "",
+                        ]
+                    )
             elif is_task(typ):
                 self.emit_type_definition(typ.args[0])
                 self.type_lines.extend(
@@ -776,7 +815,7 @@ class CBackend:
                 return CExpr(f"UINT64_C({expression.value})", [])
             return CExpr(str(expression.value), [])
         if isinstance(expression, ir.IRString):
-            return CExpr(json.dumps(expression.value), [])
+            return CExpr(self.c_string(expression.value), [])
         if isinstance(expression, ir.IRFString):
             return self.emit_fstring(expression)
         if isinstance(expression, ir.IRBool):
@@ -890,7 +929,7 @@ class CBackend:
             items = self.struct_metadata_items(struct_name, category)
             if not items:
                 continue
-            values = ", ".join(json.dumps(item) for item in items)
+            values = ", ".join(self.c_string(item) for item in items)
             lines.append(f"static const char* {self.struct_metadata_name(struct_name, category)}[] = {{ {values} }};")
         return lines
 
@@ -971,7 +1010,7 @@ class CBackend:
         for item in expression.parts:
             if isinstance(item, str):
                 if item:
-                    prelude.append(f"zy2_format_append({result}, {json.dumps(item)});")
+                    prelude.append(f"zy2_format_append({result}, {self.c_string(item)});")
                 continue
             value = self.emit_expr(item)
             prelude.extend(value.prelude)
@@ -1188,6 +1227,11 @@ class CBackend:
             prelude.append(f"bool {result_value} = {self.type_name(expression.args[0].typ)}_len({args[0]}) == 0;")
             prelude.extend(owned_arg_releases)
             return CExpr(result_value, prelude)
+        if expression.target == "__zy2_str_to_list":
+            result_value = self.temp("string_list")
+            prelude.append(f"{self.c_type(expression.typ)} {result_value} = {self.type_name(expression.typ)}_from_utf8({args[0]});")
+            prelude.extend(owned_arg_releases)
+            return CExpr(result_value, prelude, owned=True)
         if expression.target in {"__zy2_list_push", "__zy2_list_clear"}:
             list_name = self.type_name(expression.args[0].typ)
             if expression.target == "__zy2_list_push":
@@ -1200,7 +1244,7 @@ class CBackend:
             list_value = self.temp("list")
             index_value = self.temp("index")
             result = self.temp("result")
-            source_name = json.dumps(expression.span.source_name)
+            source_name = self.c_string(expression.span.source_name)
             list_name = self.type_name(expression.args[0].typ)
             element_type = expression.typ
             prelude.extend(
@@ -1223,7 +1267,7 @@ class CBackend:
             list_value = args[0]
             index_value = self.temp("index")
             result = self.temp("result")
-            source_name = json.dumps(expression.span.source_name)
+            source_name = self.c_string(expression.span.source_name)
             list_name = self.type_name(expression.args[0].typ)
             prelude.extend(
                 [
@@ -1243,7 +1287,7 @@ class CBackend:
         if expression.target in {"__zy2_list_pop", "__zy2_list_remove"}:
             list_value = args[0]
             result = self.temp("result")
-            source_name = json.dumps(expression.span.source_name)
+            source_name = self.c_string(expression.span.source_name)
             list_type = expression.args[0].typ
             list_name = self.type_name(list_type)
             element_type = expression.typ
@@ -1262,7 +1306,7 @@ class CBackend:
                     f"{self.result_type(element_type)} {result} = {{0}};",
                     f"if ({invalid}) {{",
                     f"    {result}.ok = false;",
-                    f"    {result}.error = (zy2_Error){{ .message = {json.dumps(message)}, .source_file = {source_name}, .line = {expression.span.line}, .column = {expression.span.column} }};",
+                    f"    {result}.error = (zy2_Error){{ .message = {self.c_string(message)}, .source_file = {source_name}, .line = {expression.span.line}, .column = {expression.span.column} }};",
                     "} else {",
                 ]
             )
@@ -1307,7 +1351,7 @@ class CBackend:
         prelude = list(callee.prelude)
         prelude.append(f"{self.c_type(expression.callee.typ)} {callee_temp} = {callee.code};")
         prelude.append(
-            f"if (!{callee_temp}) zy2_panic_at({json.dumps(expression.span.source_name)}, "
+            f"if (!{callee_temp}) zy2_panic_at({self.c_string(expression.span.source_name)}, "
             f"{expression.span.line}, {expression.span.column}, \"attempted to call an empty function value\");"
         )
         args: list[str] = []
@@ -1550,6 +1594,10 @@ class CBackend:
     @staticmethod
     def ident(value: str) -> str:
         return re.sub(r"[^A-Za-z0-9_]", "_", value)
+
+    @staticmethod
+    def c_string(value: str) -> str:
+        return json.dumps(value, ensure_ascii=False)
 
     @staticmethod
     def struct_tag(name: str) -> str:

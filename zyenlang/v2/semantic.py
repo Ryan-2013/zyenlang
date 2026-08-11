@@ -19,6 +19,7 @@ from .types import (
     Type,
     TypeVar,
     assignable,
+    common_numeric_type,
     integer_literal_fits,
     is_box,
     is_integer,
@@ -856,12 +857,33 @@ class Lowerer:
             return ir.IRBinary(BOOL, expression.span, left, expression.operator, right)
 
         left = self.lower_expr(expression.left)
-        comparison = expression.operator in {"<", "<=", ">", ">=", "==", "!="}
-        right = self.lower_expr(expression.right, None if comparison else left.typ)
+        right = self.lower_expr(expression.right)
         if expression.operator in {"+", "-", "*", "/", "%"}:
-            if not is_numeric(left.typ) or left.typ != right.typ:
-                raise self.error("arithmetic operands must have the same numeric type", expression.span)
-            return self.coerce(ir.IRBinary(left.typ, expression.span, left, expression.operator, right), expected, expression.span)
+            if isinstance(left.typ, TypeVar) and is_numeric(right.typ):
+                self.coerce(left, right.typ, expression.left.span)
+            if is_numeric(left.typ) and isinstance(right.typ, TypeVar):
+                self.coerce(right, left.typ, expression.right.span)
+            if isinstance(left.typ, TypeVar) or isinstance(right.typ, TypeVar):
+                raise self.error("generic arithmetic operands require explicit numeric casts", expression.span)
+            common_type = common_numeric_type(left.typ, right.typ)
+            if common_type is None:
+                if is_numeric(left.typ) and is_numeric(right.typ):
+                    raise self.error(
+                        f"no lossless common numeric type for `{left.typ.display()}` and `{right.typ.display()}`; use an explicit cast",
+                        expression.span,
+                    )
+                raise self.error("arithmetic operands must be numeric", expression.span)
+            if expression.operator == "%" and not is_integer(common_type):
+                raise self.error("modulo operands must be integers", expression.span)
+            if left.typ != common_type:
+                left = ir.IRCast(common_type, expression.left.span, left)
+            if right.typ != common_type:
+                right = ir.IRCast(common_type, expression.right.span, right)
+            return self.coerce(
+                ir.IRBinary(common_type, expression.span, left, expression.operator, right),
+                expected,
+                expression.span,
+            )
         if expression.operator in {"<", "<=", ">", ">="}:
             if not is_numeric(left.typ) or not is_numeric(right.typ):
                 raise self.error("comparison operands must be numeric", expression.span)

@@ -10,6 +10,10 @@
 
 ### Changed
 
+- Mixed numeric arithmetic now uses deterministic promotion. Integer/float
+  expressions such as `i32 + f64` produce `f64`, mixed integers choose the
+  smallest lossless fixed-width type, and impossible `i64`/`u64` combinations
+  require an explicit cast. Floating-point modulo is rejected during checking.
 - Generic function templates are now checked before monomorphization. Mixing a
   concrete type such as `i32` with unconstrained `T` requires an explicit cast,
   and every concrete specialization validates that cast again.

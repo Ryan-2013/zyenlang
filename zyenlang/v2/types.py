@@ -100,6 +100,26 @@ def is_numeric(typ: Type) -> bool:
     return is_integer(typ) or is_float(typ)
 
 
+def common_numeric_type(left: Type, right: Type) -> Type | None:
+    if not is_numeric(left) or not is_numeric(right):
+        return None
+    if left == right:
+        return left
+    if is_float(left) or is_float(right):
+        if left == PrimitiveType("f64") or right == PrimitiveType("f64"):
+            return PrimitiveType("f64")
+        return PrimitiveType("f32")
+
+    low = min(INTEGER_TYPES[left.name][0], INTEGER_TYPES[right.name][0])
+    high = max(INTEGER_TYPES[left.name][1], INTEGER_TYPES[right.name][1])
+    candidates = ("i8", "i16", "i32", "i64") if low < 0 else ("u8", "u16", "u32", "u64")
+    for name in candidates:
+        candidate_low, candidate_high = INTEGER_TYPES[name]
+        if candidate_low <= low and high <= candidate_high:
+            return PrimitiveType(name)
+    return None
+
+
 def is_list(typ: Type) -> bool:
     return isinstance(typ, NamedType) and typ.name == "List" and len(typ.args) == 1
 

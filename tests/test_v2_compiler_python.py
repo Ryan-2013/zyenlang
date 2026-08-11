@@ -235,6 +235,88 @@ def test_v2_mixed_numeric_comparisons_are_safe_and_automatic(tmp_path: Path) -> 
     assert "zy2_compare_i64_u64_gt" in generated
 
 
+def test_v2_mixed_integer_and_float_arithmetic_promotes_and_runs(tmp_path: Path) -> None:
+    source = tmp_path / "mixed_arithmetic.zy"
+    source.write_text(
+        """fn main() i32 {
+    let integer: i32 = 7
+    let floating: f64 = (f64)2
+    let sum: f64 = integer + floating
+    let reverse: f64 = floating + integer
+    let difference: f64 = integer - floating
+    let product: f64 = integer * floating
+    let quotient: f64 = integer / floating
+
+    if sum == (f64)9 && reverse == (f64)9 && difference == (f64)5 && product == (f64)14 && quotient > (f64)3 && quotient < (f64)4 {
+        return 0
+    }
+    return 1
+}
+""",
+        encoding="utf-8",
+    )
+
+    compiler = Compiler()
+    generated = compiler.emit_file(source)
+    executable = tmp_path / ("mixed-arithmetic.exe" if sys.platform.startswith("win") else "mixed-arithmetic")
+    compiler.build_file(source, executable)
+    result = subprocess.run([str(executable)], capture_output=True, text=True, check=False)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "((double)(integer))" in generated
+
+
+def test_v2_mixed_integer_arithmetic_uses_a_lossless_common_type(tmp_path: Path) -> None:
+    source = tmp_path / "integer_promotion.zy"
+    source.write_text(
+        """fn main() i32 {
+    let signed_small: i8 = -1
+    let unsigned_small: u8 = 2
+    let small_result: i16 = signed_small + unsigned_small
+    let signed_wide: i32 = -1
+    let unsigned_wide: u32 = 2
+    let wide_result: i64 = signed_wide + unsigned_wide
+
+    if small_result == 1 && wide_result == 1 {
+        return 0
+    }
+    return 1
+}
+""",
+        encoding="utf-8",
+    )
+    executable = tmp_path / ("integer-promotion.exe" if sys.platform.startswith("win") else "integer-promotion")
+    Compiler().build_file(source, executable)
+    result = subprocess.run([str(executable)], capture_output=True, text=True, check=False)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_v2_mixed_integer_arithmetic_rejects_no_lossless_common_type() -> None:
+    source = """fn main() i32 {
+    let signed: i64 = -1
+    let unsigned: u64 = 1
+    let invalid = signed + unsigned
+    return 0
+}
+"""
+
+    with pytest.raises(CompileError, match="no lossless common numeric type for `i64` and `u64`"):
+        Compiler().check_source(source)
+
+
+def test_v2_modulo_rejects_float_operands_during_check() -> None:
+    source = """fn main() i32 {
+    let floating: f64 = (f64)5
+    let invalid = floating % (f64)2
+    return 0
+}
+"""
+
+    with pytest.raises(CompileError, match="modulo operands must be integers"):
+        Compiler().check_source(source)
+
+
 def test_v2_rejects_arbitrary_union_types() -> None:
     source = """
 fn main() i32 {

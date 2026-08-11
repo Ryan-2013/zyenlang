@@ -58,6 +58,7 @@ fn main() i32 {
 ```powershell
 zy check main.zy
 zy run main.zy
+zy run main.zy -- first-argument second-argument
 zy build main.zy -o main.exe --release
 zy build main.zy -o main.c
 ```
@@ -105,9 +106,10 @@ and current v1 limits.
 ## Standard library
 
 The v0.2 standard library includes typed list/error/option helpers, process
-arguments, OS threads, HTTP client and server modules, and a cross-platform GUI
-backend with retained `Application`, `Panel`, `Label`, `Button`, and `Column`
-widgets. Every module uses the same import mechanism as third-party modules.
+arguments, portable filesystem and path operations, OS threads, HTTP client and
+server modules, and a cross-platform GUI backend with retained `Application`,
+`Panel`, `Label`, `Button`, and `Column` widgets. Every module uses the same
+import mechanism as third-party modules.
 
 ```zy
 import <std/request> as request
@@ -120,6 +122,12 @@ fn main() i32 {
     }
     return 0
 }
+```
+
+A complete filesystem CLI is included as `examples/v2_file_tree.zy`:
+
+```powershell
+zy run examples/v2_file_tree.zy -- . tree.txt
 ```
 
 ## VS Code

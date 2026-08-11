@@ -1,0 +1,43 @@
+import <std/io> as io
+import <std/fs> as fs
+
+fn main() i32 {
+    let args: List<str> = GET_ARGS__
+    let target_folder: str = "."
+    let out_file: str = ""
+    if LIST_LEN__(args) > 0 {
+        target_folder = args[0] catch err {
+            recover "."
+        }
+    }
+    if target_folder == "--help" || target_folder == "-h" {
+        io.print("usage: zy run examples/v2_file_tree.zy -- [folder] [output.txt]")
+        return 0
+    }
+    if LIST_LEN__(args) > 1 {
+        out_file = args[1] catch err {
+            recover ""
+        }
+    }
+
+    let rendered: str = fs.tree(target_folder) catch err {
+        io.eprint(f"tree: {err.message}")
+        recover ""
+    }
+    if rendered == "" {
+        return 1
+    }
+    if out_file != "" {
+        let saved: i32 = fs.write_text(out_file, rendered) catch err {
+            io.eprint(f"write: {err.message}")
+            recover -1
+        }
+        if saved != 0 {
+            return 1
+        }
+        io.print(f"wrote {out_file}")
+        return 0
+    }
+    io.print(rendered)
+    return 0
+}

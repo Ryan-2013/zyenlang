@@ -70,6 +70,12 @@ const BUILTINS = {
     ['is_file', 'fn is_file(value: str) bool'],
     ['is_dir', 'fn is_dir(value: str) bool']
   ],
+  fs: [
+    ['read_text', 'fn read_text(path: str) str throws Error'],
+    ['write_text', 'fn write_text(path: str, value: str) i32 throws Error'],
+    ['append_text', 'fn append_text(path: str, value: str) i32 throws Error'],
+    ['tree', 'fn tree(path: str) str throws Error']
+  ],
   thread: [
     ['sleep_ms', 'fn sleep_ms(milliseconds: i32) i32'],
     ['yield_now', 'fn yield_now() i32'],

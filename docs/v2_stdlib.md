@@ -57,6 +57,21 @@ let name: str = path.basename(source)
 Returned strings use rotating thread-local borrowed buffers until owned v2
 strings are available.
 
+## Filesystem
+
+```zy
+import <std/fs> as fs
+
+let listing: str = fs.tree(".")
+let source: str = fs.read_text("main.zy")
+fs.write_text("tree.txt", listing)
+```
+
+`std/fs` provides `read_text`, `write_text`, `append_text`, and a sorted ASCII
+`tree`. All operations use `throws Error`; directory traversal does not follow
+symbolic links or Windows reparse-point directories and has bounded depth and
+output size.
+
 ## Threads and tasks
 
 `std/thread` provides `sleep_ms`, `yield_now`, and `cpu_count`. `spawn call()`
@@ -100,7 +115,8 @@ callback.
 Each shipped module has its contract beside its source: [`io`](../zyenlang/v2/std/io.md),
 [`error`](../zyenlang/v2/std/error.md), [`option`](../zyenlang/v2/std/option.md),
 [`list`](../zyenlang/v2/std/list.md), [`process`](../zyenlang/v2/std/process.md),
-[`path`](../zyenlang/v2/std/path.md), [`thread`](../zyenlang/v2/std/thread.md),
+[`path`](../zyenlang/v2/std/path.md), [`fs`](../zyenlang/v2/std/fs.md),
+[`thread`](../zyenlang/v2/std/thread.md),
 [`request`](../zyenlang/v2/std/request.md), [`server`](../zyenlang/v2/std/server.md),
 [`gui`](../zyenlang/v2/std/gui.md), and [`editor`](../zyenlang/v2/std/editor.md).
 

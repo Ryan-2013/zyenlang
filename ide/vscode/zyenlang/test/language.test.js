@@ -57,6 +57,8 @@ assert(language.SPECIAL_FORMS.some((item) => item.name === 'TYPEOF__' && item.de
 assert.deepStrictEqual(language.importPathAt('import <std/pa', 14), { kind: 'std', prefix: 'pa' });
 assert.strictEqual(language.importPathAt('let value = 1', 13), null);
 assert(language.BUILTINS.path.some(([name]) => name === 'join'));
+assert(language.BUILTINS.fs.some(([name]) => name === 'tree'));
+assert(language.BUILTINS.fs.some(([name]) => name === 'write_text'));
 assert(language.BUILTINS.gui.some(([name]) => name === 'button'));
 assert(language.BUILTINS.gui.some(([name]) => name === 'button_group'));
 

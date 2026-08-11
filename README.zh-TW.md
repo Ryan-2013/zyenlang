@@ -53,6 +53,7 @@ fn main() i32 {
 ```powershell
 zy check main.zy
 zy run main.zy
+zy run main.zy -- 第一個參數 第二個參數
 zy build main.zy -o main.exe --release
 zy build main.zy -o main.c
 ```
@@ -72,11 +73,18 @@ zy build main.zy -o main.c
 - `while`、賦值、`break`、`continue`；
 - `spawn` 與只能 `await` 一次的線性 `Task<T>`；
 - `TYPEOF__ value Type` 編譯期型別判斷；
+- `std/path` 與 `std/fs` 的跨平台路徑、文字檔案與目錄樹操作；
 - 一般模組、標準模組、套件模組，以及受檢查的 native C 宣告。
 
 完整內容請看 [0.2 編譯器架構](docs/v2_architecture.md)、
 [標準庫說明](docs/v2_stdlib.md) 與
 [語言範例](examples/v2_language_tour.zy)。
+
+倉庫內也包含可直接執行的檔案樹 CLI：
+
+```powershell
+zy run examples/v2_file_tree.zy -- . tree.txt
+```
 
 ## 套件管理器
 

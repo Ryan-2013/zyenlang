@@ -1,0 +1,41 @@
+native source "fs_native.c"
+
+private native fn read_text_native(path: str) str = "zy2_fs_read_text"
+private native fn write_text_native(path: str, value: str) i32 = "zy2_fs_write_text"
+private native fn append_text_native(path: str, value: str) i32 = "zy2_fs_append_text"
+private native fn tree_native(path: str) str = "zy2_fs_tree"
+private native fn last_error_native() str = "zy2_fs_error"
+
+public fn read_text(path: str) str throws Error {
+    let value: str = read_text_native(path)
+    let message: str = last_error_native()
+    if message != "" {
+        stop message
+    }
+    return value
+}
+
+public fn write_text(path: str, value: str) i32 throws Error {
+    let status: i32 = write_text_native(path, value)
+    if status != 0 {
+        stop last_error_native()
+    }
+    return status
+}
+
+public fn append_text(path: str, value: str) i32 throws Error {
+    let status: i32 = append_text_native(path, value)
+    if status != 0 {
+        stop last_error_native()
+    }
+    return status
+}
+
+public fn tree(path: str) str throws Error {
+    let value: str = tree_native(path)
+    let message: str = last_error_native()
+    if message != "" {
+        stop message
+    }
+    return value
+}

@@ -20,6 +20,7 @@ It does not import or mirror the v0.1 modules.
 |---|---|---|
 | [`list`](list.md) | Implemented | Growable typed ARC List with checked mutation and nested managed elements. |
 | [`path`](path.md) | Implemented | Cross-platform lexical paths plus exists/file/directory queries. |
+| [`fs`](fs.md) | Implemented | Portable text file I/O and bounded, cycle-safe directory trees. |
 | [`error`](error.md) | Implemented | `require` uses `throws Error` and `stop`. |
 | [`option`](option.md) | Implemented | Helpers for the restricted `T | null` optional type. |
 | [`io`](io.md) | Implemented | Public `print(str)` and red-terminal `eprint(str)` wrappers. |

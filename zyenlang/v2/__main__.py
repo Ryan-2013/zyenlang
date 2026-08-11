@@ -52,7 +52,13 @@ def make_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
-    args = make_parser().parse_args(argv)
+    arguments = list(sys.argv[1:] if argv is None else argv)
+    program_args: list[str] = []
+    if arguments and arguments[0] == "run" and "--" in arguments:
+        separator = arguments.index("--")
+        program_args = arguments[separator + 1:]
+        arguments = arguments[:separator]
+    args = make_parser().parse_args(arguments)
     if args.command == "pkg":
         try:
             return handle_package_command(args)
@@ -78,7 +84,7 @@ def main(argv: list[str] | None = None) -> int:
             print(args.output)
             return 0
         if args.command == "run":
-            return compiler.run_file(args.input)
+            return compiler.run_file(args.input, program_args)
     except CompileError as exc:
         print(render_error(exc, sys.stderr), file=sys.stderr)
         return 1

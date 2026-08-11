@@ -12,6 +12,7 @@ from .types import (
     NULL,
     STR,
     VOID,
+    FunctionType,
     NamedType,
     OptionalType,
     PrimitiveType,
@@ -220,6 +221,7 @@ class Lowerer:
                 if field.name in symbol.fields:
                     raise self.error(f"duplicate field `{field.name}` in `{symbol.name}`", field.span)
                 typ = resolve_type_node(field.type_node, known, type_vars, self.source_name)
+                self.validate_function_types(typ, field.span)
                 if self.contains_box(typ):
                     raise self.error(
                         "Box<T> fields require managed aggregate destructors and are not enabled yet",
@@ -266,6 +268,8 @@ class Lowerer:
             visit(name)
 
     def by_value_struct_dependencies(self, typ: Type) -> tuple[str, ...]:
+        if isinstance(typ, FunctionType):
+            return ()
         if isinstance(typ, NamedType):
             if typ.name in self.structs:
                 return (typ.name,)
@@ -505,10 +509,16 @@ class Lowerer:
         scope[name] = typ
 
     def lookup_local(self, name: str, span: SourceSpan) -> Type:
+        typ = self.find_local(name)
+        if typ is not None:
+            return typ
+        raise self.error(f"unknown name `{name}`", span)
+
+    def find_local(self, name: str) -> Type | None:
         for scope in reversed(self.scopes):
             if name in scope:
                 return scope[name]
-        raise self.error(f"unknown name `{name}`", span)
+        return None
 
     def lower_block(self, block: ast.Block, *, push_scope: bool = True) -> ir.IRBlock:
         if push_scope:
@@ -716,10 +726,15 @@ class Lowerer:
                     expected,
                     expression.span,
                 )
-            local_type = self.lookup_local(expression.name, expression.span)
-            if is_task(local_type):
-                raise self.error("Task<T> can only be consumed with `await task`", expression.span)
-            return self.coerce(ir.IRName(local_type, expression.span, expression.name), expected, expression.span)
+            local_type = self.find_local(expression.name)
+            if local_type is not None:
+                if is_task(local_type):
+                    raise self.error("Task<T> can only be consumed with `await task`", expression.span)
+                return self.coerce(ir.IRName(local_type, expression.span, expression.name), expected, expression.span)
+            symbol = self.functions.get(expression.name)
+            if symbol is not None:
+                return self.coerce(self.lower_function_ref(symbol, expression.span), expected, expression.span)
+            raise self.error(f"unknown name `{expression.name}`", expression.span)
         if isinstance(expression, ast.UnaryExpr):
             operand = self.lower_expr(expression.operand, expected if expression.operator == "-" else None)
             if expression.operator == "-" and not is_numeric(operand.typ):
@@ -741,6 +756,10 @@ class Lowerer:
                 )
             return self.coerce(ir.IRCast(target_type, expression.span, value), expected, expression.span)
         if isinstance(expression, ast.FieldExpr):
+            qualified = self.qualified_name(expression)
+            symbol = self.functions.get(qualified) if qualified is not None else None
+            if symbol is not None:
+                return self.coerce(self.lower_function_ref(symbol, expression.span), expected, expression.span)
             return self.coerce(self.lower_field(expression), expected, expression.span)
         if isinstance(expression, ast.IndexExpr):
             receiver = self.lower_expr(expression.receiver)
@@ -992,6 +1011,10 @@ class Lowerer:
                 arg = self.lower_expr(expression.args[0], STR)
                 target = "zy2_print" if name == "__runtime_write_line" else "zy2_eprint"
                 return ir.IRCall(VOID, expression.span, target, (arg,))
+            local_type = self.find_local(name)
+            if local_type is not None:
+                callee = ir.IRName(local_type, expression.callee.span, name)
+                return self.lower_indirect_call(callee, expression.args, expression.span)
             symbol = self.functions.get(name)
             if symbol is None:
                 raise self.error(f"unknown function `{name}`", expression.span)
@@ -1071,13 +1094,55 @@ class Lowerer:
                 raise self.error(f"`{receiver.typ.display()}` has no method `{method_name}`", expression.span)
             symbol = self.methods.get((receiver.typ.name, method_name))
             if symbol is None:
-                raise self.error(f"struct `{receiver.typ.name}` has no method `{method_name}`", expression.span)
+                struct = self.structs[receiver.typ.name]
+                field = struct.fields.get(method_name)
+                if field is None:
+                    raise self.error(f"struct `{receiver.typ.name}` has no method `{method_name}`", expression.span)
+                if field.visibility == "private" and self.current_receiver != receiver.typ.name:
+                    raise self.error(f"field `{receiver.typ.name}.{field.name}` is private", expression.span)
+                callee = ir.IRField(field.typ, expression.callee.span, receiver, field.name)
+                return self.lower_indirect_call(callee, expression.args, expression.span)
             if symbol.visibility == "private" and self.current_receiver != receiver.typ.name:
                 raise self.error(f"method `{receiver.typ.name}.{method_name}` is private", expression.span)
             return self.lower_symbol_call(symbol, expression.args, (receiver,), expression.span)
-        raise self.error("call target must be a function or method", expression.span)
+        callee = self.lower_expr(expression.callee)
+        return self.lower_indirect_call(callee, expression.args, expression.span)
+
+    def lower_function_ref(self, symbol: FunctionSymbol, span: SourceSpan) -> ir.IRFunctionRef:
+        current_module = self.module_name(self.current_function.name if self.current_function else "")
+        if symbol.visibility == "private" and current_module != self.module_name(symbol.name):
+            raise self.error(f"function `{symbol.name}` is private", span)
+        if symbol.type_params:
+            raise self.error(
+                f"generic function `{symbol.name}` cannot become a function value until its type arguments are explicit",
+                span,
+            )
+        if symbol.throws is not None:
+            raise self.error(
+                f"throwing function `{symbol.name}` cannot become `fn(...) R`; callback error effects are not enabled yet",
+                span,
+            )
+        typ = FunctionType(tuple(item for _, item, _ in symbol.params), symbol.return_type)
+        return ir.IRFunctionRef(typ, span, symbol.c_name)
+
+    def lower_indirect_call(
+        self,
+        callee: ir.IRExpr,
+        args: tuple[ast.Expr, ...],
+        span: SourceSpan,
+    ) -> ir.IRIndirectCall:
+        if not isinstance(callee.typ, FunctionType):
+            raise self.error(f"value of type `{callee.typ.display()}` is not callable", span)
+        if len(args) != len(callee.typ.params):
+            raise self.error(
+                f"function value `{callee.typ.display()}` expects {len(callee.typ.params)} arguments, got {len(args)}",
+                span,
+            )
+        lowered = tuple(self.lower_expr(value, typ) for value, typ in zip(args, callee.typ.params))
+        return ir.IRIndirectCall(callee.typ.return_type, span, callee, lowered)
 
     def validate_box_position(self, typ: Type, span: SourceSpan, context: str) -> None:
+        self.validate_function_types(typ, span)
         if is_list(typ):
             self.validate_list_element(typ.args[0], span)
             return
@@ -1088,6 +1153,32 @@ class Lowerer:
         if not is_box(typ):
             raise self.error(f"Box<T> cannot be nested in a {context} yet", span)
         self.validate_box_payload(typ, span)
+
+    def validate_function_types(self, typ: Type, span: SourceSpan) -> None:
+        if isinstance(typ, FunctionType):
+            for item in (*typ.params, typ.return_type):
+                if isinstance(item, FunctionType):
+                    self.validate_function_types(item, span)
+                    continue
+                if isinstance(item, TypeVar):
+                    continue
+                if isinstance(item, PrimitiveType) and item not in {ERROR, NULL}:
+                    continue
+                if isinstance(item, NamedType) and item.name in self.structs and not item.args:
+                    continue
+                raise self.error(
+                    f"function value ABI does not support `{item.display()}` yet; use scalar, str, struct, or another fn type",
+                    span,
+                )
+            return
+        if isinstance(typ, NamedType):
+            for item in typ.args:
+                self.validate_function_types(item, span)
+        elif isinstance(typ, TupleType):
+            for item in typ.items:
+                self.validate_function_types(item, span)
+        elif isinstance(typ, OptionalType):
+            self.validate_function_types(typ.inner, span)
 
     def validate_box_payload(self, typ: Type, span: SourceSpan) -> None:
         assert isinstance(typ, NamedType) and is_box(typ)
@@ -1149,12 +1240,16 @@ class Lowerer:
             return any(cls.contains_type_var(item) for item in typ.items)
         if isinstance(typ, OptionalType):
             return cls.contains_type_var(typ.inner)
+        if isinstance(typ, FunctionType):
+            return any(cls.contains_type_var(item) for item in typ.params) or cls.contains_type_var(typ.return_type)
         return False
 
     def supports_equality(self, typ: Type, visiting: set[str] | None = None) -> bool:
         if isinstance(typ, TypeVar):
             return True
         if typ in {BOOL, STR} or is_numeric(typ) or is_box(typ):
+            return True
+        if isinstance(typ, FunctionType):
             return True
         if isinstance(typ, OptionalType):
             return self.supports_equality(typ.inner, visiting)
@@ -1274,6 +1369,15 @@ class Lowerer:
             return
         if isinstance(template, OptionalType) and isinstance(actual, OptionalType):
             self.unify_generic(template.inner, actual.inner, mapping, span)
+            return
+        if (
+            isinstance(template, FunctionType)
+            and isinstance(actual, FunctionType)
+            and len(template.params) == len(actual.params)
+        ):
+            for template_param, actual_param in zip(template.params, actual.params):
+                self.unify_generic(template_param, actual_param, mapping, span)
+            self.unify_generic(template.return_type, actual.return_type, mapping, span)
             return
         if template != actual:
             raise self.error(

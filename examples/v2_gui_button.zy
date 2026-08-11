@@ -1,0 +1,54 @@
+import <std/gui> as gui
+import <std/io> as io
+import <std/thread> as thread
+
+struct Button {
+    public let x: i32 = 40
+    public let y: i32 = 96
+    public let width: i32 = 220
+    public let height: i32 = 64
+    public let label: str = "Click me"
+    public let when_click_func: fn() void
+}
+
+fn button_click() void {
+    io.print("Button clicked")
+}
+
+fn (button: Button) draw() void {
+    gui.rect(button.x, button.y, button.width, button.height, "#D97757")
+    gui.text(button.x + 24, button.y + 18, button.label, "#20201F", 22)
+}
+
+fn (button: Button) handle(event: str) void {
+    if gui.event_kind(event) == 2 && gui.event_x(event) >= button.x && gui.event_x(event) < button.x + button.width && gui.event_y(event) >= button.y && gui.event_y(event) < button.y + button.height {
+        button.when_click_func()
+    }
+}
+
+fn main() i32 {
+    let window = gui.window_colored("ZyenLang Button", 800, 480, "#20201F")
+    if window.open() != 0 {
+        return 1
+    }
+    let button = Button{when_click_func: button_click}
+    let running: bool = true
+    while running {
+        if window.begin_frame() != 0 {
+            break
+        }
+        button.draw()
+        if window.present() != 0 {
+            break
+        }
+        let event: str = window.next_event(0)
+        if event == "quit" {
+            running = false
+        }
+        if event != "" {
+            button.handle(event)
+        }
+        thread.sleep_ms(16)
+    }
+    return window.close()
+}

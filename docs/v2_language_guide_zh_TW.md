@@ -268,8 +268,40 @@ let explicit_base: i32 = scale(2, 5)  // scale(2, 5)
 目前函式呼叫只支援位置引數，不支援具名引數。預設值不能引用該函式的參數，
 而且宣告即使沒有被呼叫，預設值仍會接受型別檢查。
 
-普通函式與互相遞迴已支援。v2 目前尚未重新加入 `fn(...) -> T` 函式值、
-closure 與函式指標；這些是舊版已有、但仍等待新型別系統與 ARC ABI 重建的功能。
+普通函式、互相遞迴與第一版函式值已支援。函式型別沿用 v2 的「回傳型別放在
+參數列後面」規則，寫成 `fn(P...) R`，不使用 `->`：
+
+```zy
+fn add(a: i32, b: i32) i32 {
+    return a + b
+}
+
+fn pick() fn(i32, i32) i32 {
+    return add
+}
+
+let operation: fn(i32, i32) i32 = add
+let first: i32 = operation(20, 22)
+let second: i32 = pick()(12, 10)
+```
+
+函式值目前只引用已命名的頂層函式，不配置 heap，也不捕捉區域變數。參數與
+回傳簽章必須完全相同；透過函式值呼叫時不套用原函式的預設參數。struct
+可以保存 callback，並可從 method 呼叫欄位：
+
+```zy
+struct Button {
+    public when_click_func: fn() void
+}
+
+fn (button: Button) click() void {
+    button.when_click_func()
+}
+```
+
+未初始化的函式欄位是空 callback；呼叫時會以 `.zy` 呼叫位置產生 runtime
+error，而不會跳入空 C 指標。closure、綁定 receiver 的 method value、throwing
+callback 與 native callback ABI 仍待後續里程碑。
 
 ## 8. Struct、public 與 private
 
@@ -687,7 +719,8 @@ private native fn native_add(left: i32, right: i32) i32 = "my_add"
 Windows 使用 WinHTTP，在 Linux/macOS 使用動態載入的 libcurl。
 
 尚未完成：owned `std/string`、`Ref<T>`、`Raw<T>`、`Channel<T>`，以及 v2
-函式值／closure／callback ABI。
+closure、綁定 method value 與 native callback ABI。具名頂層函式值和 struct
+callback 欄位已可使用。
 
 ## 20. 可直接執行的完整範例
 

@@ -95,9 +95,36 @@ gui.text(x, y, value, color, size) i32
 使用 `gui.event_x(event)` 與 `gui.event_y(event)` 取得座標。鍵盤事件目前提供給
 編輯器層使用；一般遊戲的高階鍵盤、按鈕與資源 API 仍待後續封裝。
 
+## Button callback
+
+GUI 元件可以用 struct 保存具名頂層函式。第一版 callback 不捕捉區域變數：
+
+```zy
+import <std/io> as io
+
+struct Button {
+    public x: i32 = 0
+    public y: i32 = 0
+    public when_click_func: fn() void
+}
+
+fn button_click() void {
+    io.print("clicked")
+}
+
+fn (button: Button) click() void {
+    button.when_click_func()
+}
+
+let button = Button{x: 40, y: 96, when_click_func: button_click}
+```
+
+省略 `when_click_func` 時欄位為空；呼叫空 callback 會顯示 `.zy` 檔案與行列。
+完整的滑鼠命中測試與 frame loop 位於 `examples/v2_gui_button.zy`。
+
 ## 編輯器元件
 
 `gui.code_view`、`gui.code_editor` 與 `gui.completion` 是 ZyenLang IDE 使用的
 低階繪圖函式。一般視窗或遊戲不需要呼叫它們。
 
-可直接執行的版本位於 `examples/v2_gui_basic.zy`。
+基本繪圖版本位於 `examples/v2_gui_basic.zy`。

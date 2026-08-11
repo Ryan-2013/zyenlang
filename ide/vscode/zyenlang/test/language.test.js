@@ -77,6 +77,17 @@ assert(defaultParameterParsed.symbols.some((item) => item.kind === 'parameter' &
 assert(defaultParameterParsed.symbols.some((item) => item.kind === 'parameter' && item.name === 'b' && item.type === 'T'));
 assert(defaultParameterParsed.exports.some((item) => item.name === 'add' && item.detail.includes('a: i32 = 10')));
 
+const callbackParsed = language.parseDocument(`struct Button {
+    public let when_click_func: fn() void
+}
+fn apply(callback: fn(i32, i32) i32, value: i32) i32 { return callback(value, value) }
+fn pick() fn(i32, i32) i32 { return apply }
+`, 'callbacks.zy');
+assert(callbackParsed.exports.some((item) => item.kind === 'field' && item.name === 'when_click_func' && item.type === 'fn() void'));
+assert(callbackParsed.exports.some((item) => item.kind === 'function' && item.name === 'apply' && item.returnType === 'i32'));
+assert(callbackParsed.symbols.some((item) => item.kind === 'parameter' && item.name === 'callback' && item.type === 'fn(i32, i32) i32'));
+assert(callbackParsed.exports.some((item) => item.kind === 'function' && item.name === 'pick' && item.returnType === 'fn(i32, i32) i32'));
+
 const defaultAlias = language.parseDocument('import "tools.zy"', 'alias.zy');
 assert.strictEqual(defaultAlias.imports[0].name, 'tools');
 

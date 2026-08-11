@@ -31,6 +31,12 @@ class OptionalTypeNode(TypeNode):
 
 
 @dataclass(frozen=True)
+class FunctionTypeNode(TypeNode):
+    params: tuple[TypeNode, ...] = ()
+    return_type: TypeNode | None = None
+
+
+@dataclass(frozen=True)
 class Expr:
     span: SourceSpan
 

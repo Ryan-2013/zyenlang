@@ -182,6 +182,69 @@ function parameterSymbols(parameters, line, baseColumn, container) {
   return result;
 }
 
+function closingDelimiter(value, start, open, close) {
+  let depth = 0;
+  for (let index = start; index < value.length; index += 1) {
+    if (value[index] === open) depth += 1;
+    else if (value[index] === close) {
+      depth -= 1;
+      if (depth === 0) return index;
+    }
+  }
+  return -1;
+}
+
+function parseFunctionHeader(line) {
+  const prefix = line.match(/^\s*(?:(public|private)\s+)?(?:(native)\s+)?fn\s+/);
+  if (!prefix) return null;
+  let cursor = prefix[0].length;
+  let receiverName;
+  let receiverType;
+  if (line[cursor] === '(') {
+    const receiverEnd = closingDelimiter(line, cursor, '(', ')');
+    if (receiverEnd < 0) return null;
+    const receiver = line.slice(cursor + 1, receiverEnd).match(/^\s*([A-Za-z_]\w*)\s*:\s*(.+?)\s*$/);
+    if (!receiver) return null;
+    receiverName = receiver[1];
+    receiverType = receiver[2];
+    cursor = receiverEnd + 1;
+    while (/\s/.test(line[cursor] || '')) cursor += 1;
+  }
+  const nameMatch = line.slice(cursor).match(/^([A-Za-z_]\w*)/);
+  if (!nameMatch) return null;
+  const name = nameMatch[1];
+  const nameStart = cursor;
+  cursor += name.length;
+  while (/\s/.test(line[cursor] || '')) cursor += 1;
+  if (line[cursor] === '<') {
+    const genericEnd = closingDelimiter(line, cursor, '<', '>');
+    if (genericEnd < 0) return null;
+    cursor = genericEnd + 1;
+    while (/\s/.test(line[cursor] || '')) cursor += 1;
+  }
+  if (line[cursor] !== '(') return null;
+  const parameterStart = cursor + 1;
+  const parameterEnd = closingDelimiter(line, cursor, '(', ')');
+  if (parameterEnd < 0) return null;
+  const parameters = line.slice(parameterStart, parameterEnd);
+  const returnAndThrows = line
+    .slice(parameterEnd + 1)
+    .replace(/\s*\{.*$/, '')
+    .replace(/\s*=.*$/, '')
+    .trim();
+  return {
+    visibility: prefix[1] || 'public',
+    native: Boolean(prefix[2]),
+    receiverName,
+    receiverType,
+    name,
+    nameStart,
+    parameterStart,
+    parameters,
+    returnAndThrows
+  };
+}
+
 function precedingDocs(lines, lineNumber) {
   const docs = [];
   for (let index = lineNumber - 1; index >= 0; index -= 1) {
@@ -247,20 +310,16 @@ function parseDocument(text, uri = '') {
       });
     }
 
-    const functionMatch = line.match(/^\s*(?:(public|private)\s+)?(?:(native)\s+)?fn\s+(?:\(\s*([A-Za-z_]\w*)\s*:\s*([^\)]+)\s*\)\s*)?([A-Za-z_]\w*)(?:\s*<[^>]+>)?\s*\(([^)]*)\)\s*([^\{=]*?)(?:\s*\{|\s*=|\s*$)/);
+    const functionMatch = parseFunctionHeader(line);
     if (functionMatch) {
-      const receiverName = functionMatch[3];
-      const receiverType = functionMatch[4] && functionMatch[4].trim();
-      const name = functionMatch[5];
-      const parameters = functionMatch[6];
-      const returnAndThrows = functionMatch[7].trim();
-      const column = original.indexOf(name, original.indexOf('fn') + 2);
-      const kind = functionMatch[2] ? 'native' : receiverType ? 'method' : 'function';
+      const { receiverName, receiverType, name, parameters, returnAndThrows } = functionMatch;
+      const column = functionMatch.nameStart;
+      const kind = functionMatch.native ? 'native' : receiverType ? 'method' : 'function';
       const signature = original.trim().replace(/\s*\{\s*$/, '').replace(/\s*=\s*"[^"]*"\s*$/, '');
       const symbol = {
         name,
         kind,
-        visibility: functionMatch[1] || 'public',
+        visibility: functionMatch.visibility,
         receiverName,
         receiverType,
         parameters,
@@ -287,8 +346,7 @@ function parseDocument(text, uri = '') {
           container: name
         });
       }
-      const parameterStart = original.indexOf('(', column + name.length) + 1;
-      result.symbols.push(...parameterSymbols(parameters, lineNumber, parameterStart, name));
+      result.symbols.push(...parameterSymbols(parameters, lineNumber, functionMatch.parameterStart, name));
     }
 
     if (activeStruct && depth === activeStruct.depth && !functionMatch) {

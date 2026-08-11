@@ -1636,6 +1636,145 @@ fn main() i32 {
     assert result.returncode == 0, result.stdout + result.stderr
 
 
+def test_v2_named_function_values_struct_callbacks_and_call_chains_run(tmp_path: Path) -> None:
+    source = tmp_path / "function_values.zy"
+    source.write_text(
+        """import <std/io> as io
+
+fn clicked() void {
+    io.print("clicked")
+}
+
+fn add(a: i32, b: i32) i32 {
+    return a + b
+}
+
+fn pick() fn(i32, i32) i32 {
+    return add
+}
+
+struct Button {
+    public let x: i32 = 0
+    public let y: i32 = 0
+    public let when_click_func: fn() void
+}
+
+fn (button: Button) click() void {
+    button.when_click_func()
+}
+
+fn main() i32 {
+    let button = Button{x: 10, y: 20, when_click_func: clicked}
+    let same_button = Button{x: 10, y: 20, when_click_func: clicked}
+    if button != same_button {
+        return 3
+    }
+    button.click()
+    let operation: fn(i32, i32) i32 = add
+    if operation(20, 22) != 42 {
+        return 1
+    }
+    if pick()(12, 10) != 22 {
+        return 2
+    }
+    return 0
+}
+""",
+        encoding="utf-8",
+    )
+    executable = tmp_path / ("function-values.exe" if sys.platform.startswith("win") else "function-values")
+    compiler = Compiler()
+    generated = compiler.emit_file(source)
+    compiler.build_file(source, executable)
+    result = subprocess.run([str(executable)], capture_output=True, text=True, check=False)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert result.stdout.splitlines() == ["clicked"]
+    assert "typedef void (*zy2_fn_void_to_void)(void);" in generated
+    assert "attempted to call an empty function value" in generated
+
+
+def test_v2_function_values_work_across_imported_modules(tmp_path: Path) -> None:
+    library = tmp_path / "callbacks.zy"
+    library.write_text(
+        """public fn increment(value: i32) i32 {
+    return value + 1
+}
+
+public fn provide() fn(i32) i32 {
+    return increment
+}
+
+public fn apply(increment: fn(i32) i32, value: i32) i32 {
+    return increment(value)
+}
+
+public fn before_local_shadow() i32 {
+    let first: i32 = increment(19)
+    let increment: fn(i32) i32 = provide()
+    return first + increment(20)
+}
+""",
+        encoding="utf-8",
+    )
+    source = tmp_path / "main.zy"
+    source.write_text(
+        """import "callbacks.zy" as callbacks
+
+fn main() i32 {
+    let direct: fn(i32) i32 = callbacks.increment
+    let provided: fn(i32) i32 = callbacks.provide()
+    let applied: i32 = callbacks.apply(direct, 20)
+    return direct(20) + provided(20) + applied + callbacks.before_local_shadow() - 104
+}
+""",
+        encoding="utf-8",
+    )
+    executable = tmp_path / ("module-callback.exe" if sys.platform.startswith("win") else "module-callback")
+    Compiler().build_file(source, executable)
+    result = subprocess.run([str(executable)], capture_output=True, text=True, check=False)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_v2_function_value_signature_mismatch_is_rejected() -> None:
+    source = """fn identity(value: i32) i32 {
+    return value
+}
+
+fn main() i32 {
+    let wrong: fn(i32, i32) i32 = identity
+    return 0
+}
+"""
+    with pytest.raises(CompileError, match=r"expected `fn\(i32, i32\) i32`, got `fn\(i32\) i32`"):
+        Compiler().check_source(source)
+
+
+def test_v2_empty_struct_callback_reports_zy_source_location(tmp_path: Path) -> None:
+    source = tmp_path / "empty_callback.zy"
+    source.write_text(
+        """struct Button {
+    public when_click_func: fn() void
+}
+
+fn main() i32 {
+    let button = Button{}
+    button.when_click_func()
+    return 0
+}
+""",
+        encoding="utf-8",
+    )
+    executable = tmp_path / ("empty-callback.exe" if sys.platform.startswith("win") else "empty-callback")
+    Compiler().build_file(source, executable)
+    result = subprocess.run([str(executable)], capture_output=True, text=True, check=False)
+
+    assert result.returncode == 1
+    assert f"{source}:7:" in result.stderr
+    assert "attempted to call an empty function value" in result.stderr
+
+
 def test_v2_spawn_runs_on_an_os_thread_and_awaits_once(tmp_path: Path) -> None:
     executable = tmp_path / ("task.exe" if sys.platform.startswith("win") else "task")
     Compiler().build_file(ROOT / "examples" / "v2_task_basic.zy", executable)

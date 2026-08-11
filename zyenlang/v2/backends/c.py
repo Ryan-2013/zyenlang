@@ -10,6 +10,7 @@ from ..types import (
     ERROR,
     STR,
     VOID,
+    FunctionType,
     NamedType,
     OptionalType,
     PrimitiveType,
@@ -121,6 +122,10 @@ class CBackend:
                 expression(value.value)
             elif isinstance(value, ir.IRField):
                 expression(value.receiver)
+            elif isinstance(value, ir.IRIndirectCall):
+                expression(value.callee)
+                for arg in value.args:
+                    expression(arg)
             elif isinstance(value, ir.IRCall):
                 for arg in value.args:
                     expression(arg)
@@ -193,6 +198,10 @@ class CBackend:
                     add(item)
             elif isinstance(typ, OptionalType):
                 add(typ.inner)
+            elif isinstance(typ, FunctionType):
+                for item in typ.params:
+                    add(item)
+                add(typ.return_type)
 
         def expression(value: ir.IRExpr) -> None:
             add(value.typ)
@@ -207,6 +216,10 @@ class CBackend:
                 expression(value.value)
             elif isinstance(value, ir.IRField):
                 expression(value.receiver)
+            elif isinstance(value, ir.IRIndirectCall):
+                expression(value.callee)
+                for arg in value.args:
+                    expression(arg)
             elif isinstance(value, ir.IRCall):
                 if value.throws:
                     add(value.throws)
@@ -310,6 +323,15 @@ class CBackend:
                 for field in struct.fields:
                     self.type_lines.append(f"    {self.c_type(field.typ)} {self.ident(field.name)};")
                 self.type_lines.append("};")
+                self.type_lines.append("")
+            elif isinstance(typ, FunctionType):
+                for item in (*typ.params, typ.return_type):
+                    if isinstance(item, FunctionType):
+                        self.emit_type_definition(item)
+                params = ", ".join(self.c_type(item) for item in typ.params) or "void"
+                self.type_lines.append(
+                    f"typedef {self.c_type(typ.return_type)} (*{self.type_name(typ)})({params});"
+                )
                 self.type_lines.append("")
             elif is_list(typ):
                 element = typ.args[0]
@@ -746,6 +768,10 @@ class CBackend:
         if isinstance(expression, ir.IRField):
             receiver = self.emit_expr(expression.receiver)
             return CExpr(f"({receiver.code}).{self.ident(expression.name)}", receiver.prelude)
+        if isinstance(expression, ir.IRFunctionRef):
+            return CExpr(expression.target, [])
+        if isinstance(expression, ir.IRIndirectCall):
+            return self.emit_indirect_call(expression)
         if isinstance(expression, ir.IRCall):
             return self.emit_call(expression, propagate=True)
         if isinstance(expression, ir.IRTuple):
@@ -957,6 +983,8 @@ class CBackend:
                 f"(({left}) != NULL && ({right}) != NULL && strcmp(({left}), ({right})) == 0))"
             )
         if typ == BOOL or is_numeric(typ):
+            return f"(({left}) == ({right}))"
+        if isinstance(typ, FunctionType):
             return f"(({left}) == ({right}))"
         if is_box(typ):
             return f"(({left}).owner == ({right}).owner)"
@@ -1181,6 +1209,22 @@ class CBackend:
         prelude.extend(owned_arg_releases)
         return self.finish_throwing_result(expression, result, prelude, propagate)
 
+    def emit_indirect_call(self, expression: ir.IRIndirectCall) -> CExpr:
+        callee = self.emit_expr(expression.callee)
+        callee_temp = self.temp("callback")
+        prelude = list(callee.prelude)
+        prelude.append(f"{self.c_type(expression.callee.typ)} {callee_temp} = {callee.code};")
+        prelude.append(
+            f"if (!{callee_temp}) zy2_panic_at({json.dumps(expression.span.source_name)}, "
+            f"{expression.span.line}, {expression.span.column}, \"attempted to call an empty function value\");"
+        )
+        args: list[str] = []
+        for arg in expression.args:
+            value = self.emit_expr(arg)
+            prelude.extend(value.prelude)
+            args.append(value.code)
+        return CExpr(f"{callee_temp}({', '.join(args)})", prelude)
+
     def finish_throwing_result(
         self,
         expression: ir.IRCall,
@@ -1292,6 +1336,8 @@ class CBackend:
             return mapping[typ.name]
         if isinstance(typ, NamedType) and typ.name in self.structs:
             return self.struct_c_name(typ.name)
+        if isinstance(typ, FunctionType):
+            return self.type_name(typ)
         return self.type_name(typ)
 
     def type_name(self, typ: Type) -> str:
@@ -1299,6 +1345,9 @@ class CBackend:
             return f"zy2_optional_{self.type_slug(typ.inner)}"
         if isinstance(typ, TupleType):
             return "zy2_tuple_" + "_".join(self.type_slug(item) for item in typ.items)
+        if isinstance(typ, FunctionType):
+            params = "_".join(self.type_slug(item) for item in typ.params) or "void"
+            return f"zy2_fn_{params}_to_{self.type_slug(typ.return_type)}"
         if is_list(typ):
             return f"zy2_list_{self.type_slug(typ.args[0])}"
         if is_task(typ):
@@ -1321,6 +1370,9 @@ class CBackend:
             return "tuple_" + "_".join(self.type_slug(item) for item in typ.items)
         if isinstance(typ, OptionalType):
             return "optional_" + self.type_slug(typ.inner)
+        if isinstance(typ, FunctionType):
+            params = "_".join(self.type_slug(item) for item in typ.params) or "void"
+            return f"fn_{params}_to_{self.type_slug(typ.return_type)}"
         raise ValueError(f"cannot create type slug for `{typ.display()}`")
 
     def zero_value(self, typ: Type) -> str:
@@ -1328,6 +1380,8 @@ class CBackend:
             return "NULL"
         if typ == BOOL:
             return "false"
+        if isinstance(typ, FunctionType):
+            return "NULL"
         if isinstance(typ, PrimitiveType):
             return "0"
         return f"({self.c_type(typ)}){{0}}"

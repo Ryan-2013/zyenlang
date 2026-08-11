@@ -69,6 +69,7 @@ ZyenLang 0.2 currently provides:
 - fixed-width integers, floats, `bool`, `str`, and explicit types;
 - inferred or typed `let` declarations with newline-terminated statements;
 - structs with defaults, public/private fields, and receiver methods;
+- named top-level function values, checked indirect calls, and struct callback fields;
 - tuple returns and typed destructuring;
 - generic functions and strongly typed `List<T>` values;
 - `T | null` optionals and `if let` unwrapping;

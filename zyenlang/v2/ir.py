@@ -67,10 +67,21 @@ class IRField(IRExpr):
 
 
 @dataclass(frozen=True)
+class IRFunctionRef(IRExpr):
+    target: str
+
+
+@dataclass(frozen=True)
 class IRCall(IRExpr):
     target: str
     args: tuple[IRExpr, ...]
     throws: Type | None = None
+
+
+@dataclass(frozen=True)
+class IRIndirectCall(IRExpr):
+    callee: IRExpr
+    args: tuple[IRExpr, ...]
 
 
 @dataclass(frozen=True)

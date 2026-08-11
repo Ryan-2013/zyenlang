@@ -298,7 +298,26 @@ class Parser:
     def parse_type(self) -> ast.TypeNode:
         self.skip_newlines()
         start = self.current.span
-        if self.match("("):
+        if self.match("FN"):
+            self.expect("(", "expected `(` after `fn` in function type")
+            self.skip_newlines()
+            params: list[ast.TypeNode] = []
+            while not self.at(")"):
+                params.append(self.parse_type())
+                self.skip_newlines()
+                if not self.match(","):
+                    break
+                self.skip_newlines()
+            self.expect(")", "expected `)` after function type parameters")
+            self.skip_newlines()
+            if self.match("->"):
+                raise CompileError(
+                    "ZyenLang 0.2 function types use `fn(P...) R` without `->`",
+                    self.previous().span,
+                    self.source_name,
+                )
+            node: ast.TypeNode = ast.FunctionTypeNode(start, tuple(params), self.parse_type())
+        elif self.match("("):
             self.skip_newlines()
             items: list[ast.TypeNode] = []
             if not self.at(")"):
@@ -311,7 +330,7 @@ class Parser:
             self.expect(")", "expected `)` after tuple type")
             if len(items) < 2:
                 raise CompileError("tuple types need at least two members", start, self.source_name)
-            node: ast.TypeNode = ast.TupleTypeNode(start, tuple(items))
+            node = ast.TupleTypeNode(start, tuple(items))
         else:
             first = self.expect("IDENT", "expected a type")
             name_parts = [first.value]

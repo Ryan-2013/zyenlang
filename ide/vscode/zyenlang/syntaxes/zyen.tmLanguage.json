@@ -151,7 +151,7 @@
       "patterns": [
         {
           "name": "meta.field.declaration.zyen",
-          "match": "^\\s*(?:(public|private)\\s+)?([A-Za-z_]\\w*)\\s*(:)\\s*([A-Za-z_][A-Za-z0-9_<>| ,()]*)",
+          "match": "^\\s*(?:(public|private)\\s+)?(?:let\\s+(?:this\\.)?)?([A-Za-z_]\\w*)\\s*(:)\\s*([A-Za-z_][A-Za-z0-9_<>| ,()]*)",
           "captures": {
             "1": { "name": "storage.modifier.visibility.zyen" },
             "2": { "name": "variable.other.member.zyen" },

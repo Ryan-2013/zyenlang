@@ -191,6 +191,7 @@ def namespace_program(program: ast.Program, namespace: str, import_aliases: set[
             or (isinstance(item, ast.FunctionDef) and item.receiver is None)
         )
     }
+    shadowed_names: set[str] = set()
 
     def type_node(node: ast.TypeNode) -> ast.TypeNode:
         if isinstance(node, ast.NamedTypeNode):
@@ -204,11 +205,17 @@ def namespace_program(program: ast.Program, namespace: str, import_aliases: set[
             return ast.TupleTypeNode(node.span, tuple(type_node(item) for item in node.items))
         if isinstance(node, ast.OptionalTypeNode):
             return ast.OptionalTypeNode(node.span, type_node(node.inner) if node.inner else None)
+        if isinstance(node, ast.FunctionTypeNode):
+            return ast.FunctionTypeNode(
+                node.span,
+                tuple(type_node(item) for item in node.params),
+                type_node(node.return_type) if node.return_type else None,
+            )
         return node
 
     def expression(node: ast.Expr) -> ast.Expr:
         if isinstance(node, ast.NameExpr):
-            if node.name in import_aliases:
+            if (node.name in local_functions and node.name not in shadowed_names) or node.name in import_aliases:
                 name = f"{namespace}.{node.name}"
             else:
                 name = node.name
@@ -222,7 +229,11 @@ def namespace_program(program: ast.Program, namespace: str, import_aliases: set[
         if isinstance(node, ast.IndexExpr):
             return ast.IndexExpr(node.span, expression(node.receiver), expression(node.index))
         if isinstance(node, ast.CallExpr):
-            if isinstance(node.callee, ast.NameExpr) and node.callee.name in local_functions:
+            if (
+                isinstance(node.callee, ast.NameExpr)
+                and node.callee.name in local_functions
+                and node.callee.name not in shadowed_names
+            ):
                 callee: ast.Expr = ast.NameExpr(node.callee.span, f"{namespace}.{node.callee.name}")
             else:
                 callee = expression(node.callee)
@@ -236,7 +247,12 @@ def namespace_program(program: ast.Program, namespace: str, import_aliases: set[
             fields = tuple(ast.StructFieldValue(item.name, expression(item.value), item.span) for item in node.fields)
             return ast.StructExpr(node.span, name, fields)
         if isinstance(node, ast.CatchExpr):
-            return ast.CatchExpr(node.span, expression(node.value), node.error_name, block(node.handler))
+            return ast.CatchExpr(
+                node.span,
+                expression(node.value),
+                node.error_name,
+                block(node.handler, (node.error_name,)),
+            )
         if isinstance(node, ast.SpawnExpr):
             return ast.SpawnExpr(node.span, expression(node.call))
         if isinstance(node, ast.AwaitExpr):
@@ -270,7 +286,7 @@ def namespace_program(program: ast.Program, namespace: str, import_aliases: set[
                 node.span,
                 node.binding,
                 expression(node.value),
-                block(node.then_block),
+                block(node.then_block, (node.binding,)),
                 block(node.else_block) if node.else_block else None,
             )
         if isinstance(node, ast.WhileStmt):
@@ -281,8 +297,20 @@ def namespace_program(program: ast.Program, namespace: str, import_aliases: set[
             return ast.ExprStmt(node.span, expression(node.value))
         return node
 
-    def block(node: ast.Block) -> ast.Block:
-        return ast.Block(tuple(statement(item) for item in node.statements), node.span)
+    def block(node: ast.Block, initial_names: tuple[str, ...] = ()) -> ast.Block:
+        nonlocal shadowed_names
+        previous_shadowed = shadowed_names
+        shadowed_names = set(previous_shadowed)
+        shadowed_names.update(initial_names)
+        statements: list[ast.Stmt] = []
+        try:
+            for item in node.statements:
+                statements.append(statement(item))
+                if isinstance(item, ast.LetStmt):
+                    shadowed_names.update(binding.name for binding in item.bindings)
+            return ast.Block(tuple(statements), node.span)
+        finally:
+            shadowed_names = previous_shadowed
 
     definitions: list[ast.Definition] = []
     for definition in program.definitions:
@@ -307,6 +335,10 @@ def namespace_program(program: ast.Program, namespace: str, import_aliases: set[
                 )
             )
         elif isinstance(definition, ast.FunctionDef):
+            previous_shadowed = shadowed_names
+            shadowed_names = {param.name for param in definition.params}
+            if definition.receiver:
+                shadowed_names.add(definition.receiver.name)
             receiver = None
             if definition.receiver:
                 receiver = ast.Param(
@@ -339,7 +371,10 @@ def namespace_program(program: ast.Program, namespace: str, import_aliases: set[
                     throws=type_node(definition.throws) if definition.throws else None,
                 )
             )
+            shadowed_names = previous_shadowed
         elif isinstance(definition, ast.NativeFunctionDef):
+            previous_shadowed = shadowed_names
+            shadowed_names = {param.name for param in definition.params}
             params = tuple(
                 ast.Param(
                     param.name,
@@ -361,6 +396,7 @@ def namespace_program(program: ast.Program, namespace: str, import_aliases: set[
                     throws=type_node(definition.throws) if definition.throws else None,
                 )
             )
+            shadowed_names = previous_shadowed
         else:
             definitions.append(definition)
     return ast.Program((), tuple(definitions))

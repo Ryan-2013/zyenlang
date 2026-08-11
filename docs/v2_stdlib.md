@@ -80,7 +80,9 @@ line numbers and ZyenLang syntax highlighting. `Window` methods are `open`,
 cross-platform raylib runtime without Python or Tk.
 
 See [`zyenlang/v2/std/gui.md`](../zyenlang/v2/std/gui.md) for the complete
-window lifecycle, drawing API, event format, and a runnable example.
+window lifecycle, drawing API, event format, and runnable examples. User
+widgets can store a named top-level function in a `fn(P...) R` struct field;
+`examples/v2_gui_button.zy` demonstrates a checked button callback.
 
 ## Editor
 

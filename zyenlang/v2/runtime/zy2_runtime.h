@@ -30,6 +30,23 @@ static inline void zy2_arc_panic(const char* message) {
     exit(1);
 }
 
+static inline void zy2_panic_at(
+    const char* source_file,
+    uint32_t line,
+    uint32_t column,
+    const char* message
+) {
+    fprintf(
+        stderr,
+        "%s:%u:%u: %s\n",
+        source_file ? source_file : "<runtime>",
+        (unsigned int)line,
+        (unsigned int)column,
+        message
+    );
+    exit(1);
+}
+
 static inline zy2_ArcControl* zy2_arc_new(void* payload, zy2_ArcDrop drop) {
     zy2_ArcControl* owner = (zy2_ArcControl*)malloc(sizeof(zy2_ArcControl));
     if (!owner) {

@@ -45,7 +45,7 @@ jobs:
         run: |
           suffix=""
           if [[ "$RUNNER_OS" == "Windows" ]]; then suffix=".exe"; fi
-          zy build examples/tk_portable_smoke.zy --exe "gui-smoke${suffix}"
+          zy1 build examples/tk_portable_smoke.zy --exe "gui-smoke${suffix}"
 
   vscode:
     timeout-minutes: 10

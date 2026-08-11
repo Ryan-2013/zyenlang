@@ -664,6 +664,7 @@ fn main() i32 {
     assert "_ensure_mutable" in generated
     assert "_push_copy" in generated
     assert "_storage_drop" in generated
+    assert "static inline ZY2_MAYBE_UNUSED" in generated
 
 
 def test_v2_list_uses_builtin_len_and_checked_index_syntax(tmp_path: Path) -> None:

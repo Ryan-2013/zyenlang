@@ -360,6 +360,99 @@ fn main() i32 {
     assert "zy2_fn_identity__i32" in generated
 
 
+def test_v2_generic_struct_equality_is_structural_and_runs(tmp_path: Path) -> None:
+    source = tmp_path / "generic_struct_equality.zy"
+    source.write_text(
+        """import <std/io>
+
+fn is_same<T>(a: T, b: T) bool {
+    return a == b
+}
+
+struct Engine {
+    public serial: str
+    public cylinders: i32
+}
+
+struct Car {
+    public value: i32
+    public name: str
+    public engine: Engine
+}
+
+fn main() i32 {
+    let first = Car{value: 12, name: "ember", engine: Engine{serial: "A-1", cylinders: 4}}
+    let different = Car{value: 10, name: "ember", engine: Engine{serial: "A-1", cylinders: 4}}
+    let copy = Car{value: 12, name: "ember", engine: Engine{serial: "A-1", cylinders: 4}}
+    io.print((str)is_same(first, different))
+    io.print((str)is_same(first, copy))
+    if is_same(first, different) || !is_same(first, copy) {
+        return 1
+    }
+    return 0
+}
+""",
+        encoding="utf-8",
+    )
+    executable = tmp_path / (
+        "generic-struct-equality.exe" if sys.platform.startswith("win") else "generic-struct-equality"
+    )
+    compiler = Compiler()
+    generated = compiler.emit_file(source)
+    compiler.build_file(source, executable)
+    result = subprocess.run([str(executable)], capture_output=True, text=True, check=False)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert result.stdout.splitlines() == ["false", "true"]
+    assert "strcmp" in generated
+    assert "zy2_fn_is_same__Car" in generated
+
+
+def test_v2_tuple_and_optional_equality_are_structural_and_run(tmp_path: Path) -> None:
+    source = tmp_path / "aggregate_equality.zy"
+    source.write_text(
+        """fn main() i32 {
+    let first: (i32, str) = (12, "same")
+    let second: (i32, str) = (12, "same")
+    let third: (i32, str) = (10, "different")
+    let some: i32 | null = 12
+    let same_some: i32 | null = 12
+    let none: i32 | null = null
+
+    if first == second && first != third && some == same_some && some != none && none == null {
+        return 0
+    }
+    return 1
+}
+""",
+        encoding="utf-8",
+    )
+    executable = tmp_path / ("aggregate-equality.exe" if sys.platform.startswith("win") else "aggregate-equality")
+    Compiler().build_file(source, executable)
+    result = subprocess.run([str(executable)], capture_output=True, text=True, check=False)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_v2_generic_equality_rejects_noncomparable_concrete_type_during_check() -> None:
+    source = """fn is_same<T>(a: T, b: T) bool {
+    return a == b
+}
+
+fn main() i32 {
+    let first: List<i32> = [1]
+    let second: List<i32> = [1]
+    if is_same(first, second) {
+        return 1
+    }
+    return 0
+}
+"""
+
+    with pytest.raises(CompileError, match="equality is not defined for `List<i32>`"):
+        Compiler().check_source(source)
+
+
 def test_v2_default_parameters_fill_missing_arguments_and_run(tmp_path: Path) -> None:
     source = tmp_path / "default_parameters.zy"
     source.write_text(

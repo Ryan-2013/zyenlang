@@ -158,6 +158,22 @@ let result: f64 = integer + floating // 9
 也會產生安全的比較形式；signed/unsigned 比較不採用 C 會把負數轉成巨大
 無號數的規則。轉型寫成 `(Type)value`：
 
+`==` 與 `!=` 支援數字、`bool`、`str`、tuple、optional，以及欄位都可比較的
+struct。Struct 採值相等，會遞迴比較所有 public/private 欄位，而不是比較位址：
+
+```zy
+struct Car {
+    public value: i32
+}
+
+let first = Car{value: 12}
+let second = Car{value: 12}
+let same: bool = first == second // true
+```
+
+`Box<T>` 的相等仍表示同一個 ARC owner。`List<T>` 尚未定義值相等；請明確
+比較長度與元素，直接使用 `==` 會在 `zy check` 報錯。
+
 ```zy
 let wide: i64 = (i64)42
 let decimal: f64 = (f64)wide
@@ -369,6 +385,10 @@ fn add<T>(a: i32 = 10, b: T) T {
 
 模板中的顯式 cast 會在每個具體實例再次檢查；例如不支援的 `str` 到 `i32`
 轉型仍會在 `zy check` 被拒絕，不會變成不安全的 C cast。
+
+泛型中的 `a == b` 也會延後到具體型別確認。`is_same<Car>` 會使用 Car 的
+結構相等；`is_same<List<i32>>` 則會在 `zy check` 明確指出 List 尚未支援
+相等運算，不會產生無效 C。
 
 泛型 method 與泛型 struct 實例化尚未支援。
 

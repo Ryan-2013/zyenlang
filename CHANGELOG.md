@@ -14,6 +14,10 @@
   expressions such as `i32 + f64` produce `f64`, mixed integers choose the
   smallest lossless fixed-width type, and impossible `i64`/`u64` combinations
   require an explicit cast. Floating-point modulo is rejected during checking.
+- Equality for user structs, tuples, and optionals now compares values
+  structurally and evaluates both operands once. Generic equality is checked
+  again after specialization, while unsupported types such as `List<T>` report
+  a compiler diagnostic instead of producing invalid C struct comparisons.
 - Generic function templates are now checked before monomorphization. Mixing a
   concrete type such as `i32` with unconstrained `T` requires an explicit cast,
   and every concrete specialization validates that cast again.

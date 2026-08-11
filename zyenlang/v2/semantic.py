@@ -893,6 +893,11 @@ class Lowerer:
                 return ir.IRBinary(BOOL, expression.span, left, expression.operator, right)
             if left.typ != right.typ:
                 raise self.error("equality operands must have the same type", expression.span)
+            if not self.supports_equality(left.typ):
+                raise self.error(
+                    f"equality is not defined for `{left.typ.display()}`; compare its values explicitly",
+                    expression.span,
+                )
             return ir.IRBinary(BOOL, expression.span, left, expression.operator, right)
         if expression.operator in {"&&", "||"}:
             if left.typ != BOOL or right.typ != BOOL:
@@ -1144,6 +1149,26 @@ class Lowerer:
             return any(cls.contains_type_var(item) for item in typ.items)
         if isinstance(typ, OptionalType):
             return cls.contains_type_var(typ.inner)
+        return False
+
+    def supports_equality(self, typ: Type, visiting: set[str] | None = None) -> bool:
+        if isinstance(typ, TypeVar):
+            return True
+        if typ in {BOOL, STR} or is_numeric(typ) or is_box(typ):
+            return True
+        if isinstance(typ, OptionalType):
+            return self.supports_equality(typ.inner, visiting)
+        if isinstance(typ, TupleType):
+            return all(self.supports_equality(item, visiting) for item in typ.items)
+        if isinstance(typ, NamedType) and typ.name in self.structs:
+            visiting = set() if visiting is None else set(visiting)
+            if typ.name in visiting:
+                return True
+            visiting.add(typ.name)
+            return all(
+                self.supports_equality(field.typ, visiting)
+                for field in self.structs[typ.name].fields.values()
+            )
         return False
 
     def require_mutable_list_receiver(self, receiver: ast.Expr, method_name: str) -> None:

@@ -919,10 +919,9 @@ class CBackend:
                 prelude.append(self.release_stmt(right_code, expression.right.typ))
             return CExpr(result, prelude)
         if expression.left.typ == STR and expression.operator in {"==", "!="}:
-            comparison = f"strcmp({left.code}, {right.code}) == 0"
-            if expression.operator == "!=":
-                comparison = f"!({comparison})"
-            return CExpr(f"({comparison})", prelude)
+            return self.emit_structural_equality(expression, left, right)
+        if expression.operator in {"==", "!="} and self.is_structural_equality_type(expression.left.typ):
+            return self.emit_structural_equality(expression, left, right)
         if (
             expression.operator in {"<", "<=", ">", ">=", "==", "!="}
             and is_numeric(expression.left.typ)
@@ -931,6 +930,59 @@ class CBackend:
         ):
             return self.emit_mixed_numeric_comparison(expression, left, right)
         return CExpr(f"({left.code} {expression.operator} {right.code})", prelude)
+
+    def is_structural_equality_type(self, typ: Type) -> bool:
+        return (
+            isinstance(typ, OptionalType)
+            or isinstance(typ, TupleType)
+            or (isinstance(typ, NamedType) and typ.name in self.structs)
+        )
+
+    def emit_structural_equality(self, expression: ir.IRBinary, left: CExpr, right: CExpr) -> CExpr:
+        left_temp = self.temp("equal_left")
+        right_temp = self.temp("equal_right")
+        prelude = list(left.prelude)
+        prelude.append(f"{self.c_type(expression.left.typ)} {left_temp} = {left.code};")
+        prelude.extend(right.prelude)
+        prelude.append(f"{self.c_type(expression.right.typ)} {right_temp} = {right.code};")
+        comparison = self.equality_code(expression.left.typ, left_temp, right_temp)
+        if expression.operator == "!=":
+            comparison = f"!({comparison})"
+        return CExpr(f"({comparison})", prelude)
+
+    def equality_code(self, typ: Type, left: str, right: str) -> str:
+        if typ == STR:
+            return (
+                f"(({left}) == ({right}) || "
+                f"(({left}) != NULL && ({right}) != NULL && strcmp(({left}), ({right})) == 0))"
+            )
+        if typ == BOOL or is_numeric(typ):
+            return f"(({left}) == ({right}))"
+        if is_box(typ):
+            return f"(({left}).owner == ({right}).owner)"
+        if isinstance(typ, OptionalType):
+            values_equal = self.equality_code(typ.inner, f"({left}).value", f"({right}).value")
+            return (
+                f"((!({left}).has_value && !({right}).has_value) || "
+                f"(({left}).has_value && ({right}).has_value && ({values_equal})))"
+            )
+        if isinstance(typ, TupleType):
+            comparisons = [
+                self.equality_code(item, f"({left}).item_{index}", f"({right}).item_{index}")
+                for index, item in enumerate(typ.items)
+            ]
+            return "(" + " && ".join(comparisons) + ")" if comparisons else "true"
+        if isinstance(typ, NamedType) and typ.name in self.structs:
+            comparisons = [
+                self.equality_code(
+                    field.typ,
+                    f"({left}).{self.ident(field.name)}",
+                    f"({right}).{self.ident(field.name)}",
+                )
+                for field in self.structs[typ.name].fields
+            ]
+            return "(" + " && ".join(comparisons) + ")" if comparisons else "true"
+        raise ValueError(f"type `{typ.display()}` has no equality code")
 
     def emit_mixed_numeric_comparison(self, expression: ir.IRBinary, left: CExpr, right: CExpr) -> CExpr:
         left_temp = self.temp("compare_left")

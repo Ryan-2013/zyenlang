@@ -28,7 +28,7 @@ def test_v2_language_tour_checks_and_emits_typed_c() -> None:
     assert "zy2_optional_i32" in generated
     assert "zy2_list_List_i16" in generated
     assert "zy2_method_Car_return_value" in generated
-    assert "zy2_fn_list__length__List_i16" in generated
+    assert "zy2_list_List_i16_len(matrix)" in generated
     assert "if ((actual == 7))" not in generated
     assert "if (actual == 7)" in generated
 
@@ -69,6 +69,170 @@ fn main() i32 {
 """
     with pytest.raises(CompileError, match="does not fit `i8`"):
         Compiler().check_source(source)
+
+
+def test_v2_explicit_casts_emit_and_run(tmp_path: Path) -> None:
+    source = tmp_path / "casts.zy"
+    source.write_text(
+        """import <std/io> as io
+
+fn fail() void throws Error {
+    stop "cast error"
+}
+
+fn main() i32 {
+    let wide: i64 = (i64)42
+    let floating: f64 = (f64)wide
+    let narrowed: i32 = (i32)floating
+    let negative: i8 = (i8)-1
+    let truth: bool = (bool)narrowed
+    let one: i32 = (i32)truth
+    let values: List<i32> = [1, 2]
+    let same_values: List<i32> = (List<i32>)values
+    io.print((str)truth)
+    io.print((str)negative)
+    io.print((str)wide)
+    io.print((str)floating)
+    fail() catch err {
+        io.print((str)err.message)
+        recover
+    }
+    if narrowed == 42 && negative == -1 && one == 1 && same_values.len() == 2 && (narrowed) - 40 == 2 {
+        return 0
+    }
+    return 1
+}
+""",
+        encoding="utf-8",
+    )
+    compiler = Compiler()
+    generated = compiler.emit_file(source)
+    executable = tmp_path / ("casts.exe" if sys.platform.startswith("win") else "casts")
+    compiler.build_file(source, executable)
+    result = subprocess.run([str(executable)], capture_output=True, text=True, check=False)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert result.stdout.splitlines() == ["true", "-1", "42", "42", "cast error"]
+    assert "snprintf" in generated
+    assert ' ? "true" : "false"' in generated
+    assert "!= 0" in generated
+
+
+def test_v2_optional_str_cast_is_safe_and_evaluates_once(tmp_path: Path) -> None:
+    source = tmp_path / "optional_str_cast.zy"
+    source.write_text(
+        """fn main() i32 {
+    let some: str | null = "hello"
+    let none: str | null = null
+    let some_text: str = (str)some
+    let none_text: str = (str)none
+    if some_text == "hello" && none_text == "null" {
+        return 0
+    }
+    return 1
+}
+""",
+        encoding="utf-8",
+    )
+
+    generated = Compiler().emit_file(source)
+    executable = tmp_path / ("optional-str-cast.exe" if sys.platform.startswith("win") else "optional-str-cast")
+    Compiler().build_file(source, executable)
+    result = subprocess.run([str(executable)], capture_output=True, text=True, check=False)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert generated.count(".has_value ?") == 2
+
+
+def test_v2_blocks_use_lexical_scope_without_erasing_outer_variables(tmp_path: Path) -> None:
+    valid = tmp_path / "lexical_scope.zy"
+    valid.write_text("""fn main() i32 {
+    let outer: i32 = 1
+    if true {
+        outer = 2
+        let inside: i32 = 3
+    }
+    return outer
+}
+""", encoding="utf-8")
+    executable = tmp_path / ("lexical-scope.exe" if sys.platform.startswith("win") else "lexical-scope")
+    Compiler().build_file(valid, executable)
+    result = subprocess.run([str(executable)], capture_output=True, text=True, check=False)
+    assert result.returncode == 2
+
+    invalid = """fn main() i32 {
+    if true {
+        let inside: i32 = 3
+    }
+    return inside
+}
+"""
+    with pytest.raises(CompileError, match="unknown name `inside`"):
+        Compiler().check_source(invalid)
+
+
+@pytest.mark.parametrize(
+    ("expression", "message"),
+    [
+        ('(i32)"12"', "cannot cast `str` to `i32`"),
+    ],
+)
+def test_v2_explicit_casts_reject_undefined_conversions(expression: str, message: str) -> None:
+    source = f"fn main() i32 {{\n    let value = {expression}\n    return 0\n}}\n"
+    with pytest.raises(CompileError, match=message):
+        Compiler().check_source(source)
+
+
+def test_v2_error_requires_explicit_message_field_for_string_conversion() -> None:
+    source = """fn fail() void throws Error {
+    stop "failed"
+}
+
+fn main() i32 {
+    fail() catch err {
+        let invalid: str = (str)err
+        recover
+    }
+    return 0
+}
+"""
+
+    with pytest.raises(CompileError, match="cannot cast `Error` to `str`"):
+        Compiler().check_source(source)
+
+
+def test_v2_mixed_numeric_comparisons_are_safe_and_automatic(tmp_path: Path) -> None:
+    source = tmp_path / "mixed_comparisons.zy"
+    source.write_text(
+        """fn main() i32 {
+    let negative: i32 = -1
+    let zero: usize = 0
+    let three: i8 = 3
+    let three_unsigned: u64 = 3
+    let signed_positive: i64 = 4
+    let small_unsigned: u8 = 3
+    let unsigned_max: u64 = 18_446_744_073_709_551_615
+    let signed_max: i64 = 9_223_372_036_854_775_807
+    let floating: f64 = (f64)3
+
+    if negative < zero && zero > negative && three == three_unsigned && signed_positive > small_unsigned && unsigned_max > signed_max && floating == three {
+        return 0
+    }
+    return 1
+}
+""",
+        encoding="utf-8",
+    )
+
+    compiler = Compiler()
+    generated = compiler.emit_file(source)
+    executable = tmp_path / ("mixed-comparisons.exe" if sys.platform.startswith("win") else "mixed-comparisons")
+    compiler.build_file(source, executable)
+    result = subprocess.run([str(executable)], capture_output=True, text=True, check=False)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "zy2_compare_i64_u64_lt" in generated
+    assert "zy2_compare_i64_u64_gt" in generated
 
 
 def test_v2_rejects_arbitrary_union_types() -> None:
@@ -149,6 +313,477 @@ fn main() i32 {
     assert ".value" in generated
 
 
+def test_v2_optional_integer_literal_and_unused_if_let_build(tmp_path: Path) -> None:
+    source = tmp_path / "optional_literal.zy"
+    source.write_text(
+        """fn find(found: bool) u8 | null {
+    if found {
+        return 255
+    }
+    return null
+}
+
+fn main() i32 {
+    if let unused = find(false) {
+        return 1
+    }
+    if let value = find(true) {
+        return (i32)value - 255
+    }
+    return 2
+}
+""",
+        encoding="utf-8",
+    )
+    compiler = Compiler()
+    generated = compiler.emit_file(source)
+    executable = tmp_path / ("optional_literal.exe" if sys.platform.startswith("win") else "optional_literal")
+    compiler.build_file(source, executable)
+    result = subprocess.run([str(executable)], capture_output=True, text=True, check=False)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert ".has_value = true" in generated
+    assert "(void)unused;" in generated
+
+
+def test_v2_optional_integer_literal_respects_inner_range() -> None:
+    source = "fn bad() u8 | null {\n    return 256\n}\nfn main() i32 {\n    return 0\n}\n"
+    with pytest.raises(CompileError, match="does not fit `u8`"):
+        Compiler().check_source(source)
+
+
+@pytest.mark.parametrize(
+    "construction",
+    ["Box{value: 5}", "Box<i32>{value: 5}"],
+)
+def test_v2_generic_struct_construction_has_milestone_diagnostic(construction: str) -> None:
+    source = f"struct Box<T> {{\n    value: T\n}}\nfn main() i32 {{\n    let box: Box<i32> = {construction}\n    return 0\n}}\n"
+    with pytest.raises(CompileError, match="generic struct construction is scheduled after the bootstrap milestone"):
+        Compiler().check_source(source)
+
+
+def test_v2_parenthesized_tuple_return_runs(tmp_path: Path) -> None:
+    source = tmp_path / "tuple_return.zy"
+    source.write_text(
+        """fn pair() (i32, str) {
+    return (12, "tuple")
+}
+
+fn main() i32 {
+    let (number: i32, text: str) = pair()
+    if number == 12 && text == "tuple" {
+        return 0
+    }
+    return 1
+}
+""",
+        encoding="utf-8",
+    )
+    executable = tmp_path / ("tuple_return.exe" if sys.platform.startswith("win") else "tuple_return")
+    Compiler().build_file(source, executable)
+    result = subprocess.run([str(executable)], capture_output=True, text=True, check=False)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_v2_struct_metadata_lists_attributes_and_methods(tmp_path: Path) -> None:
+    source = tmp_path / "struct_metadata.zy"
+    source.write_text(
+        """struct Player {
+    public hp: i32
+    private name: str = "player"
+}
+
+public fn (player: Player) update() i32 {
+    return player.hp
+}
+
+private fn (player: Player) reset() i32 {
+    return 0
+}
+
+fn main() i32 {
+    let player = Player{hp: 100}
+    let attributes: List<str> = player.__attributes__
+    let methods: List<str> = player.__methods__
+    let first_attribute: str = attributes.get(0) catch err {
+        return 1
+    }
+    let second_attribute: str = attributes.get(1) catch err {
+        return 2
+    }
+    let first_method: str = methods.get(0) catch err {
+        return 3
+    }
+    let second_method: str = methods.get(1) catch err {
+        return 4
+    }
+    if attributes.len() == 2 && methods.len() == 2 && first_attribute == "hp" && second_attribute == "name" && first_method == "update" && second_method == "reset" {
+        return 0
+    }
+    return 5
+}
+""",
+        encoding="utf-8",
+    )
+    compiler = Compiler()
+    generated = compiler.emit_file(source)
+    executable = tmp_path / ("struct_metadata.exe" if sys.platform.startswith("win") else "struct_metadata")
+    compiler.build_file(source, executable)
+    result = subprocess.run([str(executable)], capture_output=True, text=True, check=False)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert 'zy2_meta_Player_attributes[] = { "hp", "name" }' in generated
+    assert 'zy2_meta_Player_methods[] = { "update", "reset" }' in generated
+
+
+@pytest.mark.parametrize("reserved", ["__attributes__", "__methods__"])
+def test_v2_struct_metadata_names_are_reserved(reserved: str) -> None:
+    source = f"struct Bad {{\n    {reserved}: i32\n}}\nfn main() i32 {{\n    return 0\n}}\n"
+    with pytest.raises(CompileError, match="reserved for struct metadata"):
+        Compiler().check_source(source)
+
+
+def test_v2_box_arc_copies_assigns_returns_and_cleans_scopes(tmp_path: Path) -> None:
+    source = tmp_path / "box_arc.zy"
+    source.write_text(
+        """struct Point {
+    x: i32
+}
+
+fn read(value: Box<i32>) i32 {
+    return value.value
+}
+
+fn identity(value: Box<i32>) Box<i32> {
+    return value
+}
+
+fn make() Box<i32> {
+    return Box(42)
+}
+
+fn maybe(found: bool) Box<i32> throws Error {
+    let guard = Box(99)
+    if found {
+        return Box(5)
+    }
+    stop "missing box"
+}
+
+fn main() i32 {
+    let root = make()
+    if root.__strong_count__ != 1 {
+        return 1
+    }
+    if true {
+        let alias = root
+        if root.__strong_count__ != 2 {
+            return 2
+        }
+        alias.value = 43
+    }
+    if root.__strong_count__ != 1 || root.value != 43 {
+        return 3
+    }
+
+    let returned = identity(root)
+    if root.__strong_count__ != 2 || root != returned {
+        return 4
+    }
+    returned = returned
+    if root.__strong_count__ != 2 {
+        return 5
+    }
+    returned = Box(7)
+    if root.__strong_count__ != 1 || returned.value != 7 {
+        return 6
+    }
+    if read(Box(9)) != 9 || Box(11).value != 11 {
+        return 7
+    }
+    if Box(1) == Box(1) || Box(2).__strong_count__ != 1 {
+        return 11
+    }
+
+    let recovered = maybe(false) catch err {
+        recover Box(6)
+    }
+    if recovered.value != 6 {
+        return 8
+    }
+
+    let point = Box(Point{x: 10})
+    point.value.x = 12
+    if point.value.x != 12 {
+        return 9
+    }
+
+    let iteration: i32 = 0
+    while iteration < 2 {
+        let loop_alias = root
+        iteration = iteration + 1
+        if iteration == 1 {
+            continue
+        }
+        break
+    }
+    if root.__strong_count__ != 1 {
+        return 10
+    }
+    return root.value - 43
+}
+""",
+        encoding="utf-8",
+    )
+    compiler = Compiler()
+    generated = compiler.emit_file(source)
+    executable = tmp_path / ("box_arc.exe" if sys.platform.startswith("win") else "box_arc")
+    compiler.build_file(source, executable)
+    result = subprocess.run([str(executable)], capture_output=True, text=True, check=False)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "zy2_arc_retain" in generated
+    assert "zy2_arc_release" in generated
+    assert "zy2_arc_assert_clean" in generated
+    assert "zy2_box_i32_retain" in generated
+    assert "zy2_box_i32_release" in generated
+
+
+@pytest.mark.parametrize(
+    ("source", "message"),
+    [
+        (
+            "struct Bad {\n    value: Box<i32>\n}\nfn main() i32 {\n    return 0\n}\n",
+            "Box<T> fields require managed aggregate destructors",
+        ),
+        (
+            "fn main() i32 {\n    let nested = Box(Box(1))\n    return 0\n}\n",
+            "needs a managed destructor that is not implemented",
+        ),
+        (
+            "fn pair<T>(value: T) (T, T) {\n    return value, value\n}\nfn main() i32 {\n    let pair_value = pair(Box(1))\n    return 0\n}\n",
+            "Box<T> cannot be nested in a generic return type yet",
+        ),
+    ],
+)
+def test_v2_box_rejects_unmanaged_aggregate_positions(source: str, message: str) -> None:
+    with pytest.raises(CompileError, match=message):
+        Compiler().check_source(source)
+
+
+def test_v2_dynamic_list_mutation_aliases_nested_values_and_arc(tmp_path: Path) -> None:
+    source = tmp_path / "dynamic_list.zy"
+    source.write_text(
+        """struct Point {
+    x: i32
+}
+
+fn identity(values: List<i32>) List<i32> {
+    return values
+}
+
+fn main() i32 {
+    let values: List<i32> = []
+    LIST_PUSH__(values, 10)
+    values.add(20)
+    LIST_SET__(values, 1, 22) catch err {
+        recover
+    }
+
+    let alias = values
+    LIST_PUSH__(alias, 30)
+    let returned = identity(values)
+    if returned.len() != 3 || returned.capacity() < returned.len() || returned.is_empty() {
+        return 1
+    }
+
+    let removed: i32 = values.remove(0) catch err {
+        recover -1
+    }
+    let popped: i32 = values.pop() catch err {
+        recover -1
+    }
+    let remaining: i32 = values.get(0) catch err {
+        recover -1
+    }
+    if removed != 10 || popped != 30 || remaining != 22 {
+        return 2
+    }
+
+    let inner: List<i32> = [1]
+    let nested: List<List<i32>> = [inner]
+    let fetched: List<i32> = nested.get(0) catch err {
+        recover []
+    }
+    LIST_PUSH__(fetched, 2)
+    if inner.len() != 2 {
+        return 3
+    }
+
+    let boxes: List<Box<i32>> = [Box(7)]
+    LIST_PUSH__(boxes, Box(8))
+    let moved: Box<i32> = boxes.pop() catch err {
+        recover Box(-1)
+    }
+    if moved.value != 8 || boxes.len() != 1 {
+        return 4
+    }
+    boxes.clear()
+
+    let point = Point{x: 1}
+    let attributes = point.__attributes__
+    LIST_PUSH__(attributes, "extra")
+    if attributes.len() != 2 || point.__attributes__.len() != 1 {
+        return 5
+    }
+
+    let arguments = GET_ARGS__
+    LIST_PUSH__(arguments, "local")
+    if arguments.len() != 2 {
+        return 6
+    }
+
+    values.clear()
+    if !values.is_empty() {
+        return 7
+    }
+    return 0
+}
+""",
+        encoding="utf-8",
+    )
+
+    compiler = Compiler()
+    generated = compiler.emit_file(source)
+    executable = tmp_path / ("dynamic-list.exe" if sys.platform.startswith("win") else "dynamic-list")
+    compiler.build_file(source, executable)
+    result = subprocess.run([str(executable), "original"], capture_output=True, text=True, check=False)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "_ensure_mutable" in generated
+    assert "_push_copy" in generated
+    assert "_storage_drop" in generated
+
+
+def test_v2_list_uses_builtin_len_and_checked_index_syntax(tmp_path: Path) -> None:
+    source = tmp_path / "list_syntax.zy"
+    source.write_text(
+        """fn main() i32 {
+    let values: List<i32> = [10, 20]
+    let nested: List<List<i32>> = [values]
+    let first: i32 = values[0] catch err {
+        recover -1
+    }
+    let inner: List<i32> = nested[0] catch err {
+        recover []
+    }
+    LIST_PUSH__(inner, 30)
+    let last: i32 = inner[2] catch err {
+        recover -1
+    }
+    if LIST_LEN__(values) != 3 || LIST_LEN__(nested) != 1 || first != 10 || last != 30 {
+        return 1
+    }
+    return 0
+}
+""",
+        encoding="utf-8",
+    )
+
+    executable = tmp_path / ("list-syntax.exe" if sys.platform.startswith("win") else "list-syntax")
+    Compiler().build_file(source, executable)
+    result = subprocess.run([str(executable)], capture_output=True, text=True, check=False)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+@pytest.mark.parametrize(
+    ("source", "message"),
+    [
+        (
+            'fn main() i32 {\n    let size = LIST_LEN__("hello")\n    return 0\n}\n',
+            "LIST_LEN__ expects `List<T>`, got `str`",
+        ),
+        (
+            'fn main() i32 {\n    let value = "hello"[0]\n    return 0\n}\n',
+            "indexing with `\\[\\]` requires `List<T>`, got `str`",
+        ),
+        (
+            'fn main() i32 {\n    let values = [1]\n    let value = values["zero"]\n    return 0\n}\n',
+            "expected `i32`, got `str`",
+        ),
+        (
+            'fn main() i32 {\n    let values = [1]\n    LIST_PUSH__(values, "two")\n    return 0\n}\n',
+            "expected `i32`, got `str`",
+        ),
+        (
+            "fn main() i32 {\n    LIST_PUSH__([1], 2)\n    return 0\n}\n",
+            "LIST_PUSH__ requires a local List variable",
+        ),
+        (
+            'fn main() i32 {\n    let values = [1]\n    LIST_SET__(values, "zero", 2)\n    return 0\n}\n',
+            "expected `i32`, got `str`",
+        ),
+    ],
+)
+def test_v2_list_builtin_syntax_rejects_invalid_operands(source: str, message: str) -> None:
+    with pytest.raises(CompileError, match=message):
+        Compiler().check_source(source)
+
+
+def test_v2_list_index_reports_source_location(tmp_path: Path) -> None:
+    source = tmp_path / "list_index_error.zy"
+    source.write_text(
+        """fn main() i32 {
+    let values: List<i32> = [10]
+    let value: i32 = values[1]
+    return value
+}
+""",
+        encoding="utf-8",
+    )
+    executable = tmp_path / ("list-index-error.exe" if sys.platform.startswith("win") else "list-index-error")
+    Compiler().build_file(source, executable)
+    result = subprocess.run([str(executable)], capture_output=True, text=True, check=False)
+
+    assert result.returncode == 1
+    assert "list_index_error.zy:3:28: List index out of range" in result.stderr.replace("\\", "/")
+
+
+def test_v2_dynamic_list_reports_mutation_errors(tmp_path: Path) -> None:
+    source = tmp_path / "list_errors.zy"
+    source.write_text(
+        """fn main() i32 {
+    let values: List<i32> = []
+    LIST_SET__(values, 0, 1)
+    return 0
+}
+""",
+        encoding="utf-8",
+    )
+    executable = tmp_path / ("list-errors.exe" if sys.platform.startswith("win") else "list-errors")
+    Compiler().build_file(source, executable)
+    result = subprocess.run([str(executable)], capture_output=True, text=True, check=False)
+
+    assert result.returncode == 1
+    assert "list_errors.zy:3:5: List index out of range" in result.stderr.replace("\\", "/")
+
+
+def test_v2_list_field_waits_for_managed_aggregate_destructors() -> None:
+    source = """struct Bad {
+    values: List<i32>
+}
+
+fn main() i32 {
+    return 0
+}
+"""
+
+    with pytest.raises(CompileError, match="List<T> fields require managed aggregate destructors"):
+        Compiler().check_source(source)
+
+
 def test_v2_semicolons_are_rejected() -> None:
     with pytest.raises(CompileError, match="semicolons were removed"):
         Compiler().check_source("fn main() i32 { return 0; }")
@@ -213,6 +848,47 @@ def test_v2_imported_module_error_reports_imported_file(tmp_path: Path) -> None:
 
     assert caught.value.source_name == str(broken.resolve())
     assert caught.value.span is not None and caught.value.span.line == 2
+
+
+def test_v2_module_qualified_struct_literal_builds_and_runs(tmp_path: Path) -> None:
+    model = tmp_path / "model.zy"
+    model.write_text(
+        "public struct Dict {\n    public size: i32 = 0\n}\n",
+        encoding="utf-8",
+    )
+    main = tmp_path / "main.zy"
+    main.write_text(
+        'import "model.zy" as model\n\nfn main() i32 {\n'
+        "    let value = model.Dict{}\n"
+        "    if TYPEOF__(value, model.Dict) {\n"
+        "        return value.size\n"
+        "    }\n"
+        "    return 1\n"
+        "}\n",
+        encoding="utf-8",
+    )
+
+    executable = tmp_path / ("qualified-struct.exe" if sys.platform.startswith("win") else "qualified-struct")
+    Compiler().build_file(main, executable)
+    result = subprocess.run([str(executable)], capture_output=True, text=True, check=False)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_v2_private_imported_struct_cannot_be_constructed(tmp_path: Path) -> None:
+    model = tmp_path / "model.zy"
+    model.write_text("private struct Secret {\n}\n", encoding="utf-8")
+    main = tmp_path / "main.zy"
+    main.write_text(
+        'import "model.zy" as model\n\nfn main() i32 {\n'
+        "    let value = model.Secret{}\n"
+        "    return 0\n"
+        "}\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(CompileError, match="struct `model.Secret` is private"):
+        Compiler().check_file(main)
 
 
 def test_v2_circular_import_reports_the_import_site(tmp_path: Path) -> None:
@@ -314,10 +990,11 @@ def test_v2_get_args_and_get_exe_use_process_arguments(tmp_path: Path) -> None:
     source = tmp_path / "args.zy"
     source.write_text(
         """import <std/list> as list
+import <std/process> as process
 
 fn main() i32 {
-    let args: List<str> = GET_ARGS__
-    let executable: str = GET_EXE__
+    let args = process.args(GET_ARGS__)
+    let executable = process.executable(GET_EXE__)
     if list.length(args) == 2 && executable != "" {
         return 0
     }
@@ -415,11 +1092,41 @@ def test_v2_process_special_values_are_typed_and_reserved() -> None:
         Compiler().check_source(shadowed)
 
 
+@pytest.mark.parametrize("name", ["GET_ARGS__", "GET_EXE__"])
+def test_v2_process_special_values_are_restricted_to_main(name: str) -> None:
+    return_type = "List<str>" if name == "GET_ARGS__" else "str"
+    source = f"fn helper() {return_type} {{\n    return {name}\n}}\n\nfn main() i32 {{\n    return 0\n}}\n"
+
+    with pytest.raises(CompileError, match=r"only available inside `fn main\(\)`"):
+        Compiler().check_source(source)
+
+
+def test_v2_typeof_remains_available_outside_main() -> None:
+    source = """fn is_i32(value: i32) bool {
+    return TYPEOF__(value, i32)
+}
+
+fn main() i32 {
+    if is_i32(1) {
+        return 0
+    }
+    return 1
+}
+"""
+
+    Compiler().check_source(source)
+
+
 @pytest.mark.parametrize(
     ("source", "old_name", "new_name"),
     [
         ("fn main() i32 {\n    let value = GET_ARGS\n    return 0\n}\n", "GET_ARGS", "GET_ARGS__"),
         ("fn main() i32 {\n    let value = GET_EXE\n    return 0\n}\n", "GET_EXE", "GET_EXE__"),
+        ("fn main() i32 {\n    let values = [1]\n    let size = LEN__(values)\n    return 0\n}\n", "LEN__", "LIST_LEN__"),
+        ("fn main() i32 {\n    let values = [1]\n    PUSH__(values, 2)\n    return 0\n}\n", "PUSH__", "LIST_PUSH__"),
+        ("fn main() i32 {\n    let values = [1]\n    SET__(values, 0, 2)\n    return 0\n}\n", "SET__", "LIST_SET__"),
+        ("fn main() i32 {\n    let values = [1]\n    PUSH(values, 2)\n    return 0\n}\n", "PUSH", "LIST_PUSH__"),
+        ("fn main() i32 {\n    let values = [1]\n    SET(values, 0, 2)\n    return 0\n}\n", "SET", "LIST_SET__"),
         ("fn main() i32 {\n    let value = typeof 1 i32\n    return 0\n}\n", "typeof", "TYPEOF__"),
     ],
 )
@@ -428,6 +1135,13 @@ def test_v2_old_special_words_report_their_replacements(source: str, old_name: s
         Compiler().check_source(source)
 
     assert f"`{old_name}` was renamed to `{new_name}`" in str(caught.value)
+
+
+def test_v2_unknown_uppercase_double_underscore_name_is_reserved() -> None:
+    source = "fn main() i32 {\n    let FAKE__ = 1\n    return 0\n}\n"
+
+    with pytest.raises(CompileError, match="reserved for compiler special forms"):
+        Compiler().check_source(source)
 
 
 def test_v2_check_file_source_uses_unsaved_root_text_and_disk_imports(tmp_path: Path) -> None:
@@ -684,6 +1398,39 @@ def test_v2_while_assignment_break_and_continue_execute(tmp_path: Path) -> None:
     assert result.returncode == 0, result.stdout + result.stderr
 
 
+def test_v2_compound_assignment_operators_execute(tmp_path: Path) -> None:
+    source = tmp_path / "compound_assignment.zy"
+    source.write_text(
+        """struct Counter {
+    value: i32 = 1
+}
+
+fn main() i32 {
+    let value: i32 = 10
+    value += 5
+    value -= 3
+    value *= 2
+    value /= 4
+    value %= 4
+
+    let counter = Counter{}
+    counter.value += 2
+    if value == 2 && counter.value == 3 {
+        return 0
+    }
+    return 1
+}
+""",
+        encoding="utf-8",
+    )
+
+    executable = tmp_path / ("compound-assignment.exe" if sys.platform.startswith("win") else "compound-assignment")
+    Compiler().build_file(source, executable)
+    result = subprocess.run([str(executable)], capture_output=True, text=True, check=False)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
 @pytest.mark.parametrize("keyword", ["break", "continue"])
 def test_v2_loop_control_is_rejected_outside_loop(keyword: str) -> None:
     source = f"fn main() i32 {{\n    {keyword}\n    return 0\n}}\n"
@@ -701,7 +1448,7 @@ def test_v2_typeof_is_a_compile_time_boolean_expression(tmp_path: Path) -> None:
 
 fn main() i32 {
     let value: i32 = 12
-    if TYPEOF__ value i32 && !(TYPEOF__ value str) && TYPEOF__ "hello" str && TYPEOF__ [1, 2] List<i32> && TYPEOF__ (make_value()) i32 {
+    if TYPEOF__(value, i32) && !TYPEOF__(value, str) && TYPEOF__("hello", str) && TYPEOF__([1, 2], List<i32>) && TYPEOF__(make_value(), i32) {
         return 0
     }
     return 1
@@ -720,12 +1467,19 @@ fn main() i32 {
 
 
 def test_v2_typeof_reports_unknown_target_type_at_its_line() -> None:
-    source = "fn main() i32 {\n    let value = TYPEOF__ 1 MissingType\n    return 0\n}\n"
+    source = "fn main() i32 {\n    let value = TYPEOF__(1, MissingType)\n    return 0\n}\n"
 
     with pytest.raises(CompileError, match="unknown type `MissingType`") as caught:
         Compiler().check_source(source, "typeof_error.zy")
 
     assert caught.value.span is not None and caught.value.span.line == 2
+
+
+def test_v2_typeof_old_prefix_form_reports_migration_syntax() -> None:
+    source = "fn main() i32 {\n    let value = TYPEOF__ 1 i32\n    return 0\n}\n"
+
+    with pytest.raises(CompileError, match=r"TYPEOF__ now uses `TYPEOF__\(value, Type\)`"):
+        Compiler().check_source(source)
 
 
 def test_v2_rejects_oversized_source_overlays(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

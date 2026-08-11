@@ -1,7 +1,7 @@
-public fn args() List<str> {
-    return GET_ARGS__
+public fn args(value: List<str>) List<str> {
+    return value
 }
 
-public fn executable() str {
-    return GET_EXE__
+public fn executable(value: str) str {
+    return value
 }

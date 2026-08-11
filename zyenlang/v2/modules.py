@@ -219,6 +219,8 @@ def namespace_program(program: ast.Program, namespace: str, import_aliases: set[
             return ast.BinaryExpr(node.span, expression(node.left), node.operator, expression(node.right))
         if isinstance(node, ast.FieldExpr):
             return ast.FieldExpr(node.span, expression(node.receiver), node.name)
+        if isinstance(node, ast.IndexExpr):
+            return ast.IndexExpr(node.span, expression(node.receiver), expression(node.index))
         if isinstance(node, ast.CallExpr):
             if isinstance(node.callee, ast.NameExpr) and node.callee.name in local_functions:
                 callee: ast.Expr = ast.NameExpr(node.callee.span, f"{namespace}.{node.callee.name}")

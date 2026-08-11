@@ -6,7 +6,8 @@ ZyenLang 是一門精簡、具有靜態檢查並編譯成 C 的語言。設計�
 語法建立有結構的程式：整個核心圍繞值、結構體與函式。
 
 0.2 版帶來全新的 lexer、parser、typed AST/IR、語意檢查器、模組載入器與
-C backend。新語法使用 `zy2`；舊的 `zy` 指令仍保留，用來相容 v0.1 程式。
+C backend。新語法正式使用 `zy`，`zy2` 保留為相同編譯器的相容名稱；舊版
+v0.1 程式使用 `zy1` 或 `zy legacy`。
 
 ## 下載
 
@@ -50,10 +51,10 @@ fn main() i32 {
 ```
 
 ```powershell
-zy2 check main.zy
-zy2 run main.zy
-zy2 build main.zy -o main.exe --release
-zy2 build main.zy -o main.c
+zy check main.zy
+zy run main.zy
+zy build main.zy -o main.exe --release
+zy build main.zy -o main.c
 ```
 
 ## 目前語言能力

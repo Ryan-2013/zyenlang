@@ -18,6 +18,9 @@ KEYWORDS = {
     "if",
     "import",
     "let",
+    "LIST_LEN__",
+    "LIST_PUSH__",
+    "LIST_SET__",
     "mut",
     "native",
     "null",
@@ -37,10 +40,18 @@ KEYWORDS = {
 RENAMED_SPECIAL_WORDS = {
     "GET_ARGS": "GET_ARGS__",
     "GET_EXE": "GET_EXE__",
+    "LEN": "LIST_LEN__",
+    "LEN__": "LIST_LEN__",
+    "PUSH": "LIST_PUSH__",
+    "PUSH__": "LIST_PUSH__",
+    "SET": "LIST_SET__",
+    "SET__": "LIST_SET__",
     "typeof": "TYPEOF__",
 }
 
-TWO_CHAR_SYMBOLS = {"==", "!=", "<=", ">=", "&&", "||", "->"}
+SPECIAL_VALUE_WORDS = {"GET_ARGS__", "GET_EXE__"}
+
+TWO_CHAR_SYMBOLS = {"==", "!=", "<=", ">=", "&&", "||", "->", "+=", "-=", "*=", "/=", "%="}
 ONE_CHAR_SYMBOLS = set("{}()[],:.=+-*/%<>!|")
 
 
@@ -167,6 +178,17 @@ def lex(source: str, source_name: str = "<source>") -> list[Token]:
             value = source[start_i:i]
             if replacement := RENAMED_SPECIAL_WORDS.get(value):
                 raise CompileError(f"`{value}` was renamed to `{replacement}`", start, source_name)
+            if (
+                value.endswith("__")
+                and value.upper() == value
+                and value not in KEYWORDS
+                and value not in SPECIAL_VALUE_WORDS
+            ):
+                raise CompileError(
+                    f"`{value}` is reserved for compiler special forms",
+                    start,
+                    source_name,
+                )
             kind = value.upper() if value in KEYWORDS else "IDENT"
             tokens.append(Token(kind, value, start))
             continue

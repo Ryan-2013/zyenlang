@@ -20,6 +20,7 @@ from .types import (
     TypeVar,
     assignable,
     integer_literal_fits,
+    is_box,
     is_integer,
     is_list,
     is_numeric,
@@ -30,6 +31,10 @@ from .types import (
 
 
 PROCESS_SPECIAL_VALUES = {"GET_ARGS__", "GET_EXE__"}
+STRUCT_METADATA_FIELDS = {
+    "__attributes__": "attributes",
+    "__methods__": "methods",
+}
 
 
 @dataclass(frozen=True)
@@ -159,9 +164,21 @@ class Lowerer:
         for symbol in self.structs.values():
             type_vars = set(symbol.type_params)
             for field in symbol.node.fields:
+                if field.name in STRUCT_METADATA_FIELDS:
+                    raise self.error(f"`{field.name}` is reserved for struct metadata", field.span)
                 if field.name in symbol.fields:
                     raise self.error(f"duplicate field `{field.name}` in `{symbol.name}`", field.span)
                 typ = resolve_type_node(field.type_node, known, type_vars, self.source_name)
+                if self.contains_box(typ):
+                    raise self.error(
+                        "Box<T> fields require managed aggregate destructors and are not enabled yet",
+                        field.span,
+                    )
+                if self.contains_list(typ):
+                    raise self.error(
+                        "List<T> fields require managed aggregate destructors and are not enabled yet",
+                        field.span,
+                    )
                 if is_task(typ):
                     raise self.error("Task<T> is linear and cannot be stored in a struct field", field.span)
                 symbol.fields[field.name] = FieldSymbol(field.name, typ, field.visibility, field)
@@ -237,9 +254,11 @@ class Lowerer:
                         param.mutable,
                     )
                 )
+                self.validate_box_position(params[-1][1], param.span, "parameter")
                 if is_task(params[-1][1]):
                     raise self.error("Task<T> cannot be passed as a function parameter", param.span)
             return_type = resolve_type_node(definition.return_type, known, type_vars, self.source_name)
+            self.validate_box_position(return_type, definition.return_type.span, "return type")
             if is_task(return_type):
                 raise self.error("Task<T> cannot be returned; await it in the creating scope", definition.return_type.span)
             throws = None
@@ -300,6 +319,8 @@ class Lowerer:
                 native_symbol,
             )
             if receiver_name:
+                if definition.name in STRUCT_METADATA_FIELDS:
+                    raise self.error(f"`{definition.name}` is reserved for struct metadata", definition.span)
                 key = (receiver_name, definition.name)
                 if key in self.methods:
                     raise self.error(f"duplicate method `{receiver_name}.{definition.name}`", definition.span)
@@ -545,6 +566,7 @@ class Lowerer:
             value = self.lower_expr(statement.value, expected)
             typ = expected or value.typ
             value = self.coerce(value, typ, statement.value.span)
+            self.validate_box_position(typ, binding.span, "local type")
             if is_task(typ) and not isinstance(value, ir.IRSpawn):
                 raise self.error("Task<T> is linear and cannot be copied", statement.value.span)
             self.define_local(binding.name, typ, binding.span)
@@ -567,6 +589,7 @@ class Lowerer:
         final_types: list[Type] = []
         for binding, annotation, actual in zip(statement.bindings, annotations, value.typ.items):
             typ = annotation or actual
+            self.validate_box_position(typ, binding.span, "destructured local type")
             if not assignable(typ, actual):
                 raise self.error(
                     f"cannot bind `{binding.name}: {typ.display()}` from `{actual.display()}`",
@@ -591,6 +614,8 @@ class Lowerer:
                 raise self.error("void context cannot produce a value", span)
             return None
         if isinstance(expected, TupleType):
+            if len(values) == 1:
+                return self.lower_expr(values[0], expected)
             if len(values) != len(expected.items):
                 raise self.error(
                     f"expected {len(expected.items)} values, got {len(values)}",
@@ -604,13 +629,14 @@ class Lowerer:
 
     def lower_expr(self, expression: ast.Expr, expected: Type | None = None) -> ir.IRExpr:
         if isinstance(expression, ast.IntExpr):
-            typ = expected if expected is not None and is_integer(expected) else PrimitiveType("i32")
+            literal_expected = expected.inner if isinstance(expected, OptionalType) else expected
+            typ = literal_expected if literal_expected is not None and is_integer(literal_expected) else PrimitiveType("i32")
             if not integer_literal_fits(expression.value, typ):
                 raise self.error(
                     f"integer literal {expression.value} does not fit `{typ.display()}`",
                     expression.span,
                 )
-            return ir.IRInt(typ, expression.span, expression.value)
+            return self.coerce(ir.IRInt(typ, expression.span, expression.value), expected, expression.span)
         if isinstance(expression, ast.StringExpr):
             return self.coerce(ir.IRString(STR, expression.span, expression.value), expected, expression.span)
         if isinstance(expression, ast.BoolExpr):
@@ -621,6 +647,7 @@ class Lowerer:
             return ir.IRNull(expected, expression.span)
         if isinstance(expression, ast.NameExpr):
             if expression.name == "GET_ARGS__":
+                self.require_main_process_value(expression.name, expression.span)
                 args_type = NamedType("List", (STR,))
                 return self.coerce(
                     ir.IRCall(args_type, expression.span, "__zy2_get_args", ()),
@@ -628,6 +655,7 @@ class Lowerer:
                     expression.span,
                 )
             if expression.name == "GET_EXE__":
+                self.require_main_process_value(expression.name, expression.span)
                 return self.coerce(
                     ir.IRCall(STR, expression.span, "__zy2_get_exe", ()),
                     expected,
@@ -647,10 +675,37 @@ class Lowerer:
             return self.coerce(ir.IRUnary(typ, expression.span, expression.operator, operand), expected, expression.span)
         if isinstance(expression, ast.BinaryExpr):
             return self.lower_binary(expression, expected)
+        if isinstance(expression, ast.CastExpr):
+            value = self.lower_expr(expression.value)
+            target_type = self.resolve_optional_annotation(expression.target_type)
+            assert target_type is not None
+            if not self.can_explicitly_cast(value.typ, target_type):
+                raise self.error(
+                    f"cannot cast `{value.typ.display()}` to `{target_type.display()}`",
+                    expression.span,
+                )
+            return self.coerce(ir.IRCast(target_type, expression.span, value), expected, expression.span)
         if isinstance(expression, ast.FieldExpr):
             return self.coerce(self.lower_field(expression), expected, expression.span)
+        if isinstance(expression, ast.IndexExpr):
+            receiver = self.lower_expr(expression.receiver)
+            if not is_list(receiver.typ):
+                raise self.error(
+                    f"indexing with `[]` requires `List<T>`, got `{receiver.typ.display()}`",
+                    expression.receiver.span,
+                )
+            index = self.lower_expr(expression.index, PrimitiveType("i32"))
+            assert isinstance(receiver.typ, NamedType)
+            value = ir.IRCall(
+                receiver.typ.args[0],
+                expression.span,
+                "__zy2_list_get",
+                (receiver, index),
+                ERROR,
+            )
+            return self.coerce(value, expected, expression.span)
         if isinstance(expression, ast.CallExpr):
-            return self.coerce(self.lower_call(expression), expected, expression.span)
+            return self.coerce(self.lower_call(expression, expected), expected, expression.span)
         if isinstance(expression, ast.TupleExpr):
             expected_items = expected.items if isinstance(expected, TupleType) else (None,) * len(expression.items)
             if len(expected_items) != len(expression.items):
@@ -710,6 +765,27 @@ class Lowerer:
             )
         raise self.error("unsupported expression", expression.span)
 
+    @staticmethod
+    def can_explicitly_cast(source: Type, target: Type) -> bool:
+        if source == target:
+            return True
+        if is_numeric(source) and is_numeric(target):
+            return True
+        if (source == BOOL and is_numeric(target)) or (is_numeric(source) and target == BOOL):
+            return True
+        if target == STR and (source == BOOL or is_numeric(source)):
+            return True
+        if target == STR and isinstance(source, OptionalType) and source.inner == STR:
+            return True
+        return False
+
+    def require_main_process_value(self, name: str, span: SourceSpan) -> None:
+        if self.current_function is None or self.current_function.name != "main" or self.current_function.receiver is not None:
+            raise self.error(
+                f"`{name}` is only available inside `fn main()`; pass its value to helper functions explicitly",
+                span,
+            )
+
     def lower_binary(self, expression: ast.BinaryExpr, expected: Type | None) -> ir.IRExpr:
         if expression.operator in {"==", "!="} and (
             isinstance(expression.left, ast.NullExpr) or isinstance(expression.right, ast.NullExpr)
@@ -724,16 +800,19 @@ class Lowerer:
             return ir.IRBinary(BOOL, expression.span, left, expression.operator, right)
 
         left = self.lower_expr(expression.left)
-        right = self.lower_expr(expression.right, left.typ)
+        comparison = expression.operator in {"<", "<=", ">", ">=", "==", "!="}
+        right = self.lower_expr(expression.right, None if comparison else left.typ)
         if expression.operator in {"+", "-", "*", "/", "%"}:
             if not is_numeric(left.typ) or left.typ != right.typ:
                 raise self.error("arithmetic operands must have the same numeric type", expression.span)
             return self.coerce(ir.IRBinary(left.typ, expression.span, left, expression.operator, right), expected, expression.span)
         if expression.operator in {"<", "<=", ">", ">="}:
-            if not is_numeric(left.typ) or left.typ != right.typ:
-                raise self.error("comparison operands must have the same numeric type", expression.span)
+            if not is_numeric(left.typ) or not is_numeric(right.typ):
+                raise self.error("comparison operands must be numeric", expression.span)
             return ir.IRBinary(BOOL, expression.span, left, expression.operator, right)
         if expression.operator in {"==", "!="}:
+            if is_numeric(left.typ) and is_numeric(right.typ):
+                return ir.IRBinary(BOOL, expression.span, left, expression.operator, right)
             if left.typ != right.typ:
                 raise self.error("equality operands must have the same type", expression.span)
             return ir.IRBinary(BOOL, expression.span, left, expression.operator, right)
@@ -743,8 +822,15 @@ class Lowerer:
             return ir.IRBinary(BOOL, expression.span, left, expression.operator, right)
         raise self.error(f"unsupported binary operator `{expression.operator}`", expression.span)
 
-    def lower_field(self, expression: ast.FieldExpr) -> ir.IRField:
+    def lower_field(self, expression: ast.FieldExpr) -> ir.IRExpr:
         receiver = self.lower_expr(expression.receiver)
+        if is_box(receiver.typ):
+            assert isinstance(receiver.typ, NamedType)
+            if expression.name == "value":
+                return ir.IRBoxValue(receiver.typ.args[0], expression.span, receiver)
+            if expression.name == "__strong_count__":
+                return ir.IRArcCount(PrimitiveType("usize"), expression.span, receiver)
+            raise self.error(f"`{receiver.typ.display()}` has no field `{expression.name}`", expression.span)
         if receiver.typ == ERROR:
             error_fields = {
                 "message": STR,
@@ -758,6 +844,9 @@ class Lowerer:
                 return ir.IRField(field_type, expression.span, receiver, runtime_name)
         if not isinstance(receiver.typ, NamedType) or receiver.typ.name not in self.structs:
             raise self.error(f"`{receiver.typ.display()}` has no field `{expression.name}`", expression.span)
+        if category := STRUCT_METADATA_FIELDS.get(expression.name):
+            metadata_type = NamedType("List", (STR,))
+            return ir.IRStructMetadata(metadata_type, expression.span, receiver, receiver.typ.name, category)
         symbol = self.structs[receiver.typ.name]
         field = symbol.fields.get(expression.name)
         if field is None:
@@ -766,9 +855,54 @@ class Lowerer:
             raise self.error(f"field `{symbol.name}.{field.name}` is private", expression.span)
         return ir.IRField(field.typ, expression.span, receiver, field.name)
 
-    def lower_call(self, expression: ast.CallExpr) -> ir.IRCall:
+    def lower_call(self, expression: ast.CallExpr, expected: Type | None = None) -> ir.IRExpr:
         if isinstance(expression.callee, ast.NameExpr):
             name = expression.callee.name
+            if name == "LIST_LEN__":
+                if len(expression.args) != 1:
+                    raise self.error("LIST_LEN__ expects exactly one List<T> value", expression.span)
+                value = self.lower_expr(expression.args[0])
+                if not is_list(value.typ):
+                    raise self.error(
+                        f"LIST_LEN__ expects `List<T>`, got `{value.typ.display()}`",
+                        expression.args[0].span,
+                    )
+                return ir.IRCall(PrimitiveType("usize"), expression.span, "zy2_list_len", (value,))
+            if name == "LIST_PUSH__":
+                if len(expression.args) != 2:
+                    raise self.error("LIST_PUSH__ expects a List<T> variable and one value", expression.span)
+                self.require_mutable_list_receiver(expression.args[0], "LIST_PUSH__")
+                receiver = self.lower_expr(expression.args[0])
+                if not is_list(receiver.typ):
+                    raise self.error(
+                        f"LIST_PUSH__ expects `List<T>`, got `{receiver.typ.display()}`",
+                        expression.args[0].span,
+                    )
+                assert isinstance(receiver.typ, NamedType)
+                value = self.lower_expr(expression.args[1], receiver.typ.args[0])
+                return ir.IRCall(VOID, expression.span, "__zy2_list_push", (receiver, value))
+            if name == "LIST_SET__":
+                if len(expression.args) != 3:
+                    raise self.error("LIST_SET__ expects a List<T> variable, i32 index, and one value", expression.span)
+                self.require_mutable_list_receiver(expression.args[0], "LIST_SET__")
+                receiver = self.lower_expr(expression.args[0])
+                if not is_list(receiver.typ):
+                    raise self.error(
+                        f"LIST_SET__ expects `List<T>`, got `{receiver.typ.display()}`",
+                        expression.args[0].span,
+                    )
+                assert isinstance(receiver.typ, NamedType)
+                index = self.lower_expr(expression.args[1], PrimitiveType("i32"))
+                value = self.lower_expr(expression.args[2], receiver.typ.args[0])
+                return ir.IRCall(VOID, expression.span, "__zy2_list_set", (receiver, index, value), ERROR)
+            if name == "Box":
+                if len(expression.args) != 1:
+                    raise self.error("Box expects exactly one value", expression.span)
+                expected_inner = expected.args[0] if is_box(expected) else None
+                value = self.lower_expr(expression.args[0], expected_inner)
+                box_type = NamedType("Box", (value.typ,))
+                self.validate_box_payload(box_type, expression.span)
+                return ir.IRBox(box_type, expression.span, value)
             if name in {"__runtime_write_line", "__runtime_write_error"}:
                 if len(expression.args) != 1:
                     raise self.error(f"{name} expects exactly one str", expression.span)
@@ -797,6 +931,14 @@ class Lowerer:
                 if expression.args:
                     raise self.error("List.len takes no arguments", expression.span)
                 return ir.IRCall(PrimitiveType("usize"), expression.span, "zy2_list_len", (receiver,))
+            if is_list(receiver.typ) and method_name == "capacity":
+                if expression.args:
+                    raise self.error("List.capacity takes no arguments", expression.span)
+                return ir.IRCall(PrimitiveType("usize"), expression.span, "zy2_list_capacity", (receiver,))
+            if is_list(receiver.typ) and method_name == "is_empty":
+                if expression.args:
+                    raise self.error("List.is_empty takes no arguments", expression.span)
+                return ir.IRCall(BOOL, expression.span, "zy2_list_is_empty", (receiver,))
             if is_list(receiver.typ) and method_name == "get":
                 if len(expression.args) != 1:
                     raise self.error("List.get expects exactly one i32 index", expression.span)
@@ -809,6 +951,39 @@ class Lowerer:
                     (receiver, index),
                     ERROR,
                 )
+            if is_list(receiver.typ) and method_name in {"push", "add"}:
+                self.require_mutable_list_receiver(expression.callee.receiver, method_name)
+                if len(expression.args) != 1:
+                    raise self.error(f"List.{method_name} expects exactly one value", expression.span)
+                assert isinstance(receiver.typ, NamedType)
+                value = self.lower_expr(expression.args[0], receiver.typ.args[0])
+                return ir.IRCall(VOID, expression.span, "__zy2_list_push", (receiver, value))
+            if is_list(receiver.typ) and method_name == "set":
+                self.require_mutable_list_receiver(expression.callee.receiver, method_name)
+                if len(expression.args) != 2:
+                    raise self.error("List.set expects an i32 index and one value", expression.span)
+                assert isinstance(receiver.typ, NamedType)
+                index = self.lower_expr(expression.args[0], PrimitiveType("i32"))
+                value = self.lower_expr(expression.args[1], receiver.typ.args[0])
+                return ir.IRCall(VOID, expression.span, "__zy2_list_set", (receiver, index, value), ERROR)
+            if is_list(receiver.typ) and method_name == "pop":
+                self.require_mutable_list_receiver(expression.callee.receiver, method_name)
+                if expression.args:
+                    raise self.error("List.pop takes no arguments", expression.span)
+                assert isinstance(receiver.typ, NamedType)
+                return ir.IRCall(receiver.typ.args[0], expression.span, "__zy2_list_pop", (receiver,), ERROR)
+            if is_list(receiver.typ) and method_name == "remove":
+                self.require_mutable_list_receiver(expression.callee.receiver, method_name)
+                if len(expression.args) != 1:
+                    raise self.error("List.remove expects exactly one i32 index", expression.span)
+                assert isinstance(receiver.typ, NamedType)
+                index = self.lower_expr(expression.args[0], PrimitiveType("i32"))
+                return ir.IRCall(receiver.typ.args[0], expression.span, "__zy2_list_remove", (receiver, index), ERROR)
+            if is_list(receiver.typ) and method_name == "clear":
+                self.require_mutable_list_receiver(expression.callee.receiver, method_name)
+                if expression.args:
+                    raise self.error("List.clear takes no arguments", expression.span)
+                return ir.IRCall(VOID, expression.span, "__zy2_list_clear", (receiver,))
             if not isinstance(receiver.typ, NamedType) or receiver.typ.name not in self.structs:
                 raise self.error(f"`{receiver.typ.display()}` has no method `{method_name}`", expression.span)
             symbol = self.methods.get((receiver.typ.name, method_name))
@@ -818,6 +993,76 @@ class Lowerer:
                 raise self.error(f"method `{receiver.typ.name}.{method_name}` is private", expression.span)
             return self.lower_symbol_call(symbol, expression.args, (receiver,), expression.span)
         raise self.error("call target must be a function or method", expression.span)
+
+    def validate_box_position(self, typ: Type, span: SourceSpan, context: str) -> None:
+        if is_list(typ):
+            self.validate_list_element(typ.args[0], span)
+            return
+        if self.contains_list(typ):
+            raise self.error(f"List<T> cannot be nested in a {context} until managed aggregate destructors are enabled", span)
+        if not self.contains_box(typ):
+            return
+        if not is_box(typ):
+            raise self.error(f"Box<T> cannot be nested in a {context} yet", span)
+        self.validate_box_payload(typ, span)
+
+    def validate_box_payload(self, typ: Type, span: SourceSpan) -> None:
+        assert isinstance(typ, NamedType) and is_box(typ)
+        inner = typ.args[0]
+        if inner == VOID or is_task(inner) or self.contains_box(inner):
+            raise self.error(
+                f"Box payload `{inner.display()}` needs a managed destructor that is not implemented yet",
+                span,
+            )
+        if isinstance(inner, (OptionalType, TupleType)) or is_list(inner):
+            raise self.error(f"Box payload `{inner.display()}` is not supported in the first ARC milestone", span)
+
+    def validate_list_element(self, element: Type, span: SourceSpan) -> None:
+        if is_task(element):
+            raise self.error("List<Task<T>> is not allowed because Task is linear", span)
+        if is_box(element):
+            self.validate_box_payload(element, span)
+            return
+        if is_list(element):
+            self.validate_list_element(element.args[0], span)
+            return
+        if self.contains_box(element) or self.contains_list(element):
+            raise self.error(
+                f"List element `{element.display()}` needs a managed aggregate destructor that is not implemented yet",
+                span,
+            )
+
+    @classmethod
+    def contains_box(cls, typ: Type) -> bool:
+        if is_box(typ):
+            return True
+        if isinstance(typ, NamedType):
+            return any(cls.contains_box(arg) for arg in typ.args)
+        if isinstance(typ, TupleType):
+            return any(cls.contains_box(item) for item in typ.items)
+        if isinstance(typ, OptionalType):
+            return cls.contains_box(typ.inner)
+        return False
+
+    @classmethod
+    def contains_list(cls, typ: Type) -> bool:
+        if is_list(typ):
+            return True
+        if isinstance(typ, NamedType):
+            return any(cls.contains_list(arg) for arg in typ.args)
+        if isinstance(typ, TupleType):
+            return any(cls.contains_list(item) for item in typ.items)
+        if isinstance(typ, OptionalType):
+            return cls.contains_list(typ.inner)
+        return False
+
+    def require_mutable_list_receiver(self, receiver: ast.Expr, method_name: str) -> None:
+        if not isinstance(receiver, ast.NameExpr):
+            operation = method_name if method_name.endswith("__") else f"List.{method_name}"
+            raise self.error(
+                f"{operation} requires a local List variable as its receiver",
+                receiver.span,
+            )
 
     @staticmethod
     def qualified_name(expression: ast.Expr) -> str | None:
@@ -863,16 +1108,20 @@ class Lowerer:
             concrete_params = tuple(
                 (name, substitute(typ, mapping), mutable) for name, typ, mutable in symbol.params
             )
+            for _, concrete_type, _ in concrete_params:
+                self.validate_box_position(concrete_type, span, "generic parameter")
             concrete_receiver = None
             if symbol.receiver:
                 name, typ, mutable = symbol.receiver
                 concrete_receiver = (name, substitute(typ, mapping), mutable)
+            concrete_return = substitute(symbol.return_type, mapping)
+            self.validate_box_position(concrete_return, span, "generic return type")
             instance = FunctionSymbol(
                 symbol.name,
                 symbol.c_name + suffix,
                 symbol.visibility,
                 concrete_params,
-                substitute(symbol.return_type, mapping),
+                concrete_return,
                 substitute(symbol.throws, mapping) if symbol.throws else None,
                 concrete_receiver,
                 (),
@@ -949,6 +1198,7 @@ class Lowerer:
         if not expression.items:
             if element_expected is None:
                 raise self.error("empty List literal needs an explicit `List<T>` type", expression.span)
+            self.validate_list_element(element_expected, expression.span)
             typ = NamedType("List", (element_expected,))
             return ir.IRList(typ, expression.span, ())
         first = self.lower_expr(expression.items[0], element_expected)
@@ -957,12 +1207,16 @@ class Lowerer:
         for item in expression.items[1:]:
             items.append(self.lower_expr(item, element_type))
         typ = NamedType("List", (element_type,))
+        self.validate_list_element(element_type, expression.span)
         return self.coerce(ir.IRList(typ, expression.span, tuple(items)), expected, expression.span)
 
     def lower_struct_expr(self, expression: ast.StructExpr) -> ir.IRStruct:
         symbol = self.structs.get(expression.name)
         if symbol is None:
             raise self.error(f"unknown struct `{expression.name}`", expression.span)
+        current_module = self.module_name(self.current_function.name if self.current_function else "")
+        if symbol.visibility == "private" and current_module != self.module_name(symbol.name):
+            raise self.error(f"struct `{symbol.name}` is private", expression.span)
         if symbol.type_params:
             raise self.error("generic struct construction is scheduled after the bootstrap milestone", expression.span)
         seen: set[str] = set()

@@ -47,8 +47,21 @@ assert.deepStrictEqual(language.qualifierAt('    io.pr', 9), { qualifier: 'io', 
 assert.deepStrictEqual(language.callAt('    pair(1, other(', 11), { name: 'pair', activeParameter: 1 });
 assert.deepStrictEqual(language.splitTopLevel('List<i32>, fn(i32, str), i32 | null'), ['List<i32>', 'fn(i32, str)', 'i32 | null']);
 assert(language.KEYWORDS.includes('TYPEOF__'));
+assert(language.KEYWORDS.includes('LIST_LEN__'));
+assert(language.KEYWORDS.includes('LIST_PUSH__'));
+assert(language.KEYWORDS.includes('LIST_SET__'));
 assert(!language.KEYWORDS.includes('typeof'));
 assert.deepStrictEqual(language.SPECIAL_VALUES, ['GET_ARGS__', 'GET_EXE__']);
+assert(language.SPECIAL_FORMS.some((item) => item.name === 'LIST_PUSH__' && item.snippet.includes('${2:value}')));
+assert(language.SPECIAL_FORMS.some((item) => item.name === 'TYPEOF__' && item.detail === 'TYPEOF__(value, Type) bool'));
+assert.deepStrictEqual(language.importPathAt('import <std/pa', 14), { kind: 'std', prefix: 'pa' });
+assert.strictEqual(language.importPathAt('let value = 1', 13), null);
+assert(language.BUILTINS.path.some(([name]) => name === 'join'));
+
+const masked = language.parseDocument('fn main() i32 {\n    let value = 1 // value in comment\n    let text = "value in text"\n}', 'masked.zy');
+assert(masked.maskedLines[1].includes('let value'));
+assert(!masked.maskedLines[1].includes('value in comment'));
+assert(!masked.maskedLines[2].includes('value in text'));
 
 const nativeSource = `native source "bridge.c"
 private native fn editor_open(path: str) i32 = "zy2_editor_open"`;
@@ -67,5 +80,11 @@ assert(manifest.capabilities.untrustedWorkspaces.restrictedConfigurations.includ
 const extensionSource = fs.readFileSync(path.join(__dirname, '..', 'extension.js'), 'utf8');
 assert(extensionSource.includes('new vscode.ProcessExecution'));
 assert(!extensionSource.includes('.sendText('));
+assert(extensionSource.includes('registerDocumentHighlightProvider'));
+assert(extensionSource.includes('parsed.maskedLines'));
+
+const snippets = fs.readFileSync(path.join(__dirname, '..', 'snippets', 'zyen.code-snippets'), 'utf8');
+assert(snippets.includes('TYPEOF__(${1:value}, ${2:i32})'));
+assert(snippets.includes('LIST_SET__(${1:list}, ${2:index}, ${3:value})'));
 
 console.log('language tests passed');

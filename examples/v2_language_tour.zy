@@ -1,4 +1,3 @@
-import <std/list> as list
 import <std/io> as io
 
 struct Car {
@@ -51,11 +50,11 @@ fn main() i32 {
     }
 
     let matrix: List<List<i16>> = [[1231]]
-    if list.length(matrix) > 0 {
+    if LIST_LEN__(matrix) > 0 {
         io.print("list")
     }
 
-    if value == 0 && num == 12 && list.length(args) < 1000000 && executable != "" {
+    if value == 0 && num == 12 && LIST_LEN__(args) < 1000000 && executable != "" {
         return 0
     }
     return 1

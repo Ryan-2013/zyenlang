@@ -76,10 +76,20 @@ INTEGER_TYPES = {
 
 FLOAT_TYPES = {"f32", "f64"}
 BUILTIN_NAMES = set(INTEGER_TYPES) | FLOAT_TYPES | {"bool", "str", "void", "Error"}
+SIGNED_INTEGER_TYPES = {"i8", "i16", "i32", "i64", "isize"}
+UNSIGNED_INTEGER_TYPES = {"u8", "u16", "u32", "u64", "usize"}
 
 
 def is_integer(typ: Type) -> bool:
     return isinstance(typ, PrimitiveType) and typ.name in INTEGER_TYPES
+
+
+def is_signed_integer(typ: Type) -> bool:
+    return isinstance(typ, PrimitiveType) and typ.name in SIGNED_INTEGER_TYPES
+
+
+def is_unsigned_integer(typ: Type) -> bool:
+    return isinstance(typ, PrimitiveType) and typ.name in UNSIGNED_INTEGER_TYPES
 
 
 def is_float(typ: Type) -> bool:
@@ -96,6 +106,10 @@ def is_list(typ: Type) -> bool:
 
 def is_task(typ: Type) -> bool:
     return isinstance(typ, NamedType) and typ.name == "Task" and len(typ.args) == 1
+
+
+def is_box(typ: Type) -> bool:
+    return isinstance(typ, NamedType) and typ.name == "Box" and len(typ.args) == 1
 
 
 def resolve_type_node(

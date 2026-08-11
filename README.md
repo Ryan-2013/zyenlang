@@ -7,8 +7,9 @@ design goal is to build structured programs from a small language surface:
 values, structs, and functions.
 
 Version 0.2 introduces a new lexer, parser, typed AST/IR, semantic checker,
-module loader, and C backend. The new compiler is invoked with `zy2`. The
-`zy` command remains available for v0.1 source compatibility.
+module loader, and C backend. The current compiler is invoked with `zy`;
+`zy2` remains an equivalent compatibility name. Legacy v0.1 source uses
+`zy1` or `zy legacy`.
 
 ## Download
 
@@ -55,10 +56,10 @@ fn main() i32 {
 ```
 
 ```powershell
-zy2 check main.zy
-zy2 run main.zy
-zy2 build main.zy -o main.exe --release
-zy2 build main.zy -o main.c
+zy check main.zy
+zy run main.zy
+zy build main.zy -o main.exe --release
+zy build main.zy -o main.c
 ```
 
 ## Language
@@ -149,7 +150,7 @@ Rust-equivalent safety.
 
 ## Compatibility
 
-Existing v0.1 programs continue to use `zy`. Their syntax reference and ZEPs
+Existing v0.1 programs use `zy1` or `zy legacy`. Their syntax reference and ZEPs
 remain in [docs/current_syntax_zh_TW.md](docs/current_syntax_zh_TW.md) and the
 [ZyenLang ZEP repository](https://github.com/Ryan-2013/zyenlang-zeps).
 

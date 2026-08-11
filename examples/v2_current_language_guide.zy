@@ -1,0 +1,95 @@
+import <std/io> as io
+
+public struct Dict {
+}
+
+public struct Counter {
+    public value: i32 = 0
+    private label: str = "counter"
+}
+
+private fn (counter: Counter) internal_label() str {
+    return counter.label
+}
+
+public fn (counter: Counter) name() str {
+    return counter.internal_label()
+}
+
+public fn (counter: Counter) with_value(value: i32) Counter {
+    return Counter{value: value}
+}
+
+fn checked_positive(value: i32) i32 throws Error {
+    if value <= 0 {
+        stop "value must be positive"
+    }
+    return value
+}
+
+fn pair() (i32, str) {
+    return 12, "twelve"
+}
+
+fn calculate() i32 {
+    return 42
+}
+
+fn main() i32 {
+    let empty = Dict{}
+    let counter = Counter{}
+    let updated = counter.with_value(7)
+    io.print(updated.name())
+
+    let (number: i32, text: str) = pair()
+    io.print(text)
+
+    let maybe: i32 | null = number
+    if let value = maybe {
+        if value == 12 {
+            io.print("optional value")
+        }
+    }
+
+    let safe: i32 = checked_positive(-1) catch err {
+        io.eprint((str)err.message)
+        recover 0
+    }
+
+    let values: List<i32> = [10, 20, 30]
+    LIST_PUSH__(values, 40)
+    LIST_SET__(values, 0, 11) catch err {
+        recover
+    }
+    let first_value: i32 = values[0] catch err {
+        recover 0
+    }
+    if LIST_LEN__(values) == 4 && first_value == 11 {
+        io.print("dynamic values")
+    }
+
+    let owned = Box(12)
+    let alias = owned
+    alias.value = 20
+    if owned.value == 20 && owned.__strong_count__ == 2 {
+        io.print("ARC alias")
+    }
+
+    let attributes: List<str> = counter.__attributes__
+    let methods: List<str> = counter.__methods__
+    if LIST_LEN__(attributes) == 2 && LIST_LEN__(methods) == 3 {
+        io.print("struct metadata")
+    }
+
+    let args: List<str> = GET_ARGS__
+    if TYPEOF__(empty, Dict) && TYPEOF__(args, List<str>) {
+        io.print("types checked")
+    }
+
+    let task: Task<i32> = spawn calculate()
+    let answer: i32 = await task
+    if answer == 42 && safe == 0 {
+        return 0
+    }
+    return 1
+}

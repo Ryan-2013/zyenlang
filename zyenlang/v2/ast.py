@@ -80,6 +80,12 @@ class FieldExpr(Expr):
 
 
 @dataclass(frozen=True)
+class IndexExpr(Expr):
+    receiver: Expr
+    index: Expr
+
+
+@dataclass(frozen=True)
 class CallExpr(Expr):
     callee: Expr
     args: tuple[Expr, ...] = ()
@@ -129,6 +135,12 @@ class AwaitExpr(Expr):
 class TypeOfExpr(Expr):
     value: Expr
     target_type: TypeNode
+
+
+@dataclass(frozen=True)
+class CastExpr(Expr):
+    target_type: TypeNode
+    value: Expr
 
 
 @dataclass(frozen=True)

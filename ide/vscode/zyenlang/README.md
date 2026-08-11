@@ -5,8 +5,8 @@ The official editor extension for ZyenLang 0.2.
 ## Features
 
 - ZyenLang 0.2 syntax highlighting and bracket-aware editing
-- completion for keywords, types, imports, symbols, struct members, and standard modules
-- hover signatures, parameter hints, Go to Definition, Find References, document outline, and workspace symbols
+- completion for keywords, types, special forms, import paths, symbols, struct members, and standard modules
+- hover signatures, parameter hints, Go to Definition, code-only Find References, document highlights, outline, and workspace symbols
 - live `zy2 check` diagnostics for the current unsaved buffer
 - Run, Build Executable, and Emit C Source commands
 - optional **ZyenLang Ember** theme using `#20201F` with `#D97757` accents
@@ -47,8 +47,8 @@ The editor title also shows Run and Check buttons for `.zy` files.
 ## Install a VSIX
 
 In VS Code, choose **Extensions: Install from VSIX...** and select the packaged
-`zyenlang-vscode-0.2.1.vsix`, or run:
+`zyenlang-0.2.2.vsix`, or run:
 
 ```powershell
-code --install-extension zyenlang-vscode-0.2.1.vsix --force
+code --install-extension zyenlang-0.2.2.vsix --force
 ```

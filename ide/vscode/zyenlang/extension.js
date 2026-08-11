@@ -146,12 +146,49 @@ function builtInCompletions(moduleName) {
   });
 }
 
+function specialFormCompletion(form) {
+  const item = new vscode.CompletionItem(form.name, vscode.CompletionItemKind.Function);
+  item.detail = form.detail;
+  item.documentation = new vscode.MarkdownString(form.documentation).appendCodeblock(form.detail, 'zyen');
+  item.insertText = new vscode.SnippetString(form.snippet);
+  item.command = { command: 'editor.action.triggerParameterHints', title: 'Parameter hints' };
+  return item;
+}
+
+function wordLocations(item, name) {
+  const result = [];
+  const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const pattern = new RegExp(`\\b${escaped}\\b`, 'g');
+  for (let lineNumber = 0; lineNumber < item.parsed.maskedLines.length; lineNumber += 1) {
+    const line = item.parsed.maskedLines[lineNumber];
+    let match;
+    while ((match = pattern.exec(line)) !== null) {
+      result.push(new vscode.Location(
+        item.uri,
+        new vscode.Range(lineNumber, match.index, lineNumber, match.index + name.length)
+      ));
+    }
+  }
+  return result;
+}
+
 function registerLanguageFeatures(context, index) {
   context.subscriptions.push(vscode.languages.registerCompletionItemProvider(selector, {
     async provideCompletionItems(document, position) {
       const parsed = index.parse(document);
       await index.ensureWorkspace();
       const line = document.lineAt(position.line).text;
+      const importPath = language.importPathAt(line, position.character);
+      if (importPath?.kind === 'std') {
+        return Object.keys(language.BUILTINS)
+          .filter((name) => name.startsWith(importPath.prefix))
+          .sort()
+          .map((name) => {
+            const item = new vscode.CompletionItem(name, vscode.CompletionItemKind.Module);
+            item.detail = `std/${name}`;
+            return item;
+          });
+      }
       const qualified = language.qualifierAt(line, position.character);
       if (qualified) {
         const imported = parsed.imports.find((item) => item.name === qualified.qualifier);
@@ -169,7 +206,9 @@ function registerLanguageFeatures(context, index) {
       }
 
       const items = [];
+      const specialNames = new Set(language.SPECIAL_FORMS.map((form) => form.name));
       for (const keyword of language.KEYWORDS) {
+        if (specialNames.has(keyword)) continue;
         const item = new vscode.CompletionItem(keyword, vscode.CompletionItemKind.Keyword);
         item.detail = 'ZyenLang keyword';
         items.push(item);
@@ -182,9 +221,12 @@ function registerLanguageFeatures(context, index) {
       for (const value of language.SPECIAL_VALUES) {
         items.push(new vscode.CompletionItem(value, vscode.CompletionItemKind.Constant));
       }
+      items.push(...language.SPECIAL_FORMS.map(specialFormCompletion));
       const seen = new Set();
       for (const source of [
-        ...parsed.symbols.map((symbol) => ({ symbol })),
+        ...parsed.symbols
+          .filter((symbol) => !['variable', 'parameter'].includes(symbol.kind) || symbol.line <= position.line)
+          .map((symbol) => ({ symbol })),
         ...index.all().flatMap((item) => item.parsed.exports.map((symbol) => ({ symbol })))
       ]) {
         const key = `${source.symbol.kind}:${source.symbol.name}:${source.symbol.container || ''}`;
@@ -194,7 +236,7 @@ function registerLanguageFeatures(context, index) {
       }
       return items;
     }
-  }, '.'));
+  }, '.', '<', '/'));
 
   context.subscriptions.push(vscode.languages.registerHoverProvider(selector, {
     async provideHover(document, position) {
@@ -204,6 +246,10 @@ function registerLanguageFeatures(context, index) {
       await index.ensureWorkspace();
       const local = index.symbolsNamed(word.value);
       if (local.length) return new vscode.Hover(markdownFor(local[0].symbol));
+      const special = language.SPECIAL_FORMS.find((item) => item.name === word.value);
+      if (special) {
+        return new vscode.Hover(new vscode.MarkdownString(special.documentation).appendCodeblock(special.detail, 'zyen'));
+      }
       for (const values of Object.values(language.BUILTINS)) {
         const entry = values.find(([name]) => name === word.value);
         if (entry) return new vscode.Hover(new vscode.MarkdownString().appendCodeblock(entry[1], 'zyen'));
@@ -285,6 +331,10 @@ function registerLanguageFeatures(context, index) {
       const symbols = index.symbolsNamed(call.name).filter((item) => ['function', 'method', 'native'].includes(item.symbol.kind));
       let detail = symbols.length ? symbols[0].symbol.detail : undefined;
       if (!detail) {
+        const special = language.SPECIAL_FORMS.find((item) => item.name === call.name);
+        if (special) detail = special.detail;
+      }
+      if (!detail) {
         for (const values of Object.values(language.BUILTINS)) {
           const found = values.find(([name]) => name === call.name);
           if (found) { detail = found[1]; break; }
@@ -309,21 +359,29 @@ function registerLanguageFeatures(context, index) {
       index.parse(document);
       await index.ensureWorkspace();
       const references = [];
-      const escaped = word.value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-      const pattern = new RegExp(`\\b${escaped}\\b`, 'g');
       for (const item of index.all()) {
-        for (let lineNumber = 0; lineNumber < item.parsed.lines.length; lineNumber += 1) {
-          const line = item.parsed.lines[lineNumber];
-          let match;
-          while ((match = pattern.exec(line)) !== null) {
-            const isDeclaration = item.parsed.symbols.some((symbol) => symbol.name === word.value && symbol.line === lineNumber && symbol.column === match.index);
-            if (options.includeDeclaration || !isDeclaration) {
-              references.push(new vscode.Location(item.uri, new vscode.Range(lineNumber, match.index, lineNumber, match.index + word.value.length)));
-            }
-          }
+        for (const location of wordLocations(item, word.value)) {
+          const isDeclaration = item.parsed.symbols.some((symbol) =>
+            symbol.name === word.value &&
+            symbol.line === location.range.start.line &&
+            symbol.column === location.range.start.character
+          );
+          if (options.includeDeclaration || !isDeclaration) references.push(location);
         }
       }
       return references;
+    }
+  }));
+
+  context.subscriptions.push(vscode.languages.registerDocumentHighlightProvider(selector, {
+    provideDocumentHighlights(document, position) {
+      const word = language.wordAt(document.lineAt(position.line).text, position.character);
+      if (!word) return [];
+      const parsed = index.parse(document);
+      const item = { parsed, uri: document.uri };
+      return wordLocations(item, word.value).map((location) =>
+        new vscode.DocumentHighlight(location.range, vscode.DocumentHighlightKind.Read)
+      );
     }
   }));
 }

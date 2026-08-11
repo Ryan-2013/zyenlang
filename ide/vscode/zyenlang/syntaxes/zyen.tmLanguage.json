@@ -179,7 +179,7 @@
         { "name": "keyword.declaration.zyen", "match": "\\b(let|fn|struct|import|as|native|source)\\b" },
         { "name": "storage.modifier.mutable.zyen", "match": "\\bmut\\b" },
         { "name": "storage.modifier.zyen", "match": "\\b(public|private)\\b" },
-        { "name": "keyword.operator.typeof.zyen", "match": "\\bTYPEOF__\\b" }
+        { "name": "keyword.operator.special-form.zyen", "match": "\\b(TYPEOF__|LIST_LEN__|LIST_PUSH__|LIST_SET__)\\b" }
       ]
     },
     "types": {

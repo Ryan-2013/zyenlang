@@ -56,6 +56,11 @@ class IRBinary(IRExpr):
 
 
 @dataclass(frozen=True)
+class IRCast(IRExpr):
+    value: IRExpr
+
+
+@dataclass(frozen=True)
 class IRField(IRExpr):
     receiver: IRExpr
     name: str
@@ -82,6 +87,28 @@ class IRList(IRExpr):
 class IRStruct(IRExpr):
     name: str
     fields: tuple[tuple[str, IRExpr], ...]
+
+
+@dataclass(frozen=True)
+class IRStructMetadata(IRExpr):
+    receiver: IRExpr
+    struct_name: str
+    category: str
+
+
+@dataclass(frozen=True)
+class IRBox(IRExpr):
+    value: IRExpr
+
+
+@dataclass(frozen=True)
+class IRBoxValue(IRExpr):
+    box: IRExpr
+
+
+@dataclass(frozen=True)
+class IRArcCount(IRExpr):
+    value: IRExpr
 
 
 @dataclass(frozen=True)

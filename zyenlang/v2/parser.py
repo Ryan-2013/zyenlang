@@ -3,6 +3,7 @@ from __future__ import annotations
 from . import ast
 from .diagnostics import CompileError, SourceSpan
 from .lexer import Token, lex
+from .types import BUILTIN_NAMES
 
 
 PRECEDENCE = {
@@ -19,6 +20,23 @@ PRECEDENCE = {
     "*": 6,
     "/": 6,
     "%": 6,
+}
+
+CAST_OPERAND_STARTS = {
+    "INT",
+    "STRING",
+    "TRUE",
+    "FALSE",
+    "NULL",
+    "IDENT",
+    "LIST_LEN__",
+    "LIST_PUSH__",
+    "LIST_SET__",
+    "(",
+    "[",
+    "SPAWN",
+    "AWAIT",
+    "TYPEOF__",
 }
 
 
@@ -381,10 +399,12 @@ class Parser:
 
         start = self.current.span
         value = self.parse_expression()
-        if self.match("="):
+        if assignment := self.match("=", "+=", "-=", "*=", "/=", "%="):
             if not isinstance(value, (ast.NameExpr, ast.FieldExpr)):
                 raise CompileError("assignment target must be a local or struct field", value.span, self.source_name)
             assigned = self.parse_expression()
+            if assignment.kind != "=":
+                assigned = ast.BinaryExpr(value.span, value, assignment.kind[0], assigned)
             self.require_statement_end()
             return ast.AssignStmt(start, value, assigned)
         self.require_statement_end()
@@ -460,6 +480,9 @@ class Parser:
         return expression
 
     def parse_unary(self, *, allow_struct_literal: bool) -> ast.Expr:
+        cast = self.try_parse_cast(allow_struct_literal=allow_struct_literal)
+        if cast is not None:
+            return cast
         if token := self.match("!", "-"):
             return ast.UnaryExpr(token.span, token.kind, self.parse_unary(allow_struct_literal=allow_struct_literal))
         if token := self.match("SPAWN"):
@@ -470,10 +493,43 @@ class Parser:
         if token := self.match("AWAIT"):
             return ast.AwaitExpr(token.span, self.parse_unary(allow_struct_literal=allow_struct_literal))
         if token := self.match("TYPEOF__"):
-            value = self.parse_unary(allow_struct_literal=allow_struct_literal)
+            self.expect("(", "TYPEOF__ now uses `TYPEOF__(value, Type)`")
+            self.skip_newlines()
+            value = self.parse_expression()
+            self.skip_newlines()
+            self.expect(",", "TYPEOF__ requires a comma before its type")
+            self.skip_newlines()
             target_type = self.parse_type()
+            self.skip_newlines()
+            self.expect(")", "expected `)` after TYPEOF__ type")
             return ast.TypeOfExpr(token.span, value, target_type)
         return self.parse_postfix(allow_struct_literal=allow_struct_literal)
+
+    def try_parse_cast(self, *, allow_struct_literal: bool) -> ast.CastExpr | None:
+        if not self.at("("):
+            return None
+        checkpoint = self.index
+        start = self.advance().span
+        try:
+            target_type = self.parse_type()
+            self.skip_newlines()
+            if not self.match(")"):
+                self.index = checkpoint
+                return None
+            builtin_unary = (
+                isinstance(target_type, ast.NamedTypeNode)
+                and target_type.name in BUILTIN_NAMES
+                and not target_type.args
+                and self.current.kind in {"!", "-"}
+            )
+            if self.current.kind not in CAST_OPERAND_STARTS and not builtin_unary:
+                self.index = checkpoint
+                return None
+        except CompileError:
+            self.index = checkpoint
+            return None
+        value = self.parse_unary(allow_struct_literal=allow_struct_literal)
+        return ast.CastExpr(start, target_type, value)
 
     def parse_postfix(self, *, allow_struct_literal: bool) -> ast.Expr:
         expression = self.parse_primary(allow_struct_literal=allow_struct_literal)
@@ -481,6 +537,13 @@ class Parser:
             if self.match("."):
                 name = self.expect("IDENT", "expected a field or method name after `.`")
                 expression = ast.FieldExpr(expression.span, expression, name.value)
+                continue
+            if token := self.match("["):
+                self.skip_newlines()
+                index = self.parse_expression()
+                self.skip_newlines()
+                self.expect("]", "expected `]` after index expression")
+                expression = ast.IndexExpr(token.span, expression, index)
                 continue
             if self.match("("):
                 args: list[ast.Expr] = []
@@ -513,7 +576,31 @@ class Parser:
             return ast.BoolExpr(token.span, token.kind == "TRUE")
         if token := self.match("NULL"):
             return ast.NullExpr(token.span)
+        if token := self.match("LIST_LEN__", "LIST_PUSH__", "LIST_SET__"):
+            self.expect("(", f"{token.value} requires `(`")
+            args: list[ast.Expr] = []
+            self.skip_newlines()
+            while not self.at(")"):
+                args.append(self.parse_expression())
+                self.skip_newlines()
+                if not self.match(","):
+                    break
+                self.skip_newlines()
+            self.expect(")", f"expected `)` after {token.value} arguments")
+            return ast.CallExpr(token.span, ast.NameExpr(token.span, token.value), tuple(args))
         if token := self.match("IDENT"):
+            if allow_struct_literal and self.looks_like_generic_struct_literal():
+                raise CompileError(
+                    "generic struct construction is scheduled after the bootstrap milestone",
+                    token.span,
+                    self.source_name,
+                )
+            if allow_struct_literal and self.looks_like_qualified_struct_literal():
+                parts = [token.value]
+                while self.match("."):
+                    parts.append(self.expect("IDENT", "expected a struct name after `.`").value)
+                qualified = Token("IDENT", ".".join(parts), token.span)
+                return self.parse_struct_literal(qualified)
             if allow_struct_literal and self.at("{"):
                 return self.parse_struct_literal(token)
             return ast.NameExpr(token.span, token.value)
@@ -546,6 +633,38 @@ class Parser:
             self.expect("]", "expected `]` after list literal")
             return ast.ListExpr(token.span, tuple(items))
         raise CompileError("expected an expression", self.current.span, self.source_name)
+
+    def looks_like_generic_struct_literal(self) -> bool:
+        if not self.at("<"):
+            return False
+        checkpoint = self.index
+        found = False
+        try:
+            self.advance()
+            self.skip_newlines()
+            while not self.at(">"):
+                self.parse_type()
+                self.skip_newlines()
+                if not self.match(","):
+                    break
+                self.skip_newlines()
+            self.expect(">")
+            found = self.at("{")
+        except CompileError:
+            found = False
+        self.index = checkpoint
+        return found
+
+    def looks_like_qualified_struct_literal(self) -> bool:
+        index = self.index
+        if index >= len(self.tokens) or self.tokens[index].kind != ".":
+            return False
+        while index < len(self.tokens) and self.tokens[index].kind == ".":
+            index += 1
+            if index >= len(self.tokens) or self.tokens[index].kind != "IDENT":
+                return False
+            index += 1
+        return index < len(self.tokens) and self.tokens[index].kind == "{"
 
     def parse_struct_literal(self, name: Token) -> ast.StructExpr:
         self.expect("{")

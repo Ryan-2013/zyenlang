@@ -2,7 +2,7 @@
   "name": "zyenlang",
   "displayName": "ZyenLang",
   "description": "Language support for ZyenLang: highlighting, completion, navigation, diagnostics, run, and build.",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "publisher": "zyenlang",
   "license": "MIT",
   "repository": {

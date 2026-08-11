@@ -76,8 +76,23 @@
   },
   "Type check": {
     "prefix": "TYPEOF__",
-    "body": "TYPEOF__ ${1:value} ${2:i32}",
-    "description": "Test a value's runtime type"
+    "body": "TYPEOF__(${1:value}, ${2:i32})",
+    "description": "Test a value's static type"
+  },
+  "List length": {
+    "prefix": "LIST_LEN__",
+    "body": "LIST_LEN__(${1:list})",
+    "description": "Read a built-in List length"
+  },
+  "List push": {
+    "prefix": "LIST_PUSH__",
+    "body": "LIST_PUSH__(${1:list}, ${2:value})",
+    "description": "Append a strongly typed List value"
+  },
+  "List set": {
+    "prefix": "LIST_SET__",
+    "body": ["LIST_SET__(${1:list}, ${2:index}, ${3:value}) catch ${4:err} {", "    recover", "}"],
+    "description": "Replace a checked List element"
   },
   "HTTP GET": {
     "prefix": "requestget",

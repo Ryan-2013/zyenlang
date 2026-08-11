@@ -16,6 +16,7 @@ authors = [{name = "ZyenLang"}]
 [project.scripts]
 zy = "zyenlang.cli.main:main"
 zyen = "zyenlang.cli.main:main"
+zy1 = "zyenlang.cli.main:legacy_entry"
 zyenv = "zyenlang.cli.zyenv:main"
 zy2 = "zyenlang.v2.__main__:main"
 zypkg = "zyenlang.v2.package_manager:main"

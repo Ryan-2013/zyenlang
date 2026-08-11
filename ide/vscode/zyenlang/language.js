@@ -3,7 +3,8 @@
 const KEYWORDS = [
   'as', 'await', 'break', 'catch', 'continue', 'else', 'false', 'fn', 'if',
   'import', 'let', 'mut', 'native', 'null', 'private', 'public', 'recover', 'return',
-  'source', 'spawn', 'stop', 'struct', 'throws', 'true', 'TYPEOF__', 'while'
+  'source', 'spawn', 'stop', 'struct', 'throws', 'true', 'TYPEOF__',
+  'LIST_LEN__', 'LIST_PUSH__', 'LIST_SET__', 'while'
 ];
 
 const TYPES = [
@@ -13,6 +14,33 @@ const TYPES = [
 ];
 
 const SPECIAL_VALUES = ['GET_ARGS__', 'GET_EXE__'];
+
+const SPECIAL_FORMS = [
+  {
+    name: 'LIST_LEN__',
+    detail: 'LIST_LEN__(list: List<T>) usize',
+    snippet: 'LIST_LEN__(${1:list})',
+    documentation: 'Return the number of elements in a built-in List<T>.'
+  },
+  {
+    name: 'LIST_PUSH__',
+    detail: 'LIST_PUSH__(list: List<T>, value: T) void',
+    snippet: 'LIST_PUSH__(${1:list}, ${2:value})',
+    documentation: 'Append a strongly typed value to a local List<T> variable.'
+  },
+  {
+    name: 'LIST_SET__',
+    detail: 'LIST_SET__(list: List<T>, index: i32, value: T) void throws Error',
+    snippet: 'LIST_SET__(${1:list}, ${2:index}, ${3:value})',
+    documentation: 'Replace a List<T> element with checked bounds.'
+  },
+  {
+    name: 'TYPEOF__',
+    detail: 'TYPEOF__(value, Type) bool',
+    snippet: 'TYPEOF__(${1:value}, ${2:Type})',
+    documentation: 'Compare static types at compile time without evaluating the value.'
+  }
+];
 
 const BUILTINS = {
   io: [
@@ -24,8 +52,23 @@ const BUILTINS = {
     ['is_empty', 'fn is_empty<T>(values: List<T>) bool']
   ],
   process: [
-    ['args', 'fn args() List<str>'],
-    ['executable', 'fn executable() str']
+    ['args', 'fn args(value: List<str>) List<str>'],
+    ['executable', 'fn executable(value: str) str']
+  ],
+  path: [
+    ['separator', 'fn separator() str'],
+    ['normalize', 'fn normalize(value: str) str'],
+    ['join', 'fn join(left: str, right: str) str'],
+    ['basename', 'fn basename(value: str) str'],
+    ['dirname', 'fn dirname(value: str) str'],
+    ['parent', 'fn parent(value: str) str'],
+    ['extension', 'fn extension(value: str) str'],
+    ['stem', 'fn stem(value: str) str'],
+    ['with_extension', 'fn with_extension(value: str, next_extension: str) str'],
+    ['is_absolute', 'fn is_absolute(value: str) bool'],
+    ['exists', 'fn exists(value: str) bool'],
+    ['is_file', 'fn is_file(value: str) bool'],
+    ['is_dir', 'fn is_dir(value: str) bool']
   ],
   thread: [
     ['sleep_ms', 'fn sleep_ms(milliseconds: i32) i32'],
@@ -146,14 +189,15 @@ function addSymbol(result, symbol) {
 
 function parseDocument(text, uri = '') {
   const lines = text.split(/\r?\n/);
-  const result = { uri, imports: [], symbols: [], exports: [], lines };
+  const maskedLines = lines.map(maskLine);
+  const result = { uri, imports: [], symbols: [], exports: [], lines, maskedLines };
   let depth = 0;
   let activeStruct = null;
   let activeFunction = null;
 
   for (let lineNumber = 0; lineNumber < lines.length; lineNumber += 1) {
     const original = lines[lineNumber];
-    const line = maskLine(original);
+    const line = maskedLines[lineNumber];
     const trimmed = line.trim();
 
     const importMatch = original.match(/^\s*import\s+(<([^>]+)>|"([^"]+)")\s*(?:as\s+([A-Za-z_]\w*))?/);
@@ -329,12 +373,21 @@ function callAt(line, column) {
   return null;
 }
 
+function importPathAt(line, column) {
+  const before = line.slice(0, column);
+  const standard = before.match(/^\s*import\s+<std\/([A-Za-z_]\w*)?$/);
+  if (standard) return { kind: 'std', prefix: standard[1] || '' };
+  return null;
+}
+
 module.exports = {
   BUILTINS,
   KEYWORDS,
+  SPECIAL_FORMS,
   SPECIAL_VALUES,
   TYPES,
   callAt,
+  importPathAt,
   parseDocument,
   qualifierAt,
   splitTopLevel,

@@ -1,0 +1,18 @@
+native source "path_native.c"
+
+public native fn separator() str = "zy2_path_separator"
+public native fn normalize(value: str) str = "zy2_path_normalize"
+public native fn join(left: str, right: str) str = "zy2_path_join"
+public native fn basename(value: str) str = "zy2_path_basename"
+public native fn dirname(value: str) str = "zy2_path_dirname"
+public native fn extension(value: str) str = "zy2_path_extension"
+public native fn stem(value: str) str = "zy2_path_stem"
+public native fn with_extension(value: str, next_extension: str) str = "zy2_path_with_extension"
+public native fn is_absolute(value: str) bool = "zy2_path_is_absolute"
+public native fn exists(value: str) bool = "zy2_path_exists"
+public native fn is_file(value: str) bool = "zy2_path_is_file"
+public native fn is_dir(value: str) bool = "zy2_path_is_dir"
+
+public fn parent(value: str) str {
+    return dirname(value)
+}

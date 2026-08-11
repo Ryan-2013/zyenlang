@@ -659,6 +659,17 @@ class CBackend:
         finally:
             self.managed_scopes.pop()
 
+    def emit_hoisted_declarations(self, block: ir.IRBlock, indent: int) -> list[str]:
+        pad = "    " * indent
+        lines: list[str] = []
+        for local in block.hoisted:
+            name = self.ident(local.name)
+            lines.append(f"{pad}{self.c_type(local.typ)} {name} = {self.zero_value(local.typ)};")
+            lines.append(f"{pad}(void){name};")
+            if self.is_managed(local.typ):
+                self.managed_scopes[-1].append((name, local.typ))
+        return lines
+
     def emit_statement(self, statement: ir.IRStmt, indent: int) -> list[str]:
         pad = "    " * indent
         if isinstance(statement, ir.IRLet):
@@ -724,7 +735,10 @@ class CBackend:
             return lines
         if isinstance(statement, ir.IRIf):
             condition = self.emit_expr(statement.condition)
-            lines = [pad + line for line in condition.prelude]
+            lines = self.emit_hoisted_declarations(statement.then_block, indent)
+            if statement.else_block is not None:
+                lines.extend(self.emit_hoisted_declarations(statement.else_block, indent))
+            lines.extend(pad + line for line in condition.prelude)
             lines.append(f"{pad}if {self.control_condition(condition.code)} {{")
             lines.extend(self.emit_block(statement.then_block, indent + 1))
             if statement.else_block is not None:
@@ -734,7 +748,10 @@ class CBackend:
             return lines
         if isinstance(statement, ir.IRIfLet):
             value = self.emit_expr(statement.value)
-            lines = [pad + line for line in value.prelude]
+            lines = self.emit_hoisted_declarations(statement.then_block, indent)
+            if statement.else_block is not None:
+                lines.extend(self.emit_hoisted_declarations(statement.else_block, indent))
+            lines.extend(pad + line for line in value.prelude)
             temp = self.temp("optional")
             lines.append(f"{pad}{self.c_type(statement.value.typ)} {temp} = {value.code};")
             lines.append(f"{pad}if ({temp}.has_value) {{")
@@ -748,7 +765,8 @@ class CBackend:
             return lines
         if isinstance(statement, ir.IRWhile):
             condition = self.emit_expr(statement.condition)
-            lines = [f"{pad}while (true) {{"]
+            lines = self.emit_hoisted_declarations(statement.body, indent)
+            lines.append(f"{pad}while (true) {{")
             lines.extend("    " + pad + line for line in condition.prelude)
             lines.append(f"{pad}    if (!{self.control_condition(condition.code)}) break;")
             self.loop_scope_depths.append(len(self.managed_scopes))
@@ -780,6 +798,28 @@ class CBackend:
             if not self.loop_scope_depths:
                 raise ValueError("verified IR contains continue outside a loop")
             return self.cleanup_lines(self.loop_scope_depths[-1], indent) + [f"{pad}continue;"]
+        if isinstance(statement, ir.IRFree):
+            name = self.ident(statement.name)
+            if self.is_managed(statement.typ):
+                for index in range(len(self.managed_scopes[-1]) - 1, -1, -1):
+                    if self.managed_scopes[-1][index][0] == name:
+                        self.managed_scopes[-1].pop(index)
+                        break
+                else:
+                    raise ValueError(f"managed local `{name}` is not registered in its lexical scope")
+                return [f"{pad}{self.release_stmt(name, statement.typ)}"]
+            return [f"{pad}(void)({name});"]
+        if isinstance(statement, ir.IRSkip):
+            source = self.ident(statement.source_name)
+            destination = self.ident(statement.destination_name)
+            if self.is_managed(statement.typ):
+                moved = self.temp("skipped")
+                return [
+                    f"{pad}{self.c_type(statement.typ)} {moved} = {self.retain_expr(source, statement.typ)};",
+                    f"{pad}{self.release_stmt(destination, statement.typ)}",
+                    f"{pad}{destination} = {moved};",
+                ]
+            return [f"{pad}{destination} = {source};"]
         if isinstance(statement, ir.IRExprStmt):
             value = self.emit_expr(statement.value)
             lines = [pad + line for line in value.prelude]
@@ -814,12 +854,17 @@ class CBackend:
             if is_unsigned_integer(expression.typ):
                 return CExpr(f"UINT64_C({expression.value})", [])
             return CExpr(str(expression.value), [])
+        if isinstance(expression, ir.IRFloat):
+            suffix = "f" if expression.typ == PrimitiveType("f32") else ""
+            return CExpr(f"{expression.value}{suffix}", [])
         if isinstance(expression, ir.IRString):
             return CExpr(self.c_string(expression.value), [])
         if isinstance(expression, ir.IRFString):
             return self.emit_fstring(expression)
         if isinstance(expression, ir.IRBool):
             return CExpr("true" if expression.value else "false", [])
+        if isinstance(expression, ir.IRStaticTypeTest):
+            raise ValueError("unresolved generic TYPEOF__ test reached C generation")
         if isinstance(expression, ir.IRNull):
             return CExpr(f"({self.c_type(expression.typ)}){{ .has_value = false }}", [])
         if isinstance(expression, ir.IROptionalSome):
@@ -1404,7 +1449,8 @@ class CBackend:
         if not isinstance(expression.value, ir.IRCall):
             raise ValueError("verified catch value is not a call")
         call = self.emit_call(expression.value, propagate=False)
-        prelude = list(call.prelude)
+        prelude = self.emit_hoisted_declarations(expression.handler, 0)
+        prelude.extend(call.prelude)
         result_name = self.result_name_from_call_prelude(prelude)
         target = None
         if expression.typ != VOID:

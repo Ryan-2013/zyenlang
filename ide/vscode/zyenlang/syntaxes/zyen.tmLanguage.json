@@ -179,7 +179,7 @@
         { "name": "keyword.declaration.zyen", "match": "\\b(let|fn|struct|import|as|native|source)\\b" },
         { "name": "storage.modifier.mutable.zyen", "match": "\\bmut\\b" },
         { "name": "storage.modifier.zyen", "match": "\\b(public|private)\\b" },
-        { "name": "keyword.operator.special-form.zyen", "match": "\\b(TYPEOF__|LIST_LEN__|LIST_PUSH__|LIST_SET__|PRINT_CMD__|STR_TO_LIST__)\\b" }
+        { "name": "keyword.operator.special-form.zyen", "match": "\\b(TYPEOF__|LIST_LEN__|LIST_PUSH__|LIST_SET__|PRINT_CMD__|STR_TO_LIST__|FREE__|SKIP__)\\b" }
       ]
     },
     "types": {
@@ -199,7 +199,7 @@
       "patterns": [
         { "name": "constant.numeric.hex.zyen", "match": "\\b0x[0-9A-Fa-f](?:_?[0-9A-Fa-f])*\\b" },
         { "name": "constant.numeric.binary.zyen", "match": "\\b0b[01](?:_?[01])*\\b" },
-        { "name": "constant.numeric.float.zyen", "match": "\\b[0-9](?:_?[0-9])*\\.[0-9](?:_?[0-9])*(?:[eE][+-]?[0-9]+)?\\b" },
+        { "name": "constant.numeric.float.zyen", "match": "\\b(?:[0-9](?:_?[0-9])*\\.[0-9](?:_?[0-9])*(?:[eE][+-]?[0-9](?:_?[0-9])*)?|[0-9](?:_?[0-9])*[eE][+-]?[0-9](?:_?[0-9])*)\\b" },
         { "name": "constant.numeric.integer.zyen", "match": "\\b[0-9](?:_?[0-9])*\\b" }
       ]
     },

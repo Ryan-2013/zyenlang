@@ -236,6 +236,95 @@ def test_v2_blocks_use_lexical_scope_without_erasing_outer_variables(tmp_path: P
         Compiler().check_source(invalid)
 
 
+def test_v2_free_ends_a_binding_and_allows_same_scope_reuse(tmp_path: Path) -> None:
+    source = tmp_path / "free_local.zy"
+    source.write_text(
+        """fn main() i32 {
+    let run = true
+    let value = Box(1)
+    FREE__(run)
+    FREE__(value)
+
+    let run = false
+    let value = Box(42)
+    if run {
+        return 1
+    }
+    return value.value - 42
+}
+""",
+        encoding="utf-8",
+    )
+    compiler = Compiler()
+    generated = compiler.emit_file(source)
+    executable = tmp_path / ("free-local.exe" if sys.platform.startswith("win") else "free-local")
+    compiler.build_file(source, executable)
+    result = subprocess.run([str(executable)], capture_output=True, text=True, check=False)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "__zy_run_2" in generated
+    assert generated.count("zy2_box_i32_release") >= 2
+
+
+def test_v2_skip_promotes_unmanaged_and_managed_locals_one_scope(tmp_path: Path) -> None:
+    source = tmp_path / "skip_local.zy"
+    source.write_text(
+        """fn main() i32 {
+    if false {
+        let missing = 9
+        SKIP__(missing)
+    }
+    if missing != 0 {
+        return 1
+    }
+
+    let iteration = 0
+    while iteration < 2 {
+        let carried = Box(iteration + 40)
+        SKIP__(carried)
+        iteration = iteration + 1
+    }
+    if carried.value != 41 || carried.__strong_count__ != 1 {
+        return 2
+    }
+    return 0
+}
+""",
+        encoding="utf-8",
+    )
+    compiler = Compiler()
+    generated = compiler.emit_file(source)
+    executable = tmp_path / ("skip-local.exe" if sys.platform.startswith("win") else "skip-local")
+    compiler.build_file(source, executable)
+    result = subprocess.run([str(executable)], capture_output=True, text=True, check=False)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "__zy_skip_missing" in generated
+    assert "__zy_skip_carried" in generated
+
+
+@pytest.mark.parametrize(
+    ("source", "message"),
+    [
+        ("fn main() i32 {\n    FREE__(missing)\n    return 0\n}\n", "unknown name `missing`"),
+        ("fn main() i32 {\n    let value = 1\n    if true {\n        FREE__(value)\n    }\n    return 0\n}\n", "FREE__ can only end `value` in its declaring block"),
+        ("fn main() i32 {\n    let value = 1\n    SKIP__(value)\n    return 0\n}\n", "SKIP__ cannot move a local outside its function"),
+        ("fn main() i32 {\n    let value = 1\n    if true {\n        SKIP__(value)\n    }\n    return 0\n}\n", "already outlives the current block"),
+        (
+            "fn work() i32 {\n    return 1\n}\nfn main() i32 {\n    let task = spawn work()\n    FREE__(task)\n    return 0\n}\n",
+            "FREE__ cannot discard Task<T>",
+        ),
+        (
+            "fn work() i32 {\n    return 1\n}\nfn main() i32 {\n    if true {\n        let task = spawn work()\n        SKIP__(task)\n    }\n    return 0\n}\n",
+            "SKIP__ cannot move Task<T>",
+        ),
+    ],
+)
+def test_v2_lifetime_special_forms_reject_unsafe_scopes(source: str, message: str) -> None:
+    with pytest.raises(CompileError, match=message):
+        Compiler().check_source(source)
+
+
 @pytest.mark.parametrize(
     ("expression", "message"),
     [
@@ -331,6 +420,39 @@ def test_v2_mixed_integer_and_float_arithmetic_promotes_and_runs(tmp_path: Path)
     assert "((double)(integer))" in generated
 
 
+def test_v2_decimal_literals_default_to_f64_and_honor_f32_context(tmp_path: Path) -> None:
+    source = tmp_path / "float_literals.zy"
+    source.write_text(
+        """fn main() i32 {
+    let nums = [1.0, 2.5, 1e2]
+    let small: f32 = 3.25
+    let first = nums[0] catch err {
+        recover 0.0
+    }
+    let second = nums[1] catch err {
+        recover 0.0
+    }
+    let exponent = nums[2] catch err {
+        recover 0.0
+    }
+    if first == 1.0 && second == 2.5 && exponent == 100.0 && small == 3.25 {
+        return 0
+    }
+    return 1
+}
+""",
+        encoding="utf-8",
+    )
+    compiler = Compiler()
+    generated = compiler.emit_file(source)
+    executable = tmp_path / ("float-literals.exe" if sys.platform.startswith("win") else "float-literals")
+    compiler.build_file(source, executable)
+    result = subprocess.run([str(executable)], capture_output=True, text=True, check=False)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "3.25f" in generated
+
+
 def test_v2_mixed_integer_arithmetic_uses_a_lossless_common_type(tmp_path: Path) -> None:
     source = tmp_path / "integer_promotion.zy"
     source.write_text(
@@ -423,6 +545,69 @@ fn main() i32 {
 """
     generated = Compiler().emit_source(source)
     assert "zy2_fn_identity__i32" in generated
+
+
+def test_v2_typeof_narrows_generic_values_and_prunes_concrete_branches(tmp_path: Path) -> None:
+    source = tmp_path / "generic_typeof_narrowing.zy"
+    source.write_text(
+        """struct NumberRows {
+    floats: List<List<f64>>
+    integers: List<List<i32>>
+}
+
+fn preserve<T>(values: List<List<T>>) NumberRows throws Error {
+    if TYPEOF__(values, List<List<f64>>) {
+        return NumberRows{floats: values}
+    } else if TYPEOF__(values, List<List<i32>>) {
+        return NumberRows{integers: values}
+    } else {
+        stop "unsupported type"
+    }
+}
+
+fn main() i32 {
+    let float_rows = preserve([[1.0]])
+    let integer_rows = preserve([[42]])
+    let float_row = float_rows.floats[0]
+    let integer_row = integer_rows.integers[0]
+    let floating = float_row[0]
+    let integer = integer_row[0]
+    if floating == 1.0 && integer == 42 {
+        return 0
+    }
+    return 1
+}
+""",
+        encoding="utf-8",
+    )
+    compiler = Compiler()
+    generated = compiler.emit_file(source)
+    executable = tmp_path / (
+        "generic-typeof-narrowing.exe" if sys.platform.startswith("win") else "generic-typeof-narrowing"
+    )
+    compiler.build_file(source, executable)
+    result = subprocess.run([str(executable)], capture_output=True, text=True, check=False)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "zy2_fn_preserve__f64" in generated
+    assert "zy2_fn_preserve__i32" in generated
+
+
+def test_v2_unknown_generic_typeof_still_checks_every_return_path() -> None:
+    source = """fn incomplete<T>(value: T) i32 {
+    if TYPEOF__(value, i32) {
+        let number = 1
+    } else {
+        return 2
+    }
+}
+
+fn main() i32 {
+    return 0
+}
+"""
+    with pytest.raises(CompileError, match="must return `i32` on every path"):
+        Compiler().check_source(source)
 
 
 def test_v2_generic_struct_equality_is_structural_and_runs(tmp_path: Path) -> None:

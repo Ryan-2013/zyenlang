@@ -77,7 +77,8 @@ ZyenLang 0.2 currently provides:
 - `throws Error`, `stop`, `catch`, and `recover`;
 - `while`, assignment, `break`, and `continue`;
 - linear `Task<T>` values with `spawn` and exactly-once `await`;
-- `TYPEOF__`, `FILE__`, terminal `PRINT_CMD__`, and UTF-8 `STR_TO_LIST__`;
+- decimal `f64`/contextual `f32` literals, generic-aware `TYPEOF__`, `FILE__`,
+  terminal `PRINT_CMD__`, UTF-8 `STR_TO_LIST__`, and scoped `SKIP__`/`FREE__`;
 - standard, package, and relative modules plus checked native C declarations.
 
 See [the v0.2 architecture](docs/v2_architecture.md),

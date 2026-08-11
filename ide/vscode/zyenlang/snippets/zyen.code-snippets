@@ -109,6 +109,16 @@
     "body": "let ${1:chars}: List<str> = STR_TO_LIST__(${2:text})",
     "description": "Split UTF-8 text into a List of characters"
   },
+  "End local lifetime": {
+    "prefix": "FREE__",
+    "body": "FREE__(${1:local})",
+    "description": "End a local binding and release managed storage"
+  },
+  "Promote local one block": {
+    "prefix": "SKIP__",
+    "body": "SKIP__(${1:local})",
+    "description": "Keep a local visible after its current block"
+  },
   "HTTP GET": {
     "prefix": "requestget",
     "body": ["import <std/request> as request", "", "let response: request.Response = request.get(\"${1:https://example.com}\")", "if response.ok() {", "    ${0}", "}"],

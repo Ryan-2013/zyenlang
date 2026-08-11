@@ -58,7 +58,7 @@ fn main() i32 {
 
 | 型別 | 用途 |
 |---|---|
-| `f32`, `f64` | 浮點數；目前沒有小數 literal，先由整數顯式轉型 |
+| `f32`, `f64` | 浮點數；小數與科學記號 literal 預設為 `f64` |
 | `bool` | `true` 或 `false` |
 | `str` | 目前是借用的 UTF-8 字串 |
 | `void` | 沒有回傳值 |
@@ -73,12 +73,15 @@ let maybe: i32 | null = null
 let owned: Box<i32> = Box(12)
 ```
 
-整數 literal 預設是 `i32`，但有型別上下文時會直接依目標寬度檢查：
+整數 literal 預設是 `i32`，但有型別上下文時會直接依目標寬度檢查。小數
+literal 與 `1e3` 這類科學記號預設是 `f64`，明確的 `f32` 上下文會直接產生
+`f32`：
 
 ```zy
 let small: i8 = 127
 let large: u64 = 10_000_000
-let floating: f64 = (f64)42
+let values = [1.0, 2.5, 1e3] // List<f64>
+let small_float: f32 = 3.25
 ```
 
 不同數字型別不會隱式互轉。
@@ -129,6 +132,30 @@ if true {
 }
 // outer 仍是 2；inside 在這裡已不存在
 ```
+
+`SKIP__(local)` 可以把目前 block 內宣告的 local 提升到上一層 lexical scope；
+如果該 block 沒有執行，提升後的名稱保留其型別零值。它一次只跨一層，不能把
+名稱移出函式，也不能替換已存在的外層同名變數：
+
+```zy
+if found {
+    let answer = 42
+    SKIP__(answer)
+}
+// found 為 false 時 answer 是 0
+io.print((str)answer)
+```
+
+`FREE__(local)` 立即結束目前 block 所宣告的 binding。若值由 ARC 管理會立刻
+release，之後同一個 block 可再次使用相同名稱：
+
+```zy
+let value = Box(1)
+FREE__(value)
+let value = Box(2)
+```
+
+兩者都只接受 local 名稱，不能用在 expression 中，也不能作用於 `Task<T>`。
 
 多回傳值使用 tuple 與解構：
 
@@ -644,7 +671,7 @@ Box 使用 C11 atomic ARC。複製、傳參、賦值、回傳，以及正常離�
 - 接收輸入的特殊形式一律使用括號與逗號，例如 `LIST_LEN__(list)`、
   `LIST_PUSH__(list, value)`、`LIST_SET__(list, index, value)`、
   `STR_TO_LIST__(text)`、`PRINT_CMD__(text, "#RRGGBB")`、
-  `TYPEOF__(expression, Type)`。
+  `TYPEOF__(expression, Type)`、`SKIP__(local)`、`FREE__(local)`。
 
 這些名稱不是普通函式，不能取函式值、覆寫或作為 callback。
 
@@ -664,6 +691,10 @@ if TYPEOF__(value, i32) {
 ```
 
 它比較靜態型別，不是執行期反射或繼承判斷。
+
+在泛型函式中，`TYPEOF__` 的 true 分支會縮窄 local 的具體型別；單態化後確定
+不可能執行的分支不再參與型別檢查。因此 `List<List<T>>` 在對應分支可直接當成
+`List<List<f64>>` 使用，不需要逐元素複製或虛假的 cast。
 
 ## 15. 命令列與來源路徑
 

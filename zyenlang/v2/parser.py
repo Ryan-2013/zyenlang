@@ -26,6 +26,7 @@ PRECEDENCE = {
 
 CAST_OPERAND_STARTS = {
     "INT",
+    "FLOAT",
     "STRING",
     "FSTRING",
     "TRUE",
@@ -426,6 +427,14 @@ class Parser:
         if token := self.match("CONTINUE"):
             self.require_statement_end()
             return ast.ContinueStmt(token.span)
+        if token := self.match("FREE__", "SKIP__"):
+            self.expect("(", f"{token.value} requires `(`")
+            name = self.expect("IDENT", f"{token.value} expects one local variable")
+            self.expect(")", f"expected `)` after {token.value} local")
+            self.require_statement_end()
+            if token.kind == "FREE__":
+                return ast.FreeStmt(token.span, name.value)
+            return ast.SkipStmt(token.span, name.value)
 
         start = self.current.span
         value = self.parse_expression()
@@ -600,6 +609,8 @@ class Parser:
     def parse_primary(self, *, allow_struct_literal: bool) -> ast.Expr:
         if token := self.match("INT"):
             return ast.IntExpr(token.span, int(token.value))
+        if token := self.match("FLOAT"):
+            return ast.FloatExpr(token.span, token.value)
         if token := self.match("STRING"):
             return ast.StringExpr(token.span, token.value)
         if token := self.match("FSTRING"):

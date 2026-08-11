@@ -15,6 +15,7 @@ KEYWORDS = {
     "else",
     "false",
     "fn",
+    "FREE__",
     "if",
     "import",
     "let",
@@ -31,6 +32,7 @@ KEYWORDS = {
     "return",
     "stop",
     "spawn",
+    "SKIP__",
     "struct",
     "STR_TO_LIST__",
     "throws",
@@ -222,8 +224,30 @@ def lex(source: str, source_name: str = "<source>") -> list[Token]:
             while i < len(source) and (source[i].isdigit() or source[i] == "_"):
                 i += 1
                 column += 1
+            kind = "INT"
+            if i + 1 < len(source) and source[i] == "." and source[i + 1].isdigit():
+                kind = "FLOAT"
+                i += 1
+                column += 1
+                while i < len(source) and (source[i].isdigit() or source[i] == "_"):
+                    i += 1
+                    column += 1
+            if i < len(source) and source[i] in "eE":
+                exponent_digit = i + 1
+                if exponent_digit < len(source) and source[exponent_digit] in "+-":
+                    exponent_digit += 1
+                if exponent_digit < len(source) and source[exponent_digit].isdigit():
+                    kind = "FLOAT"
+                    i += 1
+                    column += 1
+                    if i < len(source) and source[i] in "+-":
+                        i += 1
+                        column += 1
+                    while i < len(source) and (source[i].isdigit() or source[i] == "_"):
+                        i += 1
+                        column += 1
             value = source[start_i:i].replace("_", "")
-            tokens.append(Token("INT", value, start))
+            tokens.append(Token(kind, value, start))
             continue
 
         if ch.isalpha() or ch == "_":

@@ -18,6 +18,11 @@ class IRInt(IRExpr):
 
 
 @dataclass(frozen=True)
+class IRFloat(IRExpr):
+    value: str
+
+
+@dataclass(frozen=True)
 class IRString(IRExpr):
     value: str
 
@@ -30,6 +35,11 @@ class IRFString(IRExpr):
 @dataclass(frozen=True)
 class IRBool(IRExpr):
     value: bool
+
+
+@dataclass(frozen=True)
+class IRStaticTypeTest(IRExpr):
+    pass
 
 
 @dataclass(frozen=True)
@@ -216,14 +226,34 @@ class IRContinue(IRStmt):
 
 
 @dataclass(frozen=True)
+class IRFree(IRStmt):
+    name: str
+    typ: Type
+
+
+@dataclass(frozen=True)
+class IRSkip(IRStmt):
+    source_name: str
+    destination_name: str
+    typ: Type
+
+
+@dataclass(frozen=True)
 class IRExprStmt(IRStmt):
     value: IRExpr
+
+
+@dataclass(frozen=True)
+class IRHoistedLocal:
+    name: str
+    typ: Type
 
 
 @dataclass(frozen=True)
 class IRBlock:
     statements: tuple[IRStmt, ...]
     span: SourceSpan
+    hoisted: tuple[IRHoistedLocal, ...] = ()
 
 
 @dataclass(frozen=True)

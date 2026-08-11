@@ -23,6 +23,7 @@ from .types import (
     common_numeric_type,
     integer_literal_fits,
     is_box,
+    is_float,
     is_integer,
     is_list,
     is_numeric,
@@ -80,6 +81,9 @@ class Lowerer:
         self.functions: dict[str, FunctionSymbol] = {}
         self.methods: dict[tuple[str, str], FunctionSymbol] = {}
         self.scopes: list[dict[str, Type]] = []
+        self.local_names: list[dict[str, str]] = []
+        self.local_name_counts: list[dict[str, int]] = []
+        self.hoisted_scopes: list[list[ir.IRHoistedLocal]] = []
         self.narrowed_scopes: list[dict[str, Type]] = []
         self.task_scopes: list[dict[str, tuple[bool, SourceSpan]]] = []
         self.current_function: FunctionSymbol | None = None
@@ -496,12 +500,16 @@ class Lowerer:
                     self.lower_expr(param_node.default, typ)
             if symbol.receiver is not None:
                 name, typ, mutable = symbol.receiver
-                self.define_local(name, typ, symbol.node.receiver.span if symbol.node.receiver else symbol.node.span)
-                params.append(ir.IRParam(name, typ, mutable))
+                local_name = self.define_local(
+                    name,
+                    typ,
+                    symbol.node.receiver.span if symbol.node.receiver else symbol.node.span,
+                )
+                params.append(ir.IRParam(local_name, typ, mutable))
             for name, typ, mutable in symbol.params:
                 param_node = next(item for item in symbol.node.params if item.name == name)
-                self.define_local(name, typ, param_node.span)
-                params.append(ir.IRParam(name, typ, mutable))
+                local_name = self.define_local(name, typ, param_node.span)
+                params.append(ir.IRParam(local_name, typ, mutable))
             body = self.lower_block(symbol.node.body, push_scope=False)
             self.validate_current_task_scope()
             if symbol.return_type != VOID and not self.block_terminates(body):
@@ -526,11 +534,17 @@ class Lowerer:
 
     def push_scope(self) -> None:
         self.scopes.append({})
+        self.local_names.append({})
+        self.local_name_counts.append({})
+        self.hoisted_scopes.append([])
         self.narrowed_scopes.append({})
         self.task_scopes.append({})
 
     def pop_scope(self) -> None:
         self.scopes.pop()
+        self.local_names.pop()
+        self.local_name_counts.pop()
+        self.hoisted_scopes.pop()
         self.narrowed_scopes.pop()
         self.task_scopes.pop()
 
@@ -553,7 +567,13 @@ class Lowerer:
         self.task_scopes[-1][name] = (True, created_at)
         return typ
 
-    def define_local(self, name: str, typ: Type, span: SourceSpan) -> None:
+    def allocate_local_name(self, scope_index: int, name: str) -> str:
+        counts = self.local_name_counts[scope_index]
+        generation = counts.get(name, 0) + 1
+        counts[name] = generation
+        return name if generation == 1 else f"__zy_{name}_{generation}"
+
+    def define_local(self, name: str, typ: Type, span: SourceSpan) -> str:
         if name in PROCESS_SPECIAL_VALUES:
             raise self.error(f"`{name}` is a reserved process value and cannot be shadowed", span)
         if name in COMPILER_SPECIAL_VALUES:
@@ -562,6 +582,51 @@ class Lowerer:
         if name in scope:
             raise self.error(f"duplicate local `{name}`", span)
         scope[name] = typ
+        local_name = self.allocate_local_name(len(self.scopes) - 1, name)
+        self.local_names[-1][name] = local_name
+        return local_name
+
+    def lookup_local_name(self, name: str, span: SourceSpan) -> str:
+        for names in reversed(self.local_names):
+            if name in names:
+                return names[name]
+        raise self.error(f"unknown name `{name}`", span)
+
+    def free_local(self, name: str, span: SourceSpan) -> ir.IRFree:
+        if name not in self.scopes[-1]:
+            if self.find_local(name) is not None:
+                raise self.error(f"FREE__ can only end `{name}` in its declaring block", span)
+            raise self.error(f"unknown name `{name}`", span)
+        typ = self.scopes[-1][name]
+        if is_task(typ):
+            raise self.error("FREE__ cannot discard Task<T>; await it exactly once", span)
+        local_name = self.local_names[-1].pop(name)
+        self.scopes[-1].pop(name)
+        self.narrowed_scopes[-1].pop(name, None)
+        self.task_scopes[-1].pop(name, None)
+        return ir.IRFree(span, local_name, typ)
+
+    def skip_local(self, name: str, span: SourceSpan) -> ir.IRSkip:
+        if len(self.scopes) < 2:
+            raise self.error("SKIP__ cannot move a local outside its function", span)
+        if name not in self.scopes[-1]:
+            if self.find_local(name) is not None:
+                raise self.error(f"`{name}` already outlives the current block", span)
+            raise self.error(f"unknown name `{name}`", span)
+        typ = self.scopes[-1][name]
+        if is_task(typ):
+            raise self.error("SKIP__ cannot move Task<T> across its lexical await scope", span)
+        if name in self.scopes[-2]:
+            raise self.error(f"SKIP__ cannot replace outer local `{name}`", span)
+        source_name = self.local_names[-1].pop(name)
+        self.scopes[-1].pop(name)
+        self.narrowed_scopes[-1].pop(name, None)
+        self.task_scopes[-1].pop(name, None)
+        destination_name = "__zy_skip_" + self.allocate_local_name(len(self.scopes) - 2, name)
+        self.scopes[-2][name] = typ
+        self.local_names[-2][name] = destination_name
+        self.hoisted_scopes[-1].append(ir.IRHoistedLocal(destination_name, typ))
+        return ir.IRSkip(span, source_name, destination_name, typ)
 
     def lookup_local(self, name: str, span: SourceSpan) -> Type:
         typ = self.find_local(name)
@@ -608,6 +673,52 @@ class Lowerer:
         finally:
             self.pop_scope()
 
+    @classmethod
+    def types_may_match(cls, left: Type, right: Type) -> bool:
+        if isinstance(left, TypeVar) or isinstance(right, TypeVar):
+            return True
+        if isinstance(left, NamedType) and isinstance(right, NamedType):
+            return (
+                left.name == right.name
+                and len(left.args) == len(right.args)
+                and all(cls.types_may_match(a, b) for a, b in zip(left.args, right.args))
+            )
+        if isinstance(left, TupleType) and isinstance(right, TupleType):
+            return len(left.items) == len(right.items) and all(
+                cls.types_may_match(a, b) for a, b in zip(left.items, right.items)
+            )
+        if isinstance(left, OptionalType) and isinstance(right, OptionalType):
+            return cls.types_may_match(left.inner, right.inner)
+        if isinstance(left, FunctionType) and isinstance(right, FunctionType):
+            return (
+                len(left.params) == len(right.params)
+                and all(cls.types_may_match(a, b) for a, b in zip(left.params, right.params))
+                and cls.types_may_match(left.return_type, right.return_type)
+            )
+        return left == right
+
+    def lower_typeof(
+        self,
+        expression: ast.TypeOfExpr,
+        expected: Type | None = None,
+    ) -> tuple[ir.IRExpr, bool | None, Type]:
+        value = self.lower_expr(expression.value)
+        target_type = self.resolve_optional_annotation(expression.target_type)
+        assert target_type is not None
+        unknown = self.contains_type_var(value.typ) or self.contains_type_var(target_type)
+        result: bool | None
+        if unknown and self.types_may_match(value.typ, target_type):
+            result = None
+        else:
+            result = value.typ == target_type
+        test: ir.IRExpr
+        if result is None:
+            test = ir.IRStaticTypeTest(BOOL, expression.span)
+        else:
+            test = ir.IRBool(BOOL, expression.span, result)
+        lowered = self.coerce(test, expected, expression.span)
+        return lowered, result, target_type
+
     def optional_null_narrowing(self, expression: ast.Expr) -> tuple[str, Type, bool] | None:
         if not isinstance(expression, ast.BinaryExpr) or expression.operator not in {"==", "!="}:
             return None
@@ -630,7 +741,7 @@ class Lowerer:
             statements = tuple(self.lower_stmt(statement) for statement in block.statements)
             if push_scope:
                 self.validate_current_task_scope()
-            return ir.IRBlock(statements, block.span)
+            return ir.IRBlock(statements, block.span, tuple(self.hoisted_scopes[-1]))
         finally:
             if push_scope:
                 self.pop_scope()
@@ -669,7 +780,32 @@ class Lowerer:
             value = self.lower_value_sequence(statement.values, expected, statement.span)
             return ir.IRRecover(statement.span, value)
         if isinstance(statement, ast.IfStmt):
-            condition = self.lower_expr(statement.condition, BOOL)
+            typeof_result: bool | None = None
+            typeof_target: Type | None = None
+            if isinstance(statement.condition, ast.TypeOfExpr):
+                condition, typeof_result, typeof_target = self.lower_typeof(statement.condition, BOOL)
+            else:
+                condition = self.lower_expr(statement.condition, BOOL)
+            if isinstance(statement.condition, ast.TypeOfExpr) and typeof_result is True:
+                then_block = self.lower_block(statement.then_block)
+                return ir.IRIf(statement.span, condition, then_block, None)
+            if isinstance(statement.condition, ast.TypeOfExpr) and typeof_result is False:
+                then_block = ir.IRBlock((), statement.then_block.span)
+                else_block = self.lower_block(statement.else_block) if statement.else_block else None
+                return ir.IRIf(statement.span, condition, then_block, else_block)
+            if (
+                isinstance(statement.condition, ast.TypeOfExpr)
+                and isinstance(statement.condition.value, ast.NameExpr)
+                and typeof_target is not None
+                and not self.contains_type_var(typeof_target)
+            ):
+                then_block = self.lower_narrowed_block(
+                    statement.then_block,
+                    statement.condition.value.name,
+                    typeof_target,
+                )
+                else_block = self.lower_block(statement.else_block) if statement.else_block else None
+                return ir.IRIf(statement.span, condition, then_block, else_block)
             narrowing = self.optional_null_narrowing(statement.condition)
             if narrowing is None:
                 then_block = self.lower_block(statement.then_block)
@@ -695,12 +831,12 @@ class Lowerer:
                 raise self.error("if let requires a `T | null` value", statement.value.span)
             self.push_scope()
             try:
-                self.define_local(statement.binding, value.typ.inner, statement.span)
+                local_name = self.define_local(statement.binding, value.typ.inner, statement.span)
                 then_block = self.lower_block(statement.then_block, push_scope=False)
             finally:
                 self.pop_scope()
             else_block = self.lower_block(statement.else_block) if statement.else_block else None
-            return ir.IRIfLet(statement.span, statement.binding, value.typ.inner, value, then_block, else_block)
+            return ir.IRIfLet(statement.span, local_name, value.typ.inner, value, then_block, else_block)
         if isinstance(statement, ast.WhileStmt):
             condition = self.lower_expr(statement.condition, BOOL)
             self.loop_depth += 1
@@ -719,6 +855,10 @@ class Lowerer:
             if self.loop_depth == 0:
                 raise self.error("`continue` is only valid inside a loop", statement.span)
             return ir.IRContinue(statement.span)
+        if isinstance(statement, ast.FreeStmt):
+            return self.free_local(statement.name, statement.span)
+        if isinstance(statement, ast.SkipStmt):
+            return self.skip_local(statement.name, statement.span)
         if isinstance(statement, ast.ExprStmt):
             return ir.IRExprStmt(statement.span, self.lower_expr(statement.value))
         raise self.error("unsupported statement", statement.span)
@@ -732,7 +872,11 @@ class Lowerer:
             assigned_name = statement.target.name
             if is_task(target_type):
                 raise self.error("Task<T> variables cannot be reassigned", statement.target.span)
-            target: ir.IRExpr = ir.IRName(target_type, statement.target.span, statement.target.name)
+            target = ir.IRName(
+                target_type,
+                statement.target.span,
+                self.lookup_local_name(statement.target.name, statement.target.span),
+            )
         else:
             root = statement.target
             while isinstance(root, ast.FieldExpr):
@@ -757,10 +901,10 @@ class Lowerer:
             self.validate_box_position(typ, binding.span, "local type")
             if is_task(typ) and not isinstance(value, ir.IRSpawn):
                 raise self.error("Task<T> is linear and cannot be copied", statement.value.span)
-            self.define_local(binding.name, typ, binding.span)
+            local_name = self.define_local(binding.name, typ, binding.span)
             if is_task(typ):
                 self.task_scopes[-1][binding.name] = (False, binding.span)
-            return ir.IRLet(statement.span, (binding.name,), (typ,), value)
+            return ir.IRLet(statement.span, (local_name,), (typ,), value)
 
         annotations = [self.resolve_optional_annotation(binding.type_node) for binding in statement.bindings]
         tuple_expected = None
@@ -775,6 +919,7 @@ class Lowerer:
                 statement.span,
             )
         final_types: list[Type] = []
+        local_names: list[str] = []
         for binding, annotation, actual in zip(statement.bindings, annotations, value.typ.items):
             typ = annotation or actual
             self.validate_box_position(typ, binding.span, "destructured local type")
@@ -783,9 +928,9 @@ class Lowerer:
                     f"cannot bind `{binding.name}: {typ.display()}` from `{actual.display()}`",
                     binding.span,
                 )
-            self.define_local(binding.name, typ, binding.span)
+            local_names.append(self.define_local(binding.name, typ, binding.span))
             final_types.append(typ)
-        return ir.IRLet(statement.span, tuple(item.name for item in statement.bindings), tuple(final_types), value)
+        return ir.IRLet(statement.span, tuple(local_names), tuple(final_types), value)
 
     def resolve_optional_annotation(self, node: ast.TypeNode | None) -> Type | None:
         if node is None:
@@ -825,6 +970,14 @@ class Lowerer:
                     expression.span,
                 )
             return self.coerce(ir.IRInt(typ, expression.span, expression.value), expected, expression.span)
+        if isinstance(expression, ast.FloatExpr):
+            literal_expected = expected.inner if isinstance(expected, OptionalType) else expected
+            typ = (
+                literal_expected
+                if literal_expected is not None and is_float(literal_expected)
+                else PrimitiveType("f64")
+            )
+            return self.coerce(ir.IRFloat(typ, expression.span, expression.value), expected, expression.span)
         if isinstance(expression, ast.StringExpr):
             return self.coerce(ir.IRString(STR, expression.span, expression.value), expected, expression.span)
         if isinstance(expression, ast.FStringExpr):
@@ -880,10 +1033,14 @@ class Lowerer:
             if local_type is not None:
                 if is_task(local_type):
                     raise self.error("Task<T> can only be consumed with `await task`", expression.span)
-                local = ir.IRName(local_type, expression.span, expression.name)
+                local_name = self.lookup_local_name(expression.name, expression.span)
+                local = ir.IRName(local_type, expression.span, local_name)
                 narrowed_type = self.find_narrowed_local(expression.name)
                 if narrowed_type is not None:
-                    local = ir.IROptionalValue(narrowed_type, expression.span, local)
+                    if isinstance(local_type, OptionalType):
+                        local = ir.IROptionalValue(narrowed_type, expression.span, local)
+                    else:
+                        local = ir.IRName(narrowed_type, expression.span, local_name)
                 return self.coerce(local, expected, expression.span)
             symbol = self.functions.get(expression.name)
             if symbol is not None:
@@ -961,14 +1118,14 @@ class Lowerer:
             self.push_scope()
             self.catch_result_types.append(value.typ)
             try:
-                self.define_local(expression.error_name, ERROR, expression.span)
+                error_name = self.define_local(expression.error_name, ERROR, expression.span)
                 handler = self.lower_block(expression.handler, push_scope=False)
             finally:
                 self.catch_result_types.pop()
                 self.pop_scope()
             if not self.block_catch_completes(handler):
                 raise self.error("catch must end with recover, return, or stop on every path", expression.handler.span)
-            return self.coerce(ir.IRCatch(value.typ, expression.span, value, expression.error_name, handler), expected, expression.span)
+            return self.coerce(ir.IRCatch(value.typ, expression.span, value, error_name, handler), expected, expression.span)
         if isinstance(expression, ast.SpawnExpr):
             call = self.lower_expr(expression.call)
             if not isinstance(call, ir.IRCall):
@@ -989,17 +1146,15 @@ class Lowerer:
             task_type = self.consume_task(expression.task.name, expression.task.span)
             if not is_task(task_type):
                 raise self.error("await requires Task<T>", expression.task.span)
-            task = ir.IRName(task_type, expression.task.span, expression.task.name)
+            task = ir.IRName(
+                task_type,
+                expression.task.span,
+                self.lookup_local_name(expression.task.name, expression.task.span),
+            )
             return self.coerce(ir.IRAwait(task_type.args[0], expression.span, task), expected, expression.span)
         if isinstance(expression, ast.TypeOfExpr):
-            value = self.lower_expr(expression.value)
-            target_type = self.resolve_optional_annotation(expression.target_type)
-            assert target_type is not None
-            return self.coerce(
-                ir.IRBool(BOOL, expression.span, value.typ == target_type),
-                expected,
-                expression.span,
-            )
+            lowered, _, _ = self.lower_typeof(expression, expected)
+            return lowered
         raise self.error("unsupported expression", expression.span)
 
     @staticmethod
@@ -1715,6 +1870,9 @@ class Lowerer:
         if isinstance(final, (ir.IRReturn, ir.IRStop)):
             return True
         if isinstance(final, ir.IRIf):
+            if isinstance(final.condition, ir.IRBool):
+                selected = final.then_block if final.condition.value else final.else_block
+                return selected is not None and Lowerer.block_terminates(selected)
             return final.else_block is not None and Lowerer.block_terminates(final.then_block) and Lowerer.block_terminates(final.else_block)
         if isinstance(final, ir.IRIfLet):
             return final.else_block is not None and Lowerer.block_terminates(final.then_block) and Lowerer.block_terminates(final.else_block)
@@ -1728,6 +1886,9 @@ class Lowerer:
         if isinstance(final, (ir.IRRecover, ir.IRReturn, ir.IRStop)):
             return True
         if isinstance(final, ir.IRIf):
+            if isinstance(final.condition, ir.IRBool):
+                selected = final.then_block if final.condition.value else final.else_block
+                return selected is not None and Lowerer.block_catch_completes(selected)
             return final.else_block is not None and Lowerer.block_catch_completes(final.then_block) and Lowerer.block_catch_completes(final.else_block)
         if isinstance(final, ir.IRIfLet):
             return final.else_block is not None and Lowerer.block_catch_completes(final.then_block) and Lowerer.block_catch_completes(final.else_block)

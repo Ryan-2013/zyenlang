@@ -47,6 +47,11 @@ class IntExpr(Expr):
 
 
 @dataclass(frozen=True)
+class FloatExpr(Expr):
+    value: str
+
+
+@dataclass(frozen=True)
 class StringExpr(Expr):
     value: str
 
@@ -222,6 +227,16 @@ class BreakStmt(Stmt):
 @dataclass(frozen=True)
 class ContinueStmt(Stmt):
     pass
+
+
+@dataclass(frozen=True)
+class FreeStmt(Stmt):
+    name: str
+
+
+@dataclass(frozen=True)
+class SkipStmt(Stmt):
+    name: str
 
 
 @dataclass(frozen=True)

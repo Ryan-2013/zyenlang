@@ -53,7 +53,7 @@ zy build main.zy -o main.c
 - `T | null`、`if let`、`throws Error`、`stop`、`catch`、`recover`；
 - `while`、`break`、`continue`、`Task<T>`、`spawn` 與 `await`；
 - `TYPEOF__`、`FILE__`、`GET_ARGS__`、`GET_EXE__`、彩色 `PRINT_CMD__` 與
-  UTF-8 `STR_TO_LIST__`；
+  UTF-8 `STR_TO_LIST__`；小數 literal 與作用域控制 `SKIP__`／`FREE__`；
 - 標準模組、套件模組、相對模組與受檢查的 native C 宣告；
 - ARC 管理的 `Box<T>`、`List<T>` 與含 managed 欄位的結構體。
 

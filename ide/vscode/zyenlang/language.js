@@ -1,9 +1,9 @@
 'use strict';
 
 const KEYWORDS = [
-  'as', 'await', 'break', 'catch', 'continue', 'else', 'false', 'fn', 'if',
+  'as', 'await', 'break', 'catch', 'continue', 'else', 'false', 'fn', 'FREE__', 'if',
   'import', 'let', 'mut', 'native', 'null', 'private', 'public', 'recover', 'return',
-  'source', 'spawn', 'stop', 'struct', 'throws', 'true', 'TYPEOF__',
+  'SKIP__', 'source', 'spawn', 'stop', 'struct', 'throws', 'true', 'TYPEOF__',
   'LIST_LEN__', 'LIST_PUSH__', 'LIST_SET__', 'PRINT_CMD__', 'STR_TO_LIST__', 'while'
 ];
 
@@ -16,6 +16,12 @@ const TYPES = [
 const SPECIAL_VALUES = ['FILE__', 'GET_ARGS__', 'GET_EXE__'];
 
 const SPECIAL_FORMS = [
+  {
+    name: 'FREE__',
+    detail: 'FREE__(local) void',
+    snippet: 'FREE__(${1:local})',
+    documentation: 'End a binding in its declaring block and immediately release managed storage.'
+  },
   {
     name: 'LIST_LEN__',
     detail: 'LIST_LEN__(list: List<T>) usize',
@@ -39,6 +45,12 @@ const SPECIAL_FORMS = [
     detail: 'PRINT_CMD__(text: str, color: str) void',
     snippet: 'PRINT_CMD__(${1:text}, "${2:#FFFFFF}")',
     documentation: 'Write one line using a #RRGGBB terminal color when color output is enabled.'
+  },
+  {
+    name: 'SKIP__',
+    detail: 'SKIP__(local) void',
+    snippet: 'SKIP__(${1:local})',
+    documentation: 'Promote a local by one lexical block; an unexecuted block leaves its zero value.'
   },
   {
     name: 'STR_TO_LIST__',

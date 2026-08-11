@@ -4,6 +4,10 @@
 
 ### Added
 
+- Decimal and scientific-notation literals, defaulting to `f64` and honoring
+  an immediate `f32` type context.
+- `SKIP__(local)` one-block binding promotion and `FREE__(local)` explicit
+  binding termination with ARC-aware retain/release behavior.
 - `PRINT_CMD__(text, color)` terminal truecolor output and pure-ZyenLang
   `std/io` wrappers for white `print` and red `eprint`.
 - `STR_TO_LIST__(text)`, which splits valid UTF-8 into an ARC-managed
@@ -24,6 +28,9 @@
 
 ### Changed
 
+- Generic `TYPEOF__` branches now narrow matching locals during template
+  validation, and concrete monomorphizations omit statically impossible
+  branches instead of reporting false `List<T>` assignment errors.
 - Retired the v0.1 compiler, standard library, examples, tests, editor assets,
   compatibility imports, and `zy1`/`zy2` command split. ZyenLang now ships one
   v0.2 compiler through `zy`, `zyen`, and `python -m zyenlang`.

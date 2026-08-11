@@ -198,6 +198,11 @@ Blocks use lexical scope. Inner declarations are unavailable after their
 closing brace, while outer declarations remain visible and mutable. Casting a
 `str | null` to `str` evaluates the optional once and produces the contained
 string or the literal `"null"`.
+`SKIP__(local)` promotes a binding by one lexical block through a zero-initialized
+parent slot; managed values are retained into that slot and released with the
+parent scope. `FREE__(local)` emits an immediate managed release where needed,
+removes the binding from later cleanup, and permits a compiler-renamed binding
+with the same source name. Neither form accepts linear `Task<T>` values.
 
 Project package imports use `<package/module>`. The module loader accepts only
 dependencies declared by the importing project or package, resolves them from
@@ -215,6 +220,11 @@ Out-of-range errors carry the `.zy` call site's file, line, and column.
 character buffer to the List storage, so the same ARC owner releases both the
 item table and character data. `PRINT_CMD__(text, color)` lowers to the shared
 terminal truecolor runtime and emits plain text when color is disabled.
+Decimal and scientific-notation literals lower as typed `IRFloat` values,
+defaulting to `f64` and using `f32` when required by the immediate context.
+Generic `TYPEOF__` conditions are tri-state during template validation; a
+matching true branch narrows the local, while concrete monomorphizations omit
+branches whose static type test cannot succeed.
 
 ## Commands
 

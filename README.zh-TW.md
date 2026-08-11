@@ -124,8 +124,12 @@ zy2 --version
 python -m pytest -q
 ```
 
-既有 v0.1 程式繼續使用 `zy`。舊語法與 ZEP 保留在
+既有 v0.1 程式使用 `zy1` 或 `zy legacy`。舊語法與 ZEP 保留在
 [v0.1 語法文件](docs/current_syntax_zh_TW.md) 與
 [zyenlang-zeps](https://github.com/Ryan-2013/zyenlang-zeps)。
+
+編譯器原始碼已依世代分開：`zyenlang/v1` 保存 v0.1 transpiler 與標準庫，
+`zyenlang/v2` 則放目前的強型別編譯器及其標準庫。像
+`zyenlang.transpiler` 這類根層模組只保留為既有 Python 工具的相容別名。
 
 授權：MIT。

@@ -27,9 +27,11 @@ namespaces = true
 
 [tool.setuptools.package-data]
 zyenlang = [
-    "std/*.zy",
-    "std/*.c",
-    "std/*.h",
+    "v1/README.md",
+    "v1/std/*.zy",
+    "v1/std/*.c",
+    "v1/std/*.h",
+    "v2/README.md",
     "v2/std/*.zy",
     "v2/std/*.md",
     "v2/std/*.c",

@@ -154,4 +154,9 @@ Existing v0.1 programs use `zy1` or `zy legacy`. Their syntax reference and ZEPs
 remain in [docs/current_syntax_zh_TW.md](docs/current_syntax_zh_TW.md) and the
 [ZyenLang ZEP repository](https://github.com/Ryan-2013/zyenlang-zeps).
 
+Compiler sources are separated by generation: `zyenlang/v1` contains the
+preserved v0.1 transpiler and standard library, while `zyenlang/v2` contains the
+current typed compiler and its standard library. Root modules such as
+`zyenlang.transpiler` are compatibility aliases for existing Python tooling.
+
 License: MIT.

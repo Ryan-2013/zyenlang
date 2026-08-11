@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import sys
 
-from zyenlang.transpiler import main as legacy_main
+from zyenlang.v1.transpiler import main as legacy_main
 from zyenlang.v2.__main__ import main as v2_main
 
 

@@ -3,6 +3,20 @@
 ZyenLang 0.2 is a parallel compiler. It does not extend the v0.1
 line-oriented transpiler.
 
+The installed package keeps the two compiler generations in explicit version
+namespaces:
+
+```text
+zyenlang/
+  cli/       shared `zy` / `zy1` command dispatch
+  v1/        preserved v0.1 transpiler, tools, and standard library
+  v2/        current typed compiler, runtime, and standard library
+```
+
+Files such as `zyenlang/transpiler.py` are compatibility aliases only. Compiler
+development belongs in the matching version directory so v1 maintenance cannot
+silently change the v2 frontend or IR.
+
 ```text
 source
   -> lexer

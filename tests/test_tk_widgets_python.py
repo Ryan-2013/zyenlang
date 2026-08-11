@@ -53,13 +53,17 @@ def test_widget_session_is_in_memory() -> None:
     assert "zyen_tk_scene.ztk" not in active_session
     assert "zltk_frame_clear" in active_session
     assert "zltk_collect_events" in active_session
-    assert (ROOT / "std" / "tk.zy").read_bytes() == (ROOT / "zyenlang" / "std" / "tk.zy").read_bytes()
-    assert (ROOT / "std" / "tk_native.c").read_bytes() == (ROOT / "zyenlang" / "std" / "tk_native.c").read_bytes()
+    assert (ROOT / "std" / "tk.zy").read_bytes() == (
+        ROOT / "zyenlang" / "v1" / "std" / "tk.zy"
+    ).read_bytes()
+    assert (ROOT / "std" / "tk_native.c").read_bytes() == (
+        ROOT / "zyenlang" / "v1" / "std" / "tk_native.c"
+    ).read_bytes()
 
 
 def test_tk_uses_public_c_module_contract() -> None:
     tk_source = (ROOT / "std" / "tk.zy").read_text(encoding="utf-8")
-    compiler = (ROOT / "zyenlang" / "transpiler.py").read_text(encoding="utf-8")
+    compiler = (ROOT / "zyenlang" / "v1" / "transpiler.py").read_text(encoding="utf-8")
     metadata = collect_native_c_metadata(ROOT / "examples" / "tk_widgets.zy")
     assert "import <std/c_module> as c_module;" in tk_source
     assert 'c_module.load("tk.zlcm.h")' in tk_source
@@ -68,7 +72,9 @@ def test_tk_uses_public_c_module_contract() -> None:
     assert '"int zl_tk_begin(const char* path);"' not in compiler
     assert [path.name for path in metadata["headers"]] == ["tk_native.h"]
     assert [path.name for path in metadata["sources"]] == ["tk_native.c"]
-    assert (ROOT / "std" / "tk.zlcm.h").read_bytes() == (ROOT / "zyenlang" / "std" / "tk.zlcm.h").read_bytes()
+    assert (ROOT / "std" / "tk.zlcm.h").read_bytes() == (
+        ROOT / "zyenlang" / "v1" / "std" / "tk.zlcm.h"
+    ).read_bytes()
 
 
 def main() -> int:

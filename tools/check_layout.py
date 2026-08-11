@@ -1,6 +1,16 @@
 from pathlib import Path
 root = Path(__file__).resolve().parents[1]
-required = ["pyproject.toml", "zyen.py", "zyenlang/transpiler.py", "tools/install_vscode_extension.py", "examples/add.zy"]
+required = [
+    "pyproject.toml",
+    "zyen.py",
+    "zyenlang/transpiler.py",
+    "zyenlang/v1/transpiler.py",
+    "zyenlang/v1/std/list.zy",
+    "zyenlang/v2/compiler.py",
+    "zyenlang/v2/std/list.zy",
+    "tools/install_vscode_extension.py",
+    "examples/add.zy",
+]
 print("ZyenLang folder:", root)
 missing = []
 for item in required:

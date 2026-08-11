@@ -13,7 +13,7 @@ Target: v0.1.45
 - `std/config`
 - `std/csv`
 
-All modules are mirrored under both `std/` and `zyenlang/std/`.
+All v1 modules are mirrored under both `std/` and `zyenlang/v1/std/`.
 
 ## Compiler/runtime fixes included
 

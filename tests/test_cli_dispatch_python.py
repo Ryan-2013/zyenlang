@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib
+from pathlib import Path
 
 
 def cli_module():
@@ -43,3 +44,20 @@ def test_zy_version_alias_uses_v2_version_flag(monkeypatch) -> None:
 
     assert cli.main(["version"]) == 0
     assert received == [["--version"]]
+
+
+def test_legacy_imports_alias_the_versioned_v1_modules() -> None:
+    old_transpiler = importlib.import_module("zyenlang.transpiler")
+    v1_transpiler = importlib.import_module("zyenlang.v1.transpiler")
+    old_c_module = importlib.import_module("zyenlang.c_module")
+    v1_c_module = importlib.import_module("zyenlang.v1.c_module")
+
+    assert old_transpiler is v1_transpiler
+    assert old_c_module is v1_c_module
+
+
+def test_compiler_generations_have_separate_bundled_std_directories() -> None:
+    package = Path(importlib.import_module("zyenlang").__file__).resolve().parent
+
+    assert (package / "v1" / "std" / "list.zy").is_file()
+    assert (package / "v2" / "std" / "list.zy").is_file()

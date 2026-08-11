@@ -63,6 +63,7 @@ zy build main.zy -o main.c
 - 傳統 `let name: Type = value` 與自動型別推斷；
 - 以換行結束敘述，不使用分號；
 - struct 預設值、public/private 欄位與 receiver method；
+- 函式預設參數，包含匯入函式與預設參數後接必要參數；
 - 多回傳值與 tuple 解構；
 - 泛型函式與強型別 `List<T>`；
 - `T | null` 與 `if let`；

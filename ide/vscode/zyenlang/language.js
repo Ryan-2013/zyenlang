@@ -147,6 +147,17 @@ function splitTopLevel(value) {
   return parts;
 }
 
+function parameterType(value) {
+  let depth = 0;
+  for (let index = 0; index < value.length; index += 1) {
+    const char = value[index];
+    if ('(<[{'.includes(char)) depth += 1;
+    else if (')>]}'.includes(char)) depth -= 1;
+    else if (char === '=' && depth === 0) return value.slice(0, index).trim();
+  }
+  return value.trim();
+}
+
 function parameterSymbols(parameters, line, baseColumn, container) {
   const result = [];
   let searchFrom = 0;
@@ -154,13 +165,14 @@ function parameterSymbols(parameters, line, baseColumn, container) {
     const match = parameter.match(/^(?:(mut)\s+)?([A-Za-z_]\w*)\s*:\s*(.+)$/);
     if (!match) continue;
     const name = match[2];
+    const type = parameterType(match[3]);
     const relative = parameters.indexOf(name, searchFrom);
     searchFrom = relative + name.length;
     result.push({
       name,
       kind: 'parameter',
-      type: match[3].trim(),
-      detail: `${match[1] ? 'mut ' : ''}${name}: ${match[3].trim()}`,
+      type,
+      detail: `${match[1] ? 'mut ' : ''}${name}: ${type}`,
       line,
       column: baseColumn + relative,
       endColumn: baseColumn + relative + name.length,
@@ -235,7 +247,7 @@ function parseDocument(text, uri = '') {
       });
     }
 
-    const functionMatch = line.match(/^\s*(?:(public|private)\s+)?(?:(native)\s+)?fn\s+(?:\(\s*([A-Za-z_]\w*)\s*:\s*([^\)]+)\s*\)\s*)?([A-Za-z_]\w*)\s*\(([^)]*)\)\s*([^\{=]*?)(?:\s*\{|\s*=|\s*$)/);
+    const functionMatch = line.match(/^\s*(?:(public|private)\s+)?(?:(native)\s+)?fn\s+(?:\(\s*([A-Za-z_]\w*)\s*:\s*([^\)]+)\s*\)\s*)?([A-Za-z_]\w*)(?:\s*<[^>]+>)?\s*\(([^)]*)\)\s*([^\{=]*?)(?:\s*\{|\s*=|\s*$)/);
     if (functionMatch) {
       const receiverName = functionMatch[3];
       const receiverType = functionMatch[4] && functionMatch[4].trim();
@@ -244,7 +256,7 @@ function parseDocument(text, uri = '') {
       const returnAndThrows = functionMatch[7].trim();
       const column = original.indexOf(name, original.indexOf('fn') + 2);
       const kind = functionMatch[2] ? 'native' : receiverType ? 'method' : 'function';
-      const signature = original.trim().replace(/\s*\{\s*$/, '').replace(/\s*=.*$/, '');
+      const signature = original.trim().replace(/\s*\{\s*$/, '').replace(/\s*=\s*"[^"]*"\s*$/, '');
       const symbol = {
         name,
         kind,

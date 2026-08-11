@@ -278,6 +278,119 @@ fn main() i32 {
     assert "zy2_fn_identity__i32" in generated
 
 
+def test_v2_default_parameters_fill_missing_arguments_and_run(tmp_path: Path) -> None:
+    source = tmp_path / "default_parameters.zy"
+    source.write_text(
+        """fn all_defaults(a: i32 = 10, b: i32 = 20) i32 {
+    return a + b
+}
+
+fn compose(a: i32 = 1, b: i32, c: i32 = 3) i32 {
+    return a * 100 + b * 10 + c
+}
+
+fn main() i32 {
+    if all_defaults() != 30 {
+        return 1
+    }
+    if compose(2) != 123 {
+        return 2
+    }
+    if compose(4, 5) != 453 {
+        return 3
+    }
+    if compose(4, 5, 6) != 456 {
+        return 4
+    }
+    return 0
+}
+""",
+        encoding="utf-8",
+    )
+    executable = tmp_path / ("default_parameters.exe" if sys.platform.startswith("win") else "default_parameters")
+    Compiler().build_file(source, executable)
+    result = subprocess.run([str(executable)], capture_output=True, text=True, check=False)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_v2_imported_function_defaults_are_namespaced_and_run(tmp_path: Path) -> None:
+    module = tmp_path / "math_defaults.zy"
+    module.write_text(
+        """public fn add(a: i32 = 20, b: i32 = 22) i32 {
+    return a + b
+}
+""",
+        encoding="utf-8",
+    )
+    source = tmp_path / "main.zy"
+    source.write_text(
+        """import "math_defaults.zy" as math
+
+fn main() i32 {
+    return math.add() - 42
+}
+""",
+        encoding="utf-8",
+    )
+    executable = tmp_path / ("imported_defaults.exe" if sys.platform.startswith("win") else "imported_defaults")
+    Compiler().build_file(source, executable)
+    result = subprocess.run([str(executable)], capture_output=True, text=True, check=False)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_v2_default_parameter_type_is_checked_even_when_unused() -> None:
+    source = """fn invalid(value: i32 = "wrong") i32 {
+    return value
+}
+
+fn main() i32 {
+    return 0
+}
+"""
+    with pytest.raises(CompileError, match="expected `i32`, got `str`"):
+        Compiler().check_source(source)
+
+
+def test_v2_generic_template_requires_explicit_mixed_type_cast() -> None:
+    source = """fn add<T>(a: i32 = 10, b: T) T {
+    return a + b
+}
+
+fn main() i32 {
+    return add(10, 10)
+}
+"""
+    with pytest.raises(CompileError) as caught:
+        Compiler().check_source(source)
+
+    assert "generic value `b: T` must be explicitly cast to `i32`" in str(caught.value)
+
+
+def test_v2_generic_default_parameter_with_explicit_cast_runs(tmp_path: Path) -> None:
+    source = tmp_path / "generic_default.zy"
+    source.write_text(
+        """fn add<T>(a: i32 = 10, b: T) T {
+    return (T)(a + (i32)b)
+}
+
+fn main() i32 {
+    if add(5) != 15 {
+        return 1
+    }
+    return add(7, 8) - 15
+}
+""",
+        encoding="utf-8",
+    )
+    executable = tmp_path / ("generic_default.exe" if sys.platform.startswith("win") else "generic_default")
+    Compiler().build_file(source, executable)
+    result = subprocess.run([str(executable)], capture_output=True, text=True, check=False)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
 @pytest.mark.parametrize(
     "module_name",
     [
@@ -1181,10 +1294,10 @@ def test_v2_public_native_declarations_compile_and_link(tmp_path: Path) -> None:
     source = tmp_path / "main.zy"
     source.write_text(
         """native source "math_native.c"
-private native fn add(left: i32, right: i32) i32 = "native_add"
+private native fn add(left: i32 = 20, right: i32 = 22) i32 = "native_add"
 
 fn main() i32 {
-    return add(20, 22) - 42
+    return add() - 42
 }
 """,
         encoding="utf-8",
@@ -1198,6 +1311,18 @@ fn main() i32 {
     assert program.native_sources == (str(native.resolve()),)
     assert program.extern_functions[0].c_name == "native_add"
     assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_v2_native_default_parameter_type_is_checked_when_unused() -> None:
+    source = """private native fn invalid(value: i32 = "wrong") i32 = "native_invalid"
+
+fn main() i32 {
+    return 0
+}
+"""
+
+    with pytest.raises(CompileError, match="expected `i32`, got `str`"):
+        Compiler().check_source(source)
 
 
 def test_v2_native_declarations_reject_symbol_and_path_injection(tmp_path: Path) -> None:

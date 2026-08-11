@@ -314,9 +314,16 @@ def namespace_program(program: ast.Program, namespace: str, import_aliases: set[
                     type_node(definition.receiver.type_node),
                     definition.receiver.span,
                     definition.receiver.mutable,
+                    None,
                 )
             params = tuple(
-                ast.Param(param.name, type_node(param.type_node), param.span, param.mutable)
+                ast.Param(
+                    param.name,
+                    type_node(param.type_node),
+                    param.span,
+                    param.mutable,
+                    expression(param.default) if param.default else None,
+                )
                 for param in definition.params
             )
             definitions.append(
@@ -334,7 +341,13 @@ def namespace_program(program: ast.Program, namespace: str, import_aliases: set[
             )
         elif isinstance(definition, ast.NativeFunctionDef):
             params = tuple(
-                ast.Param(param.name, type_node(param.type_node), param.span, param.mutable)
+                ast.Param(
+                    param.name,
+                    type_node(param.type_node),
+                    param.span,
+                    param.mutable,
+                    expression(param.default) if param.default else None,
+                )
                 for param in definition.params
             )
             definitions.append(

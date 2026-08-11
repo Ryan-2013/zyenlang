@@ -99,6 +99,9 @@ class Lowerer:
 
         lowered_structs = tuple(self.lower_struct(symbol) for symbol in self.structs.values() if not symbol.type_params)
         all_functions = list(self.functions.values()) + list(self.methods.values())
+        self.validate_native_defaults(all_functions)
+        if self.require_main:
+            self.validate_generic_templates(all_functions)
         self.pending_functions = [
             symbol
             for symbol in all_functions
@@ -144,6 +147,53 @@ class Lowerer:
             native_links=native_links,
             features=frozenset(self.features),
         )
+
+    def validate_native_defaults(self, functions: list[FunctionSymbol]) -> None:
+        saved_function = self.current_function
+        saved_receiver = self.current_receiver
+        saved_pending = self.pending_functions
+        saved_instances = self.generic_instances
+        saved_features = set(self.features)
+        saved_spawn_counter = self.spawn_counter
+        self.pending_functions = []
+        self.generic_instances = {}
+        try:
+            for symbol in functions:
+                if symbol.native_symbol is None:
+                    continue
+                self.current_function = symbol
+                self.current_receiver = None
+                self.push_scope()
+                try:
+                    for param_node, (_, typ, _) in zip(symbol.node.params, symbol.params):
+                        if param_node.default is not None:
+                            self.lower_expr(param_node.default, typ)
+                finally:
+                    self.pop_scope()
+        finally:
+            self.current_function = saved_function
+            self.current_receiver = saved_receiver
+            self.pending_functions = saved_pending
+            self.generic_instances = saved_instances
+            self.features = saved_features
+            self.spawn_counter = saved_spawn_counter
+
+    def validate_generic_templates(self, functions: list[FunctionSymbol]) -> None:
+        saved_pending = self.pending_functions
+        saved_instances = self.generic_instances
+        saved_features = set(self.features)
+        saved_spawn_counter = self.spawn_counter
+        self.pending_functions = []
+        self.generic_instances = {}
+        try:
+            for symbol in functions:
+                if symbol.type_params and symbol.native_symbol is None:
+                    self.lower_function(symbol)
+        finally:
+            self.pending_functions = saved_pending
+            self.generic_instances = saved_instances
+            self.features = saved_features
+            self.spawn_counter = saved_spawn_counter
 
     def collect_struct_names(self) -> None:
         for definition in self.program.definitions:
@@ -384,6 +434,10 @@ class Lowerer:
         self.push_scope()
         params: list[ir.IRParam] = []
         try:
+            for name, typ, _ in symbol.params:
+                param_node = next(item for item in symbol.node.params if item.name == name)
+                if param_node.default is not None:
+                    self.lower_expr(param_node.default, typ)
             if symbol.receiver is not None:
                 name, typ, mutable = symbol.receiver
                 self.define_local(name, typ, symbol.node.receiver.span if symbol.node.receiver else symbol.node.span)
@@ -769,6 +823,8 @@ class Lowerer:
     def can_explicitly_cast(source: Type, target: Type) -> bool:
         if source == target:
             return True
+        if isinstance(source, TypeVar) or isinstance(target, TypeVar):
+            return True
         if is_numeric(source) and is_numeric(target):
             return True
         if (source == BOOL and is_numeric(target)) or (is_numeric(source) and target == BOOL):
@@ -1056,6 +1112,18 @@ class Lowerer:
             return cls.contains_list(typ.inner)
         return False
 
+    @classmethod
+    def contains_type_var(cls, typ: Type) -> bool:
+        if isinstance(typ, TypeVar):
+            return True
+        if isinstance(typ, NamedType):
+            return any(cls.contains_type_var(arg) for arg in typ.args)
+        if isinstance(typ, TupleType):
+            return any(cls.contains_type_var(item) for item in typ.items)
+        if isinstance(typ, OptionalType):
+            return cls.contains_type_var(typ.inner)
+        return False
+
     def require_mutable_list_receiver(self, receiver: ast.Expr, method_name: str) -> None:
         if not isinstance(receiver, ast.NameExpr):
             operation = method_name if method_name.endswith("__") else f"List.{method_name}"
@@ -1085,12 +1153,11 @@ class Lowerer:
     ) -> ir.IRCall:
         if symbol.receiver is not None:
             raise self.error("generic receiver methods are not part of the bootstrap milestone", span)
-        if len(args) != len(symbol.params):
-            raise self.error(
-                f"`{symbol.name}` expects {len(symbol.params)} arguments, got {len(args)}",
-                span,
-            )
-        raw_args = [self.lower_expr(value) for value in args]
+        bound_args = self.bind_call_arguments(symbol, args, span)
+        raw_args = [
+            self.lower_expr(value, None if self.contains_type_var(template) else template)
+            for value, (_, template, _) in zip(bound_args, symbol.params)
+        ]
         mapping: dict[str, Type] = {}
         for (_, template, _), actual in zip(symbol.params, raw_args):
             self.unify_generic(template, actual.typ, mapping, span)
@@ -1183,15 +1250,40 @@ class Lowerer:
         prefix: tuple[ir.IRExpr, ...],
         span: SourceSpan,
     ) -> ir.IRCall:
-        if len(args) != len(symbol.params):
-            raise self.error(
-                f"`{symbol.name}` expects {len(symbol.params)} arguments, got {len(args)}",
-                span,
-            )
+        bound_args = self.bind_call_arguments(symbol, args, span)
         lowered = list(prefix)
-        for value, (_, typ, _) in zip(args, symbol.params):
+        for value, (_, typ, _) in zip(bound_args, symbol.params):
             lowered.append(self.lower_expr(value, typ))
         return ir.IRCall(symbol.return_type, span, symbol.c_name, tuple(lowered), symbol.throws)
+
+    def bind_call_arguments(
+        self,
+        symbol: FunctionSymbol,
+        args: tuple[ast.Expr, ...],
+        span: SourceSpan,
+    ) -> tuple[ast.Expr, ...]:
+        param_nodes = symbol.node.params
+        minimum = sum(1 for param in param_nodes if param.default is None)
+        maximum = len(param_nodes)
+        if len(args) < minimum or len(args) > maximum:
+            expected = str(maximum) if minimum == maximum else f"{minimum} to {maximum}"
+            raise self.error(f"`{symbol.name}` expects {expected} arguments, got {len(args)}", span)
+
+        bound: list[ast.Expr] = []
+        supplied = 0
+        for index, param in enumerate(param_nodes):
+            required_after = sum(1 for later in param_nodes[index + 1 :] if later.default is None)
+            remaining = len(args) - supplied
+            if param.default is not None and remaining <= required_after:
+                bound.append(param.default)
+                continue
+            if supplied < len(args):
+                bound.append(args[supplied])
+                supplied += 1
+                continue
+            assert param.default is not None
+            bound.append(param.default)
+        return tuple(bound)
 
     def lower_list(self, expression: ast.ListExpr, expected: Type | None) -> ir.IRList:
         element_expected = expected.args[0] if is_list(expected) else None
@@ -1243,6 +1335,17 @@ class Lowerer:
             return ir.IROptionalSome(expected, span, value)
         if assignable(expected, value.typ):
             return value
+        if isinstance(value.typ, TypeVar):
+            label = f"`{value.name}: {value.typ.display()}`" if isinstance(value, ir.IRName) else f"`{value.typ.display()}`"
+            raise self.error(
+                f"generic value {label} must be explicitly cast to `{expected.display()}`",
+                span,
+            )
+        if isinstance(expected, TypeVar):
+            raise self.error(
+                f"value of type `{value.typ.display()}` must be explicitly cast to generic type `{expected.display()}`",
+                span,
+            )
         raise self.error(
             f"type mismatch: expected `{expected.display()}`, got `{value.typ.display()}`",
             span,

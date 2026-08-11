@@ -71,6 +71,12 @@ assert(nativeParsed.exports.some((item) => item.kind === 'native' && item.name =
 const mutableParsed = language.parseDocument('fn update(mut value: i32) i32 { return value }', 'mut.zy');
 assert(mutableParsed.symbols.some((item) => item.kind === 'parameter' && item.name === 'value' && item.detail === 'mut value: i32'));
 
+const defaultParameterParsed = language.parseDocument('fn add<T>(a: i32 = 10, b: T) T { return (T)(a + (i32)b) }', 'defaults.zy');
+assert(defaultParameterParsed.exports.some((item) => item.kind === 'function' && item.name === 'add' && item.returnType === 'T'));
+assert(defaultParameterParsed.symbols.some((item) => item.kind === 'parameter' && item.name === 'a' && item.type === 'i32'));
+assert(defaultParameterParsed.symbols.some((item) => item.kind === 'parameter' && item.name === 'b' && item.type === 'T'));
+assert(defaultParameterParsed.exports.some((item) => item.name === 'add' && item.detail.includes('a: i32 = 10')));
+
 const defaultAlias = language.parseDocument('import "tools.zy"', 'alias.zy');
 assert.strictEqual(defaultAlias.imports[0].name, 'tools');
 

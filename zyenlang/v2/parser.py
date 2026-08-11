@@ -156,7 +156,7 @@ class Parser:
             params: list[ast.Param] = []
             self.skip_newlines()
             while not self.at(")"):
-                params.append(self.parse_param())
+                params.append(self.parse_param(allow_default=True))
                 self.skip_newlines()
                 if not self.match(","):
                     break
@@ -250,7 +250,7 @@ class Parser:
         params: list[ast.Param] = []
         self.skip_newlines()
         while not self.at(")"):
-            params.append(self.parse_param())
+            params.append(self.parse_param(allow_default=True))
             self.skip_newlines()
             if not self.match(","):
                 break
@@ -283,11 +283,17 @@ class Parser:
             throws=throws,
         )
 
-    def parse_param(self) -> ast.Param:
+    def parse_param(self, *, allow_default: bool = False) -> ast.Param:
         mutable = self.match("MUT") is not None
         name = self.expect("IDENT", "expected a parameter name")
         self.expect(":", "expected `:` after parameter name")
-        return ast.Param(name.value, self.parse_type(), name.span, mutable)
+        type_node = self.parse_type()
+        default = None
+        if self.match("="):
+            if not allow_default:
+                raise CompileError("method receivers cannot have default values", name.span, self.source_name)
+            default = self.parse_expression()
+        return ast.Param(name.value, type_node, name.span, mutable, default)
 
     def parse_type(self) -> ast.TypeNode:
         self.skip_newlines()

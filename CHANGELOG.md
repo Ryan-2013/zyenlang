@@ -2,7 +2,21 @@
 
 ## Unreleased
 
-No changes yet.
+### Added
+
+- v2 function and native-function parameters can declare typed default values.
+  Missing positional arguments are filled at the call site, including imported
+  functions and a defaulted parameter before a later required parameter.
+
+### Changed
+
+- Generic function templates are now checked before monomorphization. Mixing a
+  concrete type such as `i32` with unconstrained `T` requires an explicit cast,
+  and every concrete specialization validates that cast again.
+- VS Code symbol parsing recognizes generic functions and keeps default values
+  out of parameter type names and in function signature help.
+- Added a complete `std/gui` usage guide covering the cross-platform raylib
+  lifecycle, drawing functions, and events.
 
 ## v0.2.1 - 2026-07-30
 

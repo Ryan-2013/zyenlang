@@ -79,6 +79,9 @@ line numbers and ZyenLang syntax highlighting. `Window` methods are `open`,
 `begin_frame`, `present`, `next_event`, and `close`. Rendering uses the bundled
 cross-platform raylib runtime without Python or Tk.
 
+See [`zyenlang/v2/std/gui.md`](../zyenlang/v2/std/gui.md) for the complete
+window lifecycle, drawing API, event format, and a runnable example.
+
 ## Editor
 
 `std/editor` contains the mutable UTF-8 document state used by the ZyenLang

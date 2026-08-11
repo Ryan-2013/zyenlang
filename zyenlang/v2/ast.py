@@ -248,6 +248,7 @@ class Param:
     type_node: TypeNode
     span: SourceSpan
     mutable: bool = False
+    default: Expr | None = None
 
 
 @dataclass(frozen=True)

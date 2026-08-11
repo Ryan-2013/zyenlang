@@ -214,6 +214,33 @@ private fn helper() i32 {
 }
 ```
 
+參數可以提供預設值。省略的值會在呼叫處補入，而且每次呼叫都會重新求值：
+
+```zy
+fn add(a: i32 = 10, b: i32 = 20) i32 {
+    return a + b
+}
+
+let first: i32 = add()       // 30
+let second: i32 = add(1)     // 21
+let third: i32 = add(1, 2)   // 3
+```
+
+預設參數也可以放在必要參數之前。編譯器由左到右配對；當剩餘引數剛好都要
+留給後面的必要參數時，會使用目前參數的預設值：
+
+```zy
+fn scale(base: i32 = 10, value: i32) i32 {
+    return base * value
+}
+
+let implicit_base: i32 = scale(5)     // scale(10, 5)
+let explicit_base: i32 = scale(2, 5)  // scale(2, 5)
+```
+
+目前函式呼叫只支援位置引數，不支援具名引數。預設值不能引用該函式的參數，
+而且宣告即使沒有被呼叫，預設值仍會接受型別檢查。
+
 普通函式與互相遞迴已支援。v2 目前尚未重新加入 `fn(...) -> T` 函式值、
 closure 與函式指標；這些是舊版已有、但仍等待新型別系統與 ARC ABI 重建的功能。
 
@@ -304,6 +331,33 @@ fn identity<T>(value: T) T {
 let number: i32 = identity(12)
 let text: str = identity("hello")
 ```
+
+泛型函式本體會先以 `T` 的抽象型別獨立檢查，再依呼叫型別產生具體版本。
+目前沒有 `T: Numeric` 之類的型別約束，因此不能假設 `T` 可以直接與 `i32`
+運算：
+
+```zy
+fn add<T>(a: i32 = 10, b: T) T {
+    return a + b
+}
+```
+
+上例會在 `b` 報錯：
+
+```text
+generic value `b: T` must be explicitly cast to `i32`
+```
+
+若這個函式的契約確實要求可轉成 `i32`，要把兩個方向都明確寫出來：
+
+```zy
+fn add<T>(a: i32 = 10, b: T) T {
+    return (T)(a + (i32)b)
+}
+```
+
+模板中的顯式 cast 會在每個具體實例再次檢查；例如不支援的 `str` 到 `i32`
+轉型仍會在 `zy check` 被拒絕，不會變成不安全的 C cast。
 
 泛型 method 與泛型 struct 實例化尚未支援。
 

@@ -532,6 +532,92 @@ fn main() i32 {
         Compiler().check_source(source)
 
 
+def test_v2_discarded_catch_accepts_any_or_no_recovery_value(tmp_path: Path) -> None:
+    source = tmp_path / "discarded_catch.zy"
+    source.write_text(
+        """fn fail_text() str throws Error {
+    stop "text error"
+}
+
+fn fail_void() void throws Error {
+    stop "void error"
+}
+
+fn main() i32 {
+    fail_text() catch err {
+        recover 0
+    }
+    fail_text() catch err {
+        recover
+    }
+    fail_void() catch err {
+        recover "ignored"
+    }
+    return 0
+}
+""",
+        encoding="utf-8",
+    )
+
+    compiler = Compiler()
+    compiler.check_file(source)
+    executable = tmp_path / ("discarded_catch.exe" if sys.platform.startswith("win") else "discarded_catch")
+    compiler.build_file(source, executable)
+    result = subprocess.run([str(executable)], capture_output=True, text=True, check=False)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_v2_value_catch_still_requires_a_matching_recovery_type() -> None:
+    source = """fn fail_text() str throws Error {
+    stop "text error"
+}
+
+fn main() i32 {
+    let text = fail_text() catch err {
+        recover 0
+    }
+    return 0
+}
+"""
+
+    with pytest.raises(CompileError, match="type mismatch: expected `str`, got `i32`"):
+        Compiler().check_source(source)
+
+
+def test_v2_discarded_catch_releases_success_and_recovery_values(tmp_path: Path) -> None:
+    source = tmp_path / "discarded_catch_arc.zy"
+    source.write_text(
+        """fn maybe(found: bool) Box<i32> throws Error {
+    if found {
+        return Box(7)
+    }
+    stop "missing"
+}
+
+fn main() i32 {
+    maybe(true) catch err {
+        recover Box(1)
+    }
+    maybe(false) catch err {
+        recover Box(2)
+    }
+    return 0
+}
+""",
+        encoding="utf-8",
+    )
+
+    compiler = Compiler()
+    generated = compiler.emit_file(source)
+    executable = tmp_path / ("discarded_catch_arc.exe" if sys.platform.startswith("win") else "discarded_catch_arc")
+    compiler.build_file(source, executable)
+    result = subprocess.run([str(executable)], capture_output=True, text=True, check=False)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "zy2_box_i32_release" in generated
+
+
 def test_v2_generic_functions_are_monomorphized() -> None:
     source = """
 fn identity<T>(value: T) T {

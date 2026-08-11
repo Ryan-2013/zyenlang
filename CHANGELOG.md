@@ -28,6 +28,10 @@
 
 ### Changed
 
+- A catch used as a standalone statement may now use bare `recover` or one
+  recovery value of any type because the result is discarded. Value-producing
+  catches remain strongly typed, and discarded managed success/recovery values
+  are released immediately.
 - Generic `TYPEOF__` branches now narrow matching locals during template
   validation, and concrete monomorphizations omit statically impossible
   branches instead of reporting false `List<T>` assignment errors.

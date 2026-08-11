@@ -88,7 +88,8 @@ class Lowerer:
         self.task_scopes: list[dict[str, tuple[bool, SourceSpan]]] = []
         self.current_function: FunctionSymbol | None = None
         self.current_receiver: str | None = None
-        self.catch_result_types: list[Type] = []
+        # None marks a catch expression whose result is discarded as a statement.
+        self.catch_result_types: list[Type | None] = []
         self.require_main = require_main
         self.generic_instances: dict[tuple[str, tuple[Type, ...]], FunctionSymbol] = {}
         self.pending_functions: list[FunctionSymbol] = []
@@ -777,7 +778,10 @@ class Lowerer:
             if not self.catch_result_types:
                 raise self.error("`recover` is only valid inside a catch block", statement.span)
             expected = self.catch_result_types[-1]
-            value = self.lower_value_sequence(statement.values, expected, statement.span)
+            if expected is None:
+                value = self.lower_discarded_value_sequence(statement.values, statement.span)
+            else:
+                value = self.lower_value_sequence(statement.values, expected, statement.span)
             return ir.IRRecover(statement.span, value)
         if isinstance(statement, ast.IfStmt):
             typeof_result: bool | None = None
@@ -860,7 +864,10 @@ class Lowerer:
         if isinstance(statement, ast.SkipStmt):
             return self.skip_local(statement.name, statement.span)
         if isinstance(statement, ast.ExprStmt):
-            return ir.IRExprStmt(statement.span, self.lower_expr(statement.value))
+            return ir.IRExprStmt(
+                statement.span,
+                self.lower_expr(statement.value, discard_result=True),
+            )
         raise self.error("unsupported statement", statement.span)
 
     def lower_assignment(self, statement: ast.AssignStmt) -> ir.IRAssign:
@@ -960,7 +967,24 @@ class Lowerer:
             raise self.error(f"expected one `{expected.display()}` value", span)
         return self.lower_expr(values[0], expected)
 
-    def lower_expr(self, expression: ast.Expr, expected: Type | None = None) -> ir.IRExpr:
+    def lower_discarded_value_sequence(
+        self,
+        values: tuple[ast.Expr, ...],
+        span: SourceSpan,
+    ) -> ir.IRExpr | None:
+        if not values:
+            return None
+        if len(values) == 1:
+            return self.lower_expr(values[0])
+        raise self.error("a discarded catch accepts at most one recover value", span)
+
+    def lower_expr(
+        self,
+        expression: ast.Expr,
+        expected: Type | None = None,
+        *,
+        discard_result: bool = False,
+    ) -> ir.IRExpr:
         if isinstance(expression, ast.IntExpr):
             literal_expected = expected.inner if isinstance(expected, OptionalType) else expected
             typ = literal_expected if literal_expected is not None and is_integer(literal_expected) else PrimitiveType("i32")
@@ -1116,7 +1140,7 @@ class Lowerer:
             if not isinstance(value, ir.IRCall) or value.throws is None:
                 raise self.error("catch must be attached directly to a throwing function or method call", expression.value.span)
             self.push_scope()
-            self.catch_result_types.append(value.typ)
+            self.catch_result_types.append(None if discard_result else value.typ)
             try:
                 error_name = self.define_local(expression.error_name, ERROR, expression.span)
                 handler = self.lower_block(expression.handler, push_scope=False)
@@ -1125,7 +1149,12 @@ class Lowerer:
                 self.pop_scope()
             if not self.block_catch_completes(handler):
                 raise self.error("catch must end with recover, return, or stop on every path", expression.handler.span)
-            return self.coerce(ir.IRCatch(value.typ, expression.span, value, error_name, handler), expected, expression.span)
+            result_type = VOID if discard_result else value.typ
+            return self.coerce(
+                ir.IRCatch(result_type, expression.span, value, error_name, handler),
+                expected,
+                expression.span,
+            )
         if isinstance(expression, ast.SpawnExpr):
             call = self.lower_expr(expression.call)
             if not isinstance(call, ir.IRCall):

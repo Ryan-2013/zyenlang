@@ -728,7 +728,14 @@ class CBackend:
                 return [f"{pad}/* recovered void error */"]
             value = self.emit_expr(statement.value)
             lines = [pad + line for line in value.prelude]
-            if target is None or expected == VOID:
+            if target is None:
+                if self.is_managed(statement.value.typ) and value.owned:
+                    temp = self.temp("discarded_recovery")
+                    lines.append(f"{pad}{self.c_type(statement.value.typ)} {temp} = {value.code};")
+                    lines.append(f"{pad}{self.release_stmt(temp, statement.value.typ)}")
+                else:
+                    lines.append(f"{pad}(void)({value.code});")
+            elif expected == VOID:
                 lines.append(f"{pad}(void)({value.code});")
             else:
                 lines.append(f"{pad}{target} = {self.take_or_retain(value, expected)};")
@@ -1457,6 +1464,10 @@ class CBackend:
             target = self.temp("recovered")
             prelude.append(f"{self.c_type(expression.typ)} {target} = {self.zero_value(expression.typ)};")
             prelude.append(f"if ({result_name}.ok) {{ {target} = {result_name}.value; }} else {{")
+        elif expression.value.typ != VOID and self.is_managed(expression.value.typ):
+            prelude.append(f"if ({result_name}.ok) {{")
+            prelude.append(f"    {self.release_stmt(f'{result_name}.value', expression.value.typ)}")
+            prelude.append("} else {")
         else:
             prelude.append(f"if (!{result_name}.ok) {{")
         prelude.append(f"    zy2_Error {self.ident(expression.error_name)} = {result_name}.error;")

@@ -621,8 +621,30 @@ let value: i32 = require_positive(-1) catch err {
 }
 ```
 
-catch 區塊的每條路徑必須以 `recover`、`return` 或 `stop` 結束。`recover value`
-提供這次呼叫的替代回傳值；void 呼叫使用裸 `recover`。
+catch 區塊的每條路徑必須以 `recover`、`return` 或 `stop` 結束。當 catch 結果會被
+接住時，`recover value` 是這次呼叫的替代回傳值，因此必須符合原函式回傳型別：
+
+```zy
+let text: str = read_text() catch err {
+    recover ""
+}
+```
+
+當整個 catch 單獨作為敘述、結果沒有被接住時，不需要製造原回傳型別。這時可用
+裸 `recover`，也可提供一個任意型別的值；該值會求值一次後立即丟棄：
+
+```zy
+get_error() catch err {
+    io.eprint(err.message)
+    recover 0
+}
+
+fail_void() catch err {
+    recover
+}
+```
+
+丟棄的 managed 成功值或 recover 值仍會由 ARC 立即釋放。
 
 `Error` 提供：
 

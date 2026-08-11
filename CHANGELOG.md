@@ -4,12 +4,22 @@
 
 ### Added
 
+- Typed v2 f-strings with expression interpolation, escaped braces, once-only
+  evaluation, and checked formatting for strings, numeric values, booleans,
+  and optional strings.
+- `FILE__`, a compiler special value containing the absolute path of the `.zy`
+  module where it appears.
+- `std/gui` retained `Application`, `Panel`, `Label`, `Button`, and `Column`
+  structs over the existing cross-platform raylib drawing API.
+- Individual manuals for every implemented v2 standard-library module.
 - v2 function and native-function parameters can declare typed default values.
   Missing positional arguments are filled at the call site, including imported
   functions and a defaulted parameter before a later required parameter.
 
 ### Changed
 
+- Compiler diagnostics, uncaught `stop`, runtime panics, and `io.eprint` use red
+  text on interactive terminals, with `NO_COLOR` and `ZYEN_COLOR` control.
 - Mixed numeric arithmetic now uses deterministic promotion. Integer/float
   expressions such as `i32 + f64` produce `f64`, mixed integers choose the
   smallest lossless fixed-width type, and impossible `i64`/`u64` combinations

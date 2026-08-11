@@ -18,18 +18,18 @@ It does not import or mirror the v0.1 modules.
 
 | Module | Status | Notes |
 |---|---|---|
-| `list` | Implemented | Growable typed ARC List with checked mutation and nested managed elements. |
-| `path` | Implemented | Cross-platform lexical paths plus exists/file/directory queries. |
-| `error` | Implemented | `require` uses `throws Error` and `stop`. |
-| `option` | Implemented | Helpers for the restricted `T | null` optional type. |
-| `io` | Implemented | Public `print(str)` and `eprint(str)` wrappers over runtime I/O primitives. |
-| `process` | Implemented | Facade accepts process values explicitly supplied by `main`. |
-| `thread` | Implemented | Portable sleep, yield, and CPU count; language `spawn` creates OS threads. |
-| `request` | Implemented | WinHTTP on Windows and dynamically loaded libcurl on Linux/macOS. |
-| `server` | Implemented | Blocking HTTP text server with bounded request count and typed errors. |
-| `gui` | Implemented | Cross-platform raylib window, frame, drawing, and event primitives. |
-| `editor` | Implemented | UTF-8 text buffer, selection, file I/O, and source-aware completion facade. |
-| `ptr` | Partial | Compiler-managed `Box<T>` is implemented; `Ref<T>` and `Raw<T>` remain pending. |
+| [`list`](list.md) | Implemented | Growable typed ARC List with checked mutation and nested managed elements. |
+| [`path`](path.md) | Implemented | Cross-platform lexical paths plus exists/file/directory queries. |
+| [`error`](error.md) | Implemented | `require` uses `throws Error` and `stop`. |
+| [`option`](option.md) | Implemented | Helpers for the restricted `T | null` optional type. |
+| [`io`](io.md) | Implemented | Public `print(str)` and red-terminal `eprint(str)` wrappers. |
+| [`process`](process.md) | Implemented | Facade for process arguments plus `FILE__` source-path semantics. |
+| [`thread`](thread.md) | Implemented | Portable sleep, yield, and CPU count; language `spawn` creates OS threads. |
+| [`request`](request.md) | Implemented | WinHTTP on Windows and dynamically loaded libcurl on Linux/macOS. |
+| [`server`](server.md) | Implemented | Blocking HTTP text server with bounded request count and typed errors. |
+| [`gui`](gui.md) | Implemented | Qt-like retained widgets over cross-platform raylib drawing and events. |
+| [`editor`](editor.md) | Implemented | UTF-8 text buffer, selection, file I/O, and source-aware completion facade. |
+| [`ptr`](ptr.md) | Partial | Compiler-managed `Box<T>` is implemented; `Ref<T>` and `Raw<T>` remain pending. |
 | `string` | Pending | Will own allocated UTF-8 strings. |
 | `channel` | Pending | Requires managed generic payload ownership. |
 

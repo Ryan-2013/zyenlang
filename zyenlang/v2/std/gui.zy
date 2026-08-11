@@ -29,12 +29,80 @@ public struct Window {
     public fps: i32 = 60
 }
 
+public struct Application {
+    public window: Window
+}
+
+public struct Panel {
+    public x: i32 = 0
+    public y: i32 = 0
+    public width: i32 = 320
+    public height: i32 = 240
+    public background: str = "#292827"
+    public border: str = "#494744"
+}
+
+public struct Label {
+    public x: i32 = 0
+    public y: i32 = 0
+    public value: str = ""
+    public color: str = "#F4F1EA"
+    public size: i32 = 18
+}
+
+public struct Button {
+    public x: i32 = 0
+    public y: i32 = 0
+    public width: i32 = 180
+    public height: i32 = 44
+    public label: str = "Button"
+    public background: str = "#D97757"
+    public disabled_background: str = "#6E6965"
+    public text_color: str = "#20201F"
+    public border: str = "#F0A084"
+    public font_size: i32 = 18
+    public enabled: bool = true
+    public on_click: fn() void
+}
+
+public struct Column {
+    public x: i32 = 0
+    public y: i32 = 0
+    public width: i32 = 240
+    public row_height: i32 = 44
+    public gap: i32 = 10
+}
+
 public fn window(title: str, width: i32, height: i32) Window {
     return Window{title: title, width: width, height: height}
 }
 
 public fn window_colored(title: str, width: i32, height: i32, background: str) Window {
     return Window{title: title, width: width, height: height, background: background}
+}
+
+public fn application(title: str, width: i32, height: i32) Application {
+    return Application{window: window(title, width, height)}
+}
+
+public fn application_colored(title: str, width: i32, height: i32, background: str) Application {
+    return Application{window: window_colored(title, width, height, background)}
+}
+
+public fn panel(x: i32, y: i32, width: i32, height: i32) Panel {
+    return Panel{x: x, y: y, width: width, height: height}
+}
+
+public fn label(x: i32, y: i32, value: str) Label {
+    return Label{x: x, y: y, value: value}
+}
+
+public fn button(x: i32, y: i32, width: i32, height: i32, label: str, on_click: fn() void) Button {
+    return Button{x: x, y: y, width: width, height: height, label: label, on_click: on_click}
+}
+
+public fn column(x: i32, y: i32, width: i32, row_height: i32, gap: i32) Column {
+    return Column{x: x, y: y, width: width, row_height: row_height, gap: gap}
 }
 
 public fn (window: Window) open() i32 {
@@ -63,6 +131,26 @@ public fn (window: Window) next_event(timeout_ms: i32) str {
 
 public fn (window: Window) close() i32 {
     return session_close()
+}
+
+public fn (app: Application) open() i32 {
+    return app.window.open()
+}
+
+public fn (app: Application) begin_frame() i32 {
+    return app.window.begin_frame()
+}
+
+public fn (app: Application) present() i32 {
+    return app.window.present()
+}
+
+public fn (app: Application) next_event(timeout_ms: i32) str {
+    return app.window.next_event(timeout_ms)
+}
+
+public fn (app: Application) close() i32 {
+    return app.window.close()
 }
 
 public fn pick_file() i32 {
@@ -107,4 +195,56 @@ public fn event_x(event: str) i32 {
 
 public fn event_y(event: str) i32 {
     return event_y_native(event)
+}
+
+public fn (panel_value: Panel) draw() i32 {
+    let border_result = rect(panel_value.x, panel_value.y, panel_value.width, panel_value.height, panel_value.border)
+    if border_result != 0 {
+        return border_result
+    }
+    return rect(panel_value.x + 1, panel_value.y + 1, panel_value.width - 2, panel_value.height - 2, panel_value.background)
+}
+
+public fn (label_value: Label) draw() i32 {
+    return text(label_value.x, label_value.y, label_value.value, label_value.color, label_value.size)
+}
+
+public fn (button_value: Button) contains(x: i32, y: i32) bool {
+    return x >= button_value.x && x < button_value.x + button_value.width && y >= button_value.y && y < button_value.y + button_value.height
+}
+
+public fn (button_value: Button) draw() i32 {
+    let fill = button_value.background
+    if !button_value.enabled {
+        fill = button_value.disabled_background
+    }
+    let border_result = rect(button_value.x, button_value.y, button_value.width, button_value.height, button_value.border)
+    if border_result != 0 {
+        return border_result
+    }
+    let fill_result = rect(button_value.x + 1, button_value.y + 1, button_value.width - 2, button_value.height - 2, fill)
+    if fill_result != 0 {
+        return fill_result
+    }
+    return text(button_value.x + 14, button_value.y + (button_value.height - button_value.font_size) / 2, button_value.label, button_value.text_color, button_value.font_size)
+}
+
+public fn (button_value: Button) handle(event: str) bool {
+    if button_value.enabled && event_kind(event) == 2 && button_value.contains(event_x(event), event_y(event)) {
+        button_value.on_click()
+        return true
+    }
+    return false
+}
+
+public fn (layout: Column) item_y(index: i32) i32 {
+    return layout.y + index * (layout.row_height + layout.gap)
+}
+
+public fn (layout: Column) button_at(index: i32, label_value: str, on_click: fn() void) Button {
+    return button(layout.x, layout.item_y(index), layout.width, layout.row_height, label_value, on_click)
+}
+
+public fn (layout: Column) label_at(index: i32, value: str) Label {
+    return label(layout.x, layout.item_y(index) + (layout.row_height - 18) / 2, value)
 }

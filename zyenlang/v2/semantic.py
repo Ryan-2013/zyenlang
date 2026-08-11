@@ -33,6 +33,7 @@ from .types import (
 
 
 PROCESS_SPECIAL_VALUES = {"GET_ARGS__", "GET_EXE__"}
+COMPILER_SPECIAL_VALUES = PROCESS_SPECIAL_VALUES | {"FILE__"}
 STRUCT_METADATA_FIELDS = {
     "__attributes__": "attributes",
     "__methods__": "methods",
@@ -503,6 +504,8 @@ class Lowerer:
     def define_local(self, name: str, typ: Type, span: SourceSpan) -> None:
         if name in PROCESS_SPECIAL_VALUES:
             raise self.error(f"`{name}` is a reserved process value and cannot be shadowed", span)
+        if name in COMPILER_SPECIAL_VALUES:
+            raise self.error(f"`{name}` is a reserved compiler value and cannot be shadowed", span)
         scope = self.scopes[-1]
         if name in scope:
             raise self.error(f"duplicate local `{name}`", span)
@@ -704,6 +707,24 @@ class Lowerer:
             return self.coerce(ir.IRInt(typ, expression.span, expression.value), expected, expression.span)
         if isinstance(expression, ast.StringExpr):
             return self.coerce(ir.IRString(STR, expression.span, expression.value), expected, expression.span)
+        if isinstance(expression, ast.FStringExpr):
+            parts: list[str | ir.IRExpr] = []
+            for item in expression.parts:
+                if isinstance(item, str):
+                    parts.append(item)
+                    continue
+                value = self.lower_expr(item)
+                if not (
+                    value.typ in {STR, BOOL}
+                    or is_numeric(value.typ)
+                    or (isinstance(value.typ, OptionalType) and value.typ.inner == STR)
+                ):
+                    raise self.error(
+                        f"f-string interpolation does not support `{value.typ.display()}`; use str, numeric, bool, or str | null",
+                        item.span,
+                    )
+                parts.append(value)
+            return self.coerce(ir.IRFString(STR, expression.span, tuple(parts)), expected, expression.span)
         if isinstance(expression, ast.BoolExpr):
             return self.coerce(ir.IRBool(BOOL, expression.span, expression.value), expected, expression.span)
         if isinstance(expression, ast.NullExpr):
@@ -711,6 +732,15 @@ class Lowerer:
                 raise self.error("`null` needs an explicit optional type such as `i32 | null`", expression.span)
             return ir.IRNull(expected, expression.span)
         if isinstance(expression, ast.NameExpr):
+            if expression.name == "FILE__":
+                source_name = expression.span.source_name
+                if not source_name.startswith("<"):
+                    source_name = str(Path(source_name).resolve())
+                return self.coerce(
+                    ir.IRString(STR, expression.span, source_name),
+                    expected,
+                    expression.span,
+                )
             if expression.name == "GET_ARGS__":
                 self.require_main_process_value(expression.name, expression.span)
                 args_type = NamedType("List", (STR,))

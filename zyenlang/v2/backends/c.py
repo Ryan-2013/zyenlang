@@ -113,6 +113,10 @@ class CBackend:
                 expression(value.task)
             elif isinstance(value, ir.IROptionalSome):
                 expression(value.value)
+            elif isinstance(value, ir.IRFString):
+                for item in value.parts:
+                    if isinstance(item, ir.IRExpr):
+                        expression(item)
             elif isinstance(value, ir.IRUnary):
                 expression(value.operand)
             elif isinstance(value, ir.IRBinary):
@@ -207,6 +211,10 @@ class CBackend:
             add(value.typ)
             if isinstance(value, ir.IROptionalSome):
                 expression(value.value)
+            elif isinstance(value, ir.IRFString):
+                for item in value.parts:
+                    if isinstance(item, ir.IRExpr):
+                        expression(item)
             elif isinstance(value, ir.IRUnary):
                 expression(value.operand)
             elif isinstance(value, ir.IRBinary):
@@ -746,6 +754,8 @@ class CBackend:
             return CExpr(str(expression.value), [])
         if isinstance(expression, ir.IRString):
             return CExpr(json.dumps(expression.value), [])
+        if isinstance(expression, ir.IRFString):
+            return self.emit_fstring(expression)
         if isinstance(expression, ir.IRBool):
             return CExpr("true" if expression.value else "false", [])
         if isinstance(expression, ir.IRNull):
@@ -911,6 +921,37 @@ class CBackend:
         if expression.typ == BOOL and is_numeric(expression.value.typ):
             return CExpr(f"(({value.code}) != 0)", value.prelude)
         return CExpr(f"(({self.c_type(expression.typ)})({value.code}))", value.prelude)
+
+    def emit_fstring(self, expression: ir.IRFString) -> CExpr:
+        result = self.temp("fstring")
+        prelude = [f"char* {result} = zy2_format_begin();"]
+        for item in expression.parts:
+            if isinstance(item, str):
+                if item:
+                    prelude.append(f"zy2_format_append({result}, {json.dumps(item)});")
+                continue
+            value = self.emit_expr(item)
+            prelude.extend(value.prelude)
+            if item.typ == STR:
+                prelude.append(f"zy2_format_append({result}, {value.code});")
+            elif item.typ == BOOL:
+                prelude.append(f"zy2_format_append_bool({result}, {value.code});")
+            elif is_float(item.typ):
+                precision = 9 if item.typ == PrimitiveType("f32") else 17
+                prelude.append(f"zy2_format_append_f64({result}, (double)({value.code}), {precision});")
+            elif is_signed_integer(item.typ):
+                prelude.append(f"zy2_format_append_i64({result}, (int64_t)({value.code}));")
+            elif is_unsigned_integer(item.typ):
+                prelude.append(f"zy2_format_append_u64({result}, (uint64_t)({value.code}));")
+            elif isinstance(item.typ, OptionalType) and item.typ.inner == STR:
+                optional = self.temp("fstring_optional")
+                prelude.append(f"{self.c_type(item.typ)} {optional} = {value.code};")
+                prelude.append(
+                    f"zy2_format_append({result}, {optional}.has_value ? {optional}.value : \"null\");"
+                )
+            else:
+                raise ValueError(f"unsupported f-string IR type `{item.typ.display()}`")
+        return CExpr(result, prelude)
 
     def emit_binary(self, expression: ir.IRBinary) -> CExpr:
         if expression.operator in {"==", "!="} and (

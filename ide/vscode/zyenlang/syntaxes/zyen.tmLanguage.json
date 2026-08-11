@@ -192,7 +192,7 @@
       "patterns": [
         { "name": "constant.language.boolean.zyen", "match": "\\b(true|false)\\b" },
         { "name": "constant.language.null.zyen", "match": "\\bnull\\b" },
-        { "name": "constant.language.process.zyen", "match": "\\b(GET_ARGS__|GET_EXE__)\\b" }
+        { "name": "constant.language.compiler.zyen", "match": "\\b(FILE__|GET_ARGS__|GET_EXE__)\\b" }
       ]
     },
     "numbers": {

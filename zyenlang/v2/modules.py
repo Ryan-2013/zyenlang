@@ -224,6 +224,11 @@ def namespace_program(program: ast.Program, namespace: str, import_aliases: set[
             return ast.UnaryExpr(node.span, node.operator, expression(node.operand))
         if isinstance(node, ast.BinaryExpr):
             return ast.BinaryExpr(node.span, expression(node.left), node.operator, expression(node.right))
+        if isinstance(node, ast.FStringExpr):
+            return ast.FStringExpr(
+                node.span,
+                tuple(expression(item) if isinstance(item, ast.Expr) else item for item in node.parts),
+            )
         if isinstance(node, ast.FieldExpr):
             return ast.FieldExpr(node.span, expression(node.receiver), node.name)
         if isinstance(node, ast.IndexExpr):

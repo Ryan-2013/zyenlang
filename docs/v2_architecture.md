@@ -46,7 +46,7 @@ same checked IR that the future LLVM backend will consume.
 - standard, locked package, and relative module loading;
 - separate debug (`-O0`) and release (`-O2`) C builds;
 - a backend protocol and explicit LLVM backend boundary.
-- process special values `GET_ARGS__` and `GET_EXE__`;
+- process special values `GET_ARGS__` and `GET_EXE__`, plus per-module `FILE__`;
 - structured native C declarations with checked symbols, sources, and links;
 - `while`, direct assignment, `break`, and `continue`;
 - linear `Task<T>` values using `spawn call()` and exactly-once `await task`.
@@ -138,27 +138,31 @@ were ordinary local variables:
 ```zy
 let args: List<str> = GET_ARGS__
 let executable: str = GET_EXE__
+let source_file: str = FILE__
 ```
 
 `GET_ARGS__` contains only user arguments, so the executable name is excluded.
 `GET_EXE__` contains `argv[0]`. Both values borrow process-owned memory and stay
 valid for the complete program lifetime. They are reserved and cannot be
 shadowed by local declarations, and may appear only inside the root `main`.
-Helper functions receive them through ordinary parameters. Compiler special
+Helper functions receive them through ordinary parameters. `FILE__` is a
+compile-time borrowed string containing the absolute path of the module where
+the expression appears; it remains valid in every function. Compiler special
 words are uppercase and end in `__`, making them visually distinct from
-variables and ordinary functions. `TYPEOF__` is compile-time-only and remains
-valid in every function.
+variables and ordinary functions. `TYPEOF__` is compile-time-only and also
+remains valid in every function.
 
 `std/process` receives no exception to that rule. Its explicit facade packages
 values supplied by `main`:
 
 ```zy
-let process_context = process.context(GET_ARGS__, GET_EXE__)
+let args = process.args(GET_ARGS__)
+let executable = process.executable(GET_EXE__)
 ```
 
-The v2 standard library receives no private native-module privilege. Future
-GUI and HTTP modules must use the same public v2 c_module ABI available to
-third-party packages.
+The v2 standard library receives no private native-module privilege. GUI and
+HTTP modules use the same checked `native source`, `native link`, and `native
+fn` declarations available to third-party packages.
 
 ## Ownership status
 

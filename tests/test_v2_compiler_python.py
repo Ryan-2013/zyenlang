@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 import socket
 import subprocess
@@ -574,10 +575,12 @@ fn main() i32 {
         "option.zy",
         "io.zy",
         "process.zy",
+        "path.zy",
         "thread.zy",
         "request.zy",
         "server.zy",
         "gui.zy",
+        "editor.zy",
     ],
 )
 def test_v2_standard_library_modules_type_check(module_name: str) -> None:
@@ -1112,6 +1115,75 @@ fn main() i32 {
     assert result.stderr.strip() == f"{source.resolve()}:3:5: unhandled test"
 
 
+def test_v2_unhandled_error_is_red_when_color_is_forced(tmp_path: Path) -> None:
+    source = tmp_path / "red_stop.zy"
+    source.write_text(
+        'fn main() i32 throws Error {\n    stop "red stop"\n}\n',
+        encoding="utf-8",
+    )
+    executable = tmp_path / ("red-stop.exe" if sys.platform.startswith("win") else "red-stop")
+    Compiler().build_file(source, executable)
+    environment = os.environ.copy()
+    environment.pop("NO_COLOR", None)
+    environment["ZYEN_COLOR"] = "always"
+    result = subprocess.run(
+        [str(executable)],
+        capture_output=True,
+        text=True,
+        check=False,
+        env=environment,
+    )
+
+    assert result.returncode != 0
+    assert result.stderr.startswith("\x1b[31m")
+    assert "red_stop.zy:2:5: red stop" in result.stderr.replace("\\", "/")
+    assert result.stderr.endswith("\x1b[0m")
+
+
+def test_v2_cli_compile_error_is_red_when_color_is_forced(tmp_path: Path) -> None:
+    source = tmp_path / "red_compile_error.zy"
+    source.write_text("fn main() i32 {\n    return missing\n}\n", encoding="utf-8")
+    environment = os.environ.copy()
+    environment.pop("NO_COLOR", None)
+    environment["ZYEN_COLOR"] = "always"
+    result = subprocess.run(
+        [sys.executable, "-m", "zyenlang.v2", "check", str(source)],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+        env=environment,
+    )
+
+    assert result.returncode == 1
+    assert result.stderr.startswith("\x1b[31m")
+    assert "unknown name `missing`" in result.stderr
+    assert result.stderr.rstrip().endswith("\x1b[0m")
+
+
+def test_v2_eprint_is_red_when_color_is_forced(tmp_path: Path) -> None:
+    source = tmp_path / "red_eprint.zy"
+    source.write_text(
+        'import <std/io> as io\n\nfn main() i32 {\n    io.eprint("warning")\n    return 0\n}\n',
+        encoding="utf-8",
+    )
+    executable = tmp_path / ("red-eprint.exe" if sys.platform.startswith("win") else "red-eprint")
+    Compiler().build_file(source, executable)
+    environment = os.environ.copy()
+    environment.pop("NO_COLOR", None)
+    environment["ZYEN_COLOR"] = "always"
+    result = subprocess.run(
+        [str(executable)],
+        capture_output=True,
+        text=True,
+        check=False,
+        env=environment,
+    )
+
+    assert result.returncode == 0
+    assert result.stderr == "\x1b[31mwarning\n\x1b[0m"
+
+
 def test_v2_compile_error_reports_exact_source_line() -> None:
     source = "fn main() i32 {\n    let value: i8 = 128\n    return 0\n}\n"
 
@@ -1634,6 +1706,139 @@ fn main() i32 {
     result = subprocess.run([str(executable)], capture_output=True, text=True, check=False)
 
     assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_v2_gui_retained_button_layout_and_callback(tmp_path: Path) -> None:
+    source = tmp_path / "gui_widgets.zy"
+    source.write_text(
+        """import <std/gui> as gui
+import <std/io> as io
+
+fn clicked() void {
+    io.print("clicked")
+}
+
+fn main() i32 {
+    let layout = gui.column(20, 30, 180, 44, 8)
+    let button = layout.button_at(2, "Save", clicked)
+    let label = layout.label_at(0, "Settings")
+    if button.y != 134 || label.y != 43 || !button.contains(30, 140) || button.contains(300, 140) {
+        return 1
+    }
+    if !button.handle("release\\t30\\t140") {
+        return 2
+    }
+    if button.handle("release\\t300\\t140") {
+        return 3
+    }
+    return 0
+}
+""",
+        encoding="utf-8",
+    )
+    executable = tmp_path / ("gui-widgets.exe" if sys.platform.startswith("win") else "gui-widgets")
+    Compiler().build_file(source, executable)
+    result = subprocess.run([str(executable)], capture_output=True, text=True, check=False)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert result.stdout.splitlines() == ["clicked"]
+
+
+def test_v2_fstrings_format_typed_values_and_evaluate_once(tmp_path: Path) -> None:
+    source = tmp_path / "fstrings.zy"
+    source.write_text(
+        """import <std/io> as io
+
+fn measured() i32 {
+    io.print("measured once")
+    return 42
+}
+
+fn echo(value: str) str {
+    return value
+}
+
+fn main() i32 {
+    let maybe: str | null = null
+    let value: f64 = (f64)15 / (f64)10
+    io.print(f"answer={measured()}, float={value}, ready={true}, optional={maybe}")
+    io.print(f"literal braces: {{ok}}, nested={echo(\"yes\")}")
+    return 0
+}
+""",
+        encoding="utf-8",
+    )
+    executable = tmp_path / ("fstrings.exe" if sys.platform.startswith("win") else "fstrings")
+    compiler = Compiler()
+    generated = compiler.emit_file(source)
+    compiler.build_file(source, executable)
+    result = subprocess.run([str(executable)], capture_output=True, text=True, check=False)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert result.stdout.splitlines() == [
+        "measured once",
+        "answer=42, float=1.5, ready=true, optional=null",
+        "literal braces: {ok}, nested=yes",
+    ]
+    assert "zy2_format_begin" in generated
+
+
+def test_v2_fstring_rejects_non_stringifiable_struct() -> None:
+    source = """struct Value {
+    public number: i32
+}
+
+fn main() i32 {
+    let value = Value{number: 1}
+    let text: str = f"{value}"
+    return 0
+}
+"""
+    with pytest.raises(CompileError, match="f-string interpolation does not support `Value`"):
+        Compiler().check_source(source)
+
+
+def test_v2_file_special_value_tracks_each_source_module(tmp_path: Path) -> None:
+    module = tmp_path / "location.zy"
+    module.write_text(
+        """public fn file() str {
+    return FILE__
+}
+""",
+        encoding="utf-8",
+    )
+    source = tmp_path / "main.zy"
+    source.write_text(
+        """import "location.zy" as location
+import <std/io> as io
+
+fn main() i32 {
+    io.print(f"{FILE__}|{location.file()}")
+    return 0
+}
+""",
+        encoding="utf-8",
+    )
+    executable = tmp_path / ("file-value.exe" if sys.platform.startswith("win") else "file-value")
+    compiler = Compiler()
+    generated = compiler.emit_file(source)
+    compiler.build_file(source, executable)
+    result = subprocess.run([str(executable)], capture_output=True, text=True, check=False)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    expected = f"{source.resolve()}|{module.resolve()}"
+    assert result.stdout.strip() == expected
+    assert "__zy2_get_file" not in generated
+
+
+def test_v2_file_special_value_cannot_be_shadowed() -> None:
+    source = """fn main() i32 {
+    let FILE__: str = "fake"
+    return 0
+}
+"""
+    with pytest.raises(CompileError, match="reserved compiler value"):
+        Compiler().check_source(source)
 
 
 def test_v2_named_function_values_struct_callbacks_and_call_chains_run(tmp_path: Path) -> None:

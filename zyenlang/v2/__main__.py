@@ -7,7 +7,7 @@ import sys
 
 from . import __version__
 from .compiler import Compiler, CompilerOptions
-from .diagnostics import CompileError
+from .diagnostics import CompileError, render_error
 from .modules import MAX_SOURCE_BYTES
 from .package_manager import PackageError, configure_parser as configure_package_parser, handle_command as handle_package_command
 
@@ -57,7 +57,7 @@ def main(argv: list[str] | None = None) -> int:
         try:
             return handle_package_command(args)
         except PackageError as exc:
-            print(f"zy2 pkg: {exc}", file=sys.stderr)
+            print(render_error(f"zy2 pkg: {exc}", sys.stderr), file=sys.stderr)
             return 2
     compiler = Compiler(
         CompilerOptions(
@@ -80,10 +80,10 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "run":
             return compiler.run_file(args.input)
     except CompileError as exc:
-        print(exc, file=sys.stderr)
+        print(render_error(exc, sys.stderr), file=sys.stderr)
         return 1
     except (FileNotFoundError, subprocess.CalledProcessError) as exc:
-        print(f"zy2: {exc}", file=sys.stderr)
+        print(render_error(f"zy2: {exc}", sys.stderr), file=sys.stderr)
         return 2
     return 2
 

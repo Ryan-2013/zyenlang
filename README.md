@@ -67,6 +67,7 @@ zy build main.zy -o main.c
 ZyenLang 0.2 currently provides:
 
 - fixed-width integers, floats, `bool`, `str`, and explicit types;
+- typed f-strings such as `f"answer={value}"` with once-only interpolation;
 - inferred or typed `let` declarations with newline-terminated statements;
 - structs with defaults, public/private fields, and receiver methods;
 - named top-level function values, checked indirect calls, and struct callback fields;
@@ -76,7 +77,7 @@ ZyenLang 0.2 currently provides:
 - `throws Error`, `stop`, `catch`, and `recover`;
 - `while`, assignment, `break`, and `continue`;
 - linear `Task<T>` values with `spawn` and exactly-once `await`;
-- `TYPEOF__ value Type` compile-time checks;
+- `TYPEOF__(value, Type)` compile-time checks and per-module `FILE__` paths;
 - standard, package, and relative modules plus checked native C declarations.
 
 See [the v0.2 architecture](docs/v2_architecture.md),
@@ -104,7 +105,8 @@ and current v1 limits.
 
 The v0.2 standard library includes typed list/error/option helpers, process
 arguments, OS threads, HTTP client and server modules, and a cross-platform GUI
-backend. Every module uses the same import mechanism as third-party modules.
+backend with retained `Application`, `Panel`, `Label`, `Button`, and `Column`
+widgets. Every module uses the same import mechanism as third-party modules.
 
 ```zy
 import <std/request> as request

@@ -9,11 +9,98 @@
 #include <stdlib.h>
 #include <string.h>
 
+#ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#include <io.h>
+#else
+#include <unistd.h>
+#endif
+
 #if defined(__GNUC__) || defined(__clang__)
 #define ZY2_MAYBE_UNUSED __attribute__((unused))
 #else
 #define ZY2_MAYBE_UNUSED
 #endif
+
+#define ZY2_FORMAT_BUFFER_COUNT 16u
+#define ZY2_FORMAT_BUFFER_SIZE 4096u
+
+static _Thread_local char zy2_format_buffers[ZY2_FORMAT_BUFFER_COUNT][ZY2_FORMAT_BUFFER_SIZE];
+static _Thread_local unsigned int zy2_format_buffer_index;
+
+static inline bool zy2_stderr_color_enabled(void) {
+    const char* setting;
+    if (getenv("NO_COLOR") != NULL) return false;
+    setting = getenv("ZYEN_COLOR");
+    if (setting && strcmp(setting, "always") == 0) return true;
+    if (setting && strcmp(setting, "never") == 0) return false;
+#ifdef _WIN32
+    if (!_isatty(2)) return false;
+    {
+        HANDLE handle = GetStdHandle(STD_ERROR_HANDLE);
+        DWORD mode = 0;
+        if (handle != INVALID_HANDLE_VALUE && GetConsoleMode(handle, &mode)) {
+            SetConsoleMode(handle, mode | ENABLE_VIRTUAL_TERMINAL_PROCESSING);
+        }
+    }
+    return true;
+#else
+    return isatty(2) != 0;
+#endif
+}
+
+static inline void zy2_error_begin(void) {
+    if (zy2_stderr_color_enabled()) fputs("\x1b[31m", stderr);
+}
+
+static inline void zy2_error_end(void) {
+    if (zy2_stderr_color_enabled()) fputs("\x1b[0m", stderr);
+}
+
+static inline char* zy2_format_begin(void) {
+    char* buffer = zy2_format_buffers[zy2_format_buffer_index++ % ZY2_FORMAT_BUFFER_COUNT];
+    buffer[0] = '\0';
+    return buffer;
+}
+
+static inline void zy2_format_append(char* buffer, const char* value) {
+    size_t used;
+    size_t available;
+    size_t length;
+    if (!buffer || !value) return;
+    used = strlen(buffer);
+    if (used >= ZY2_FORMAT_BUFFER_SIZE - 1u) return;
+    available = ZY2_FORMAT_BUFFER_SIZE - used - 1u;
+    length = strlen(value);
+    if (length > available) length = available;
+    memcpy(buffer + used, value, length);
+    buffer[used + length] = '\0';
+}
+
+static inline void zy2_format_append_i64(char* buffer, int64_t value) {
+    char text[64];
+    snprintf(text, sizeof(text), "%lld", (long long)value);
+    zy2_format_append(buffer, text);
+}
+
+static inline void zy2_format_append_u64(char* buffer, uint64_t value) {
+    char text[64];
+    snprintf(text, sizeof(text), "%llu", (unsigned long long)value);
+    zy2_format_append(buffer, text);
+}
+
+static inline void zy2_format_append_f64(char* buffer, double value, int precision) {
+    char text[64];
+    snprintf(text, sizeof(text), "%.*g", precision, value);
+    zy2_format_append(buffer, text);
+}
+
+static inline void zy2_format_append_bool(char* buffer, bool value) {
+    zy2_format_append(buffer, value ? "true" : "false");
+}
 
 typedef void (*zy2_ArcDrop)(void* payload);
 
@@ -26,7 +113,9 @@ typedef struct zy2_ArcControl {
 static atomic_size_t zy2_arc_live_controls = 0;
 
 static inline void zy2_arc_panic(const char* message) {
+    zy2_error_begin();
     fprintf(stderr, "<runtime>:0:0: %s\n", message);
+    zy2_error_end();
     exit(1);
 }
 
@@ -36,6 +125,7 @@ static inline void zy2_panic_at(
     uint32_t column,
     const char* message
 ) {
+    zy2_error_begin();
     fprintf(
         stderr,
         "%s:%u:%u: %s\n",
@@ -44,6 +134,7 @@ static inline void zy2_panic_at(
         (unsigned int)column,
         message
     );
+    zy2_error_end();
     exit(1);
 }
 
@@ -80,7 +171,9 @@ static inline size_t zy2_arc_strong_count(zy2_ArcControl* owner) {
 static inline int zy2_arc_assert_clean(void) {
     size_t live = atomic_load_explicit(&zy2_arc_live_controls, memory_order_relaxed);
     if (live == 0u) return 1;
+    zy2_error_begin();
     fprintf(stderr, "<runtime>:0:0: ARC leak: %zu control block(s) still live\n", live);
+    zy2_error_end();
     return 0;
 }
 
@@ -104,10 +197,13 @@ static inline void zy2_print(const char* value) {
 }
 
 static inline void zy2_eprint(const char* value) {
+    zy2_error_begin();
     fprintf(stderr, "%s\n", value ? value : "null");
+    zy2_error_end();
 }
 
 static inline void zy2_unhandled_error(zy2_Error error) {
+    zy2_error_begin();
     fprintf(
         stderr,
         "%s:%u:%u: %s\n",
@@ -116,6 +212,7 @@ static inline void zy2_unhandled_error(zy2_Error error) {
         error.column,
         error.message ? error.message : "unhandled Error"
     );
+    zy2_error_end();
     exit(1);
 }
 
@@ -145,8 +242,6 @@ static inline bool zy2_compare_i64_u64_ge(int64_t left, uint64_t right) {
 
 #ifdef ZY2_ENABLE_THREADS
 #ifdef _WIN32
-#define WIN32_LEAN_AND_MEAN
-#include <windows.h>
 #else
 #include <pthread.h>
 #endif
@@ -166,8 +261,7 @@ typedef struct zy2_Task {
 } zy2_Task;
 
 static inline void zy2_task_panic(const char* message) {
-    fprintf(stderr, "<runtime>:0:0: %s\n", message);
-    exit(1);
+    zy2_arc_panic(message);
 }
 
 #ifdef _WIN32

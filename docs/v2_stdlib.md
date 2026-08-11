@@ -9,11 +9,16 @@ import <std/process> as process
 
 let args: List<str> = process.args(GET_ARGS__)
 let executable: str = process.executable(GET_EXE__)
+let source_file: str = FILE__
 ```
 
 The special values `GET_ARGS__` and `GET_EXE__` contain borrowed process-lifetime
 data and may appear only inside `main`. The process facade accepts explicitly
 passed values without receiving a compiler privilege.
+
+`FILE__` is the absolute path of the `.zy` module containing the expression.
+Unlike process values, it may be used in any function and resolves separately
+inside imported modules.
 
 `List<T>` is a compiler-specialized built-in generic container, not a standard
 library struct. `List` is the type constructor and `T` is its element type.
@@ -73,16 +78,25 @@ Typed request routing waits for closure callbacks and managed request strings.
 
 ## GUI
 
-`std/gui` provides `Window`, `window`, `line`, `rect`, `circle`, `text`,
-`code_view`, and event parsing. `code_view` renders visible source lines with
-line numbers and ZyenLang syntax highlighting. `Window` methods are `open`,
-`begin_frame`, `present`, `next_event`, and `close`. Rendering uses the bundled
-cross-platform raylib runtime without Python or Tk.
+`std/gui` provides a Qt-like first retained layer with `Application`, `Panel`,
+`Label`, `Button`, and `Column`, plus `Window`, `line`, `rect`, `circle`, `text`,
+`code_view`, and event parsing. Widgets are ordinary typed structs; a `Button`
+stores a checked `fn() void` callback and handles release events. Rendering uses
+the bundled cross-platform raylib runtime without Python or Tk.
 
 See [`zyenlang/v2/std/gui.md`](../zyenlang/v2/std/gui.md) for the complete
 window lifecycle, drawing API, event format, and runnable examples. User
-widgets can store a named top-level function in a `fn(P...) R` struct field;
-`examples/v2_gui_button.zy` demonstrates a checked button callback.
+`examples/v2_gui_button.zy` demonstrates the retained layout and checked button
+callback.
+
+## Module manuals
+
+Each shipped module has its contract beside its source: [`io`](../zyenlang/v2/std/io.md),
+[`error`](../zyenlang/v2/std/error.md), [`option`](../zyenlang/v2/std/option.md),
+[`list`](../zyenlang/v2/std/list.md), [`process`](../zyenlang/v2/std/process.md),
+[`path`](../zyenlang/v2/std/path.md), [`thread`](../zyenlang/v2/std/thread.md),
+[`request`](../zyenlang/v2/std/request.md), [`server`](../zyenlang/v2/std/server.md),
+[`gui`](../zyenlang/v2/std/gui.md), and [`editor`](../zyenlang/v2/std/editor.md).
 
 ## Editor
 

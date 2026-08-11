@@ -79,6 +79,11 @@
     "body": "TYPEOF__(${1:value}, ${2:i32})",
     "description": "Test a value's static type"
   },
+  "Interpolated string": {
+    "prefix": "fstr",
+    "body": "f\"${1:label}={${2:value}}\"",
+    "description": "Format typed values in a string"
+  },
   "List length": {
     "prefix": "LIST_LEN__",
     "body": "LIST_LEN__(${1:list})",
@@ -101,7 +106,7 @@
   },
   "GUI frame loop": {
     "prefix": "gui",
-    "body": ["import <std/gui> as gui", "", "let window: gui.Window = gui.window(\"${1:ZyenLang}\", ${2:960}, ${3:640})", "window.open()", "while true {", "    window.begin_frame()", "    ${0}", "    window.present()", "    if window.next_event(16) == \"close\" {", "        break", "    }", "}", "window.close()"],
-    "description": "Create a cross-platform GUI frame loop"
+    "body": ["import <std/gui> as gui", "", "let app = gui.application_colored(\"${1:ZyenLang}\", ${2:960}, ${3:640}, \"#20201F\")", "app.open()", "while true {", "    app.begin_frame()", "    ${0}", "    app.present()", "    if app.next_event(16) == \"quit\" {", "        break", "    }", "}", "app.close()"],
+    "description": "Create a cross-platform GUI application loop"
   }
 }

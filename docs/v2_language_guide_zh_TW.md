@@ -92,6 +92,24 @@ let floating: f64 = (f64)42
 
 不同數字型別不會隱式互轉。
 
+### f-string
+
+在普通字串前加 `f`，可把型別化 expression 插入字串。每個 expression 只求值一次：
+
+```zy
+let name: str = "ZyenLang"
+let count: i32 = 42
+let ready: bool = true
+io.print(f"{name}: count={count}, ready={ready}")
+io.print(f"literal braces: {{ok}}")
+```
+
+插值支援 `str`、所有數字、`bool` 與 `str | null`。其他 struct、List、Box 必須先
+明確轉成受支援的值，否則 `zy check` 直接報錯。`{{` 和 `}}` 產生普通大括號。
+f-string 結果是 thread-local borrowed `str`，使用 16 個輪替的 4096-byte buffer；
+適合立即輸出或傳給不保存字串的 API，超長結果會截斷。owned string 完成後會取代
+這項暫時的生命週期限制。
+
 ## 4. 變數與賦值
 
 `let` 一定要有初始值，可明寫型別或讓編譯器推斷：
@@ -558,7 +576,9 @@ err.line
 err.column
 ```
 
-未處理錯誤會顯示 `.zy` 來源檔、行、列與訊息，並以非零狀態結束。
+未處理錯誤會顯示 `.zy` 來源檔、行、列與訊息，並以非零狀態結束。互動終端中的
+編譯錯誤、未捕捉 `stop` 與 `io.eprint` 預設為紅色；重新導向時不放 ANSI 色碼。
+可用 `NO_COLOR` 關閉，或以 `ZYEN_COLOR=always|never` 明確控制。
 
 ## 13. Box 與目前的 ARC
 
@@ -590,7 +610,7 @@ Box 使用 C11 atomic ARC。複製、傳參、賦值、回傳，以及正常離�
 全大寫並以 `__` 結尾的名稱由編譯器保留，使用者不能宣告同名變數或函式。
 使用規則只有兩種：
 
-- 不接收輸入的特殊值不加括號，例如 `GET_ARGS__`、`GET_EXE__`。
+- 不接收輸入的特殊值不加括號，例如 `FILE__`、`GET_ARGS__`、`GET_EXE__`。
 - 接收輸入的特殊形式一律使用括號與逗號，例如 `LIST_LEN__(list)`、
   `LIST_PUSH__(list, value)`、`LIST_SET__(list, index, value)`、
   `TYPEOF__(expression, Type)`。
@@ -611,16 +631,21 @@ if TYPEOF__(value, i32) {
 
 它比較靜態型別，不是執行期反射或繼承判斷。
 
-## 15. 命令列參數
+## 15. 命令列與來源路徑
 
 ```zy
 let args: List<str> = GET_ARGS__
 let executable: str = GET_EXE__
+let source_file: str = FILE__
 ```
 
 `GET_ARGS__` 不包含執行檔名稱，`GET_EXE__` 是 `argv[0]`。兩者是保留的特殊值，
 不能被區域變數覆蓋，而且只能直接出現在 `main`。需要交給 helper 時，必須像
 普通資料一樣透過參數傳入。`TYPEOF__` 是純編譯期表達式，不受這項限制。
+
+`FILE__` 是寫下這個表達式的 `.zy` 模組絕對路徑，不是執行檔路徑；它可出現在
+任何函式。匯入模組內的 `FILE__` 會得到該匯入檔自己的路徑，因此可用來定位
+隨模組部署的資源。
 
 ## 16. 執行緒與 Task
 
@@ -712,7 +737,7 @@ private native fn native_add(left: i32, right: i32) i32 = "my_add"
 | `<std/thread>` | `sleep_ms`、`yield_now`、`cpu_count` |
 | `<std/request>` | HTTP GET/POST/PUT/DELETE/download |
 | `<std/server>` | blocking `serve`、`serve_once` |
-| `<std/gui>` | raylib window、frame、line、rect、circle、text、event |
+| `<std/gui>` | `Application`、Panel/Label/Button/Column widget、raylib drawing/event |
 | `<std/editor>` | UTF-8 文件、開啟、儲存、選取、游標、補全狀態 |
 
 `std/gui` 是跨平台 raylib native 模組，不使用 Python 或 Tk。`std/request` 在

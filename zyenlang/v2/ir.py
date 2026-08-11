@@ -23,6 +23,11 @@ class IRString(IRExpr):
 
 
 @dataclass(frozen=True)
+class IRFString(IRExpr):
+    parts: tuple[str | IRExpr, ...]
+
+
+@dataclass(frozen=True)
 class IRBool(IRExpr):
     value: bool
 

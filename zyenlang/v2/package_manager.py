@@ -13,6 +13,8 @@ import sys
 import tempfile
 from typing import Any
 
+from .diagnostics import render_error
+
 try:
     import tomllib
 except ModuleNotFoundError:  # pragma: no cover - Python 3.10 compatibility
@@ -634,7 +636,7 @@ def main(argv: list[str] | None = None, *, prog: str = "zy pkg") -> int:
     try:
         return handle_command(make_parser(prog).parse_args(argv))
     except PackageError as exc:
-        print(f"{prog}: {exc}", file=sys.stderr)
+        print(render_error(f"{prog}: {exc}", sys.stderr), file=sys.stderr)
         return 2
 
 

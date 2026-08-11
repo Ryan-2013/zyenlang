@@ -13,7 +13,7 @@ const TYPES = [
   'u64', 'usize', 'void'
 ];
 
-const SPECIAL_VALUES = ['GET_ARGS__', 'GET_EXE__'];
+const SPECIAL_VALUES = ['FILE__', 'GET_ARGS__', 'GET_EXE__'];
 
 const SPECIAL_FORMS = [
   {
@@ -93,8 +93,14 @@ const BUILTINS = {
     ['serve', 'fn serve(host: str, port: i32, body: str, max_requests: i32) i32 throws Error']
   ],
   gui: [
+    ['application', 'fn application(title: str, width: i32, height: i32) Application'],
+    ['application_colored', 'fn application_colored(title: str, width: i32, height: i32, background: str) Application'],
     ['window', 'fn window(title: str, width: i32, height: i32) Window'],
     ['window_colored', 'fn window_colored(title: str, width: i32, height: i32, background: str) Window'],
+    ['panel', 'fn panel(x: i32, y: i32, width: i32, height: i32) Panel'],
+    ['label', 'fn label(x: i32, y: i32, value: str) Label'],
+    ['button', 'fn button(x: i32, y: i32, width: i32, height: i32, label: str, on_click: fn() void) Button'],
+    ['column', 'fn column(x: i32, y: i32, width: i32, row_height: i32, gap: i32) Column'],
     ['pick_file', 'fn pick_file() i32'],
     ['line', 'fn line(x1: i32, y1: i32, x2: i32, y2: i32, color: str, width: i32) i32'],
     ['rect', 'fn rect(x: i32, y: i32, width: i32, height: i32, color: str) i32'],

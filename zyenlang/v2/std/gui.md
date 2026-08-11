@@ -1,90 +1,92 @@
 # std/gui 使用說明
 
-`std/gui` 是 ZyenLang v2 的跨平台即時繪圖模組。底層使用隨發行版提供的
-raylib，不會啟動 Python 或 Tk。相同的 `.zy` 程式可在 Windows、Linux 與
-macOS 編譯。
+`std/gui` 是 ZyenLang v2 的跨平台 GUI 與繪圖模組。底層使用發行版內的
+raylib native backend，不啟動 Python 或 Tk。Windows、Linux 與 macOS 使用同一套
+ZyenLang API。
 
-## 最小程式
+## Retained widgets
+
+第一層元件包含 `Application`、`Panel`、`Label`、`Button` 與 `Column`。
+元件是普通、強型別的 struct，可以保存、傳參或組合；`draw()` 負責呈現，
+`Button.handle(event)` 負責命中測試並呼叫 `fn() void` callback。
 
 ```zy
 import <std/gui> as gui
-import <std/thread> as thread
+import <std/io> as io
+
+fn clicked() void {
+    io.print("clicked")
+}
 
 fn main() i32 {
-    let window = gui.window_colored("My game", 800, 480, "#20201F")
-    if window.open() != 0 {
+    let app = gui.application_colored("Widgets", 800, 480, "#20201F")
+    if app.open() != 0 {
         return 1
     }
-
-    let running: bool = true
+    let layout = gui.column(40, 48, 220, 54, 14)
+    let heading = layout.label_at(0, "Settings")
+    let save = layout.button_at(1, "Save", clicked)
+    let running = true
     while running {
-        if window.begin_frame() != 0 {
+        if app.begin_frame() != 0 {
             break
         }
-
-        gui.text(40, 32, "Hello ZyenLang", "#F4F1EA", 28)
-        gui.rect(40, 88, 240, 80, "#D97757")
-        gui.line(40, 190, 280, 190, "#7AC7B7", 3)
-        gui.circle(360, 128, 40, "#79A8D8")
-
-        if window.present() != 0 {
+        heading.draw()
+        save.draw()
+        if app.present() != 0 {
             break
         }
-
-        let event: str = window.next_event(0)
+        let event = app.next_event(0)
         if event == "quit" {
             running = false
+        } else if event != "" {
+            save.handle(event)
         }
-        thread.sleep_ms(16)
     }
-
-    return window.close()
+    return app.close()
 }
 ```
 
-執行：
-
-```powershell
-zy run main.zy --release
-```
-
-## Window
-
-建立視窗有兩種方式：
-
-```zy
-let normal = gui.window("title", 800, 480)
-let colored = gui.window_colored("title", 800, 480, "#20201F")
-```
-
-`Window` 的公開欄位是 `title`、`width`、`height`、`background` 與 `fps`。
-方法必須依下列生命週期呼叫：
-
-1. `window.open()` 建立 native 視窗，成功回傳 `0`。
-2. 每一幀先呼叫 `window.begin_frame()`，它也會清成背景色。
-3. 呼叫 `gui.line`、`gui.rect`、`gui.circle` 或 `gui.text` 建立該幀內容。
-4. `window.present()` 顯示完整畫面並收集輸入事件。
-5. `window.next_event(timeout_ms)` 取得下一個事件；沒有事件時回傳空字串。
-6. 離開迴圈後呼叫 `window.close()`。
-
-## 繪圖函式
+工廠函式：
 
 ```text
-gui.line(x1, y1, x2, y2, color, width) i32
-gui.rect(x, y, width, height, color) i32
-gui.circle(x, y, radius, color) i32
-gui.text(x, y, value, color, size) i32
+application(title, width, height) Application
+application_colored(title, width, height, background) Application
+panel(x, y, width, height) Panel
+label(x, y, value) Label
+button(x, y, width, height, label, on_click) Button
+column(x, y, width, row_height, gap) Column
 ```
 
-座標與尺寸使用 `i32`，顏色使用 `"#RRGGBB"` 字串。所有繪圖函式成功時
-回傳 `0`。繪圖是 immediate mode：每一幀都要重新送出想顯示的內容。
+`Application` 提供 `open`、`begin_frame`、`present`、`next_event`、`close`。
+`Panel`、`Label`、`Button` 提供 `draw()`；`Button` 另有 `contains(x, y)` 與
+`handle(event)`。`Column.item_y(index)` 計算列位置，`button_at` 與 `label_at`
+建立對齊後的元件。
+
+目前 callback 是已命名的頂層函式，不是 closure；應用程式仍明寫 frame/event
+loop。這保留可預測的每幀成本，也讓遊戲與工具可以混用 retained widget 和即時繪圖。
+
+## Window 與低階繪圖
+
+`window`、`window_colored` 直接建立 `Window`。其生命週期和 `Application`
+相同。每一幀在 `begin_frame()` 與 `present()` 之間呼叫：
+
+```text
+line(x1, y1, x2, y2, color, width) i32
+rect(x, y, width, height, color) i32
+circle(x, y, radius, color) i32
+text(x, y, value, color, size) i32
+```
+
+顏色使用 `"#RRGGBB"`。繪圖函式成功時回傳 `0`。
 
 ## 事件
 
-關閉視窗會產生 `"quit"`。其他事件是以 tab 分隔的字串，例如滑鼠按下、
-移動、拖曳與滾輪。`gui.event_kind(event)` 可辨識座標事件：
+`next_event(timeout_ms)` 回傳 allocation-free 的借用字串；沒有事件時是空字串，
+關閉視窗時是 `"quit"`。其他事件以 tab 分隔，可用 `event_kind`、`event_x`、
+`event_y` 解析。
 
-| 回傳值 | 事件 |
+| kind | 事件 |
 |---|---|
 | `1` | mouse / ctrl_mouse |
 | `2` | release |
@@ -92,39 +94,8 @@ gui.text(x, y, value, color, size) i32
 | `4` | drag |
 | `5` | wheel |
 
-使用 `gui.event_x(event)` 與 `gui.event_y(event)` 取得座標。鍵盤事件目前提供給
-編輯器層使用；一般遊戲的高階鍵盤、按鈕與資源 API 仍待後續封裝。
+## Editor rendering
 
-## Button callback
-
-GUI 元件可以用 struct 保存具名頂層函式。第一版 callback 不捕捉區域變數：
-
-```zy
-import <std/io> as io
-
-struct Button {
-    public x: i32 = 0
-    public y: i32 = 0
-    public when_click_func: fn() void
-}
-
-fn button_click() void {
-    io.print("clicked")
-}
-
-fn (button: Button) click() void {
-    button.when_click_func()
-}
-
-let button = Button{x: 40, y: 96, when_click_func: button_click}
-```
-
-省略 `when_click_func` 時欄位為空；呼叫空 callback 會顯示 `.zy` 檔案與行列。
-完整的滑鼠命中測試與 frame loop 位於 `examples/v2_gui_button.zy`。
-
-## 編輯器元件
-
-`gui.code_view`、`gui.code_editor` 與 `gui.completion` 是 ZyenLang IDE 使用的
-低階繪圖函式。一般視窗或遊戲不需要呼叫它們。
-
-基本繪圖版本位於 `examples/v2_gui_basic.zy`。
+`code_view`、`code_editor` 與 `completion` 是 IDE 使用的高密度繪圖 API。
+一般應用程式通常不需要直接呼叫。完整範例見
+`examples/v2_gui_basic.zy` 與 `examples/v2_gui_button.zy`。

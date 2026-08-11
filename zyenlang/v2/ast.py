@@ -52,6 +52,11 @@ class StringExpr(Expr):
 
 
 @dataclass(frozen=True)
+class FStringExpr(Expr):
+    parts: tuple[str | Expr, ...] = ()
+
+
+@dataclass(frozen=True)
 class BoolExpr(Expr):
     value: bool
 

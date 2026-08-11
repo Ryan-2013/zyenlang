@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 from . import ast
 from .diagnostics import CompileError, SourceSpan
 from .lexer import Token, lex
@@ -25,6 +27,7 @@ PRECEDENCE = {
 CAST_OPERAND_STARTS = {
     "INT",
     "STRING",
+    "FSTRING",
     "TRUE",
     "FALSE",
     "NULL",
@@ -597,6 +600,8 @@ class Parser:
             return ast.IntExpr(token.span, int(token.value))
         if token := self.match("STRING"):
             return ast.StringExpr(token.span, token.value)
+        if token := self.match("FSTRING"):
+            return self.parse_fstring(token)
         if token := self.match("TRUE", "FALSE"):
             return ast.BoolExpr(token.span, token.kind == "TRUE")
         if token := self.match("NULL"):
@@ -658,6 +663,82 @@ class Parser:
             self.expect("]", "expected `]` after list literal")
             return ast.ListExpr(token.span, tuple(items))
         raise CompileError("expected an expression", self.current.span, self.source_name)
+
+    def parse_fstring(self, token: Token) -> ast.FStringExpr:
+        raw = token.value
+        parts: list[str | ast.Expr] = []
+        text: list[str] = []
+        index = 0
+
+        def flush_text() -> None:
+            if not text:
+                return
+            encoded = '"' + "".join(text) + '"'
+            try:
+                parts.append(json.loads(encoded))
+            except json.JSONDecodeError as exc:
+                raise CompileError(f"invalid f-string escape: {exc.msg}", token.span, self.source_name) from exc
+            text.clear()
+
+        while index < len(raw):
+            if raw.startswith("{{", index):
+                text.append("{")
+                index += 2
+                continue
+            if raw.startswith("}}", index):
+                text.append("}")
+                index += 2
+                continue
+            if raw[index] != "{":
+                text.append(raw[index])
+                index += 1
+                continue
+
+            flush_text()
+            expression_start = index + 1
+            index = expression_start
+            depth = 1
+            in_string = False
+            escaped = False
+            while index < len(raw) and depth > 0:
+                current = raw[index]
+                if in_string:
+                    if current == '"' and not escaped:
+                        in_string = False
+                    escaped = current == "\\" and not escaped
+                    if current != "\\":
+                        escaped = False
+                elif current == '"':
+                    in_string = True
+                elif current == "{":
+                    depth += 1
+                elif current == "}":
+                    depth -= 1
+                    if depth == 0:
+                        break
+                index += 1
+            expression_source = raw[expression_start:index]
+            if not expression_source.strip():
+                raise CompileError("f-string interpolation cannot be empty", token.span, self.source_name)
+            nested_tokens = lex(expression_source, self.source_name)
+            column_base = token.span.column + 2 + expression_start
+            nested_tokens = [
+                Token(
+                    item.kind,
+                    item.value,
+                    SourceSpan(token.span.line, column_base + item.span.column - 1, self.source_name),
+                )
+                for item in nested_tokens
+            ]
+            nested = Parser(nested_tokens, self.source_name)
+            value = nested.parse_expression()
+            nested.skip_newlines()
+            if not nested.at("EOF"):
+                raise CompileError("unexpected token in f-string interpolation", nested.current.span, self.source_name)
+            parts.append(value)
+            index += 1
+        flush_text()
+        return ast.FStringExpr(token.span, tuple(parts))
 
     def looks_like_generic_struct_literal(self) -> bool:
         if not self.at("<"):

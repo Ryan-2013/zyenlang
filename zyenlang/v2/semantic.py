@@ -98,6 +98,7 @@ class Lowerer:
         self.collect_struct_names()
         self.collect_struct_fields()
         self.validate_struct_layouts()
+        self.validate_managed_struct_cycles()
         self.collect_functions()
 
         lowered_structs = tuple(self.lower_struct(symbol) for symbol in self.structs.values() if not symbol.type_params)
@@ -228,14 +229,12 @@ class Lowerer:
                         "Box<T> fields require managed aggregate destructors and are not enabled yet",
                         field.span,
                     )
-                if self.contains_list(typ):
-                    raise self.error(
-                        "List<T> fields require managed aggregate destructors and are not enabled yet",
-                        field.span,
-                    )
                 if is_task(typ):
                     raise self.error("Task<T> is linear and cannot be stored in a struct field", field.span)
                 symbol.fields[field.name] = FieldSymbol(field.name, typ, field.visibility, field)
+        for symbol in self.structs.values():
+            for field in symbol.fields.values():
+                self.validate_box_position(field.typ, field.node.span, "struct field")
 
     def validate_struct_layouts(self) -> None:
         graph: dict[str, list[tuple[str, ast.FieldDef]]] = {name: [] for name in self.structs}
@@ -267,6 +266,56 @@ class Lowerer:
 
         for name in graph:
             visit(name)
+
+    def validate_managed_struct_cycles(self) -> None:
+        graph: dict[str, list[tuple[str, ast.FieldDef]]] = {name: [] for name in self.structs}
+        for symbol in self.structs.values():
+            for field in symbol.fields.values():
+                for dependency in self.struct_dependencies_anywhere(field.typ):
+                    graph[symbol.name].append((dependency, field.node))
+
+        visiting: list[str] = []
+        complete: set[str] = set()
+
+        def visit(name: str) -> None:
+            if name in complete:
+                return
+            visiting.append(name)
+            for dependency, field in graph[name]:
+                if dependency in visiting:
+                    start = visiting.index(dependency)
+                    cycle = visiting[start:] + [dependency]
+                    raise self.error(
+                        "recursive managed struct ownership: "
+                        + " -> ".join(cycle)
+                        + "; self-referential List fields are not enabled yet",
+                        field.span,
+                    )
+                visit(dependency)
+            visiting.pop()
+            complete.add(name)
+
+        for name in graph:
+            visit(name)
+
+    def struct_dependencies_anywhere(self, typ: Type) -> tuple[str, ...]:
+        if isinstance(typ, FunctionType):
+            return ()
+        if isinstance(typ, NamedType):
+            if typ.name in self.structs:
+                return (typ.name,)
+            found: list[str] = []
+            for arg in typ.args:
+                found.extend(self.struct_dependencies_anywhere(arg))
+            return tuple(found)
+        if isinstance(typ, TupleType):
+            found = []
+            for item in typ.items:
+                found.extend(self.struct_dependencies_anywhere(item))
+            return tuple(found)
+        if isinstance(typ, OptionalType):
+            return self.struct_dependencies_anywhere(typ.inner)
+        return ()
 
     def by_value_struct_dependencies(self, typ: Type) -> tuple[str, ...]:
         if isinstance(typ, FunctionType):
@@ -1179,6 +1228,13 @@ class Lowerer:
         if self.contains_list(typ):
             raise self.error(f"List<T> cannot be nested in a {context} until managed aggregate destructors are enabled", span)
         if not self.contains_box(typ):
+            if isinstance(typ, NamedType) and typ.name in self.structs:
+                return
+            if self.type_requires_management(typ):
+                raise self.error(
+                    f"managed value `{typ.display()}` cannot be nested in a {context} until tuple and optional destructors are enabled",
+                    span,
+                )
             return
         if not is_box(typ):
             raise self.error(f"Box<T> cannot be nested in a {context} yet", span)
@@ -1220,6 +1276,11 @@ class Lowerer:
             )
         if isinstance(inner, (OptionalType, TupleType)) or is_list(inner):
             raise self.error(f"Box payload `{inner.display()}` is not supported in the first ARC milestone", span)
+        if self.type_requires_management(inner):
+            raise self.error(
+                f"Box payload `{inner.display()}` contains managed fields and needs a recursive Box destructor",
+                span,
+            )
 
     def validate_list_element(self, element: Type, span: SourceSpan) -> None:
         if is_task(element):
@@ -1296,11 +1357,32 @@ class Lowerer:
             )
         return False
 
+    def type_requires_management(self, typ: Type, visiting: set[str] | None = None) -> bool:
+        if is_box(typ) or is_list(typ):
+            return True
+        if isinstance(typ, NamedType) and typ.name in self.structs:
+            visiting = set() if visiting is None else set(visiting)
+            if typ.name in visiting:
+                return False
+            visiting.add(typ.name)
+            return any(
+                self.type_requires_management(field.typ, visiting)
+                for field in self.structs[typ.name].fields.values()
+            )
+        if isinstance(typ, TupleType):
+            return any(self.type_requires_management(item, visiting) for item in typ.items)
+        if isinstance(typ, OptionalType):
+            return self.type_requires_management(typ.inner, visiting)
+        return False
+
     def require_mutable_list_receiver(self, receiver: ast.Expr, method_name: str) -> None:
-        if not isinstance(receiver, ast.NameExpr):
+        root = receiver
+        while isinstance(root, ast.FieldExpr):
+            root = root.receiver
+        if not isinstance(root, ast.NameExpr):
             operation = method_name if method_name.endswith("__") else f"List.{method_name}"
             raise self.error(
-                f"{operation} requires a local List variable as its receiver",
+                f"{operation} requires a local List variable or local-rooted List field as its receiver",
                 receiver.span,
             )
 

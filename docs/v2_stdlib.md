@@ -37,8 +37,10 @@ alias is visible through the other aliases. The old method-shaped spellings
 remain temporary source-compatibility aliases.
 
 Nested `List<List<T>>` and `List<Box<T>>` recursively retain and release their
-elements. A managed List cannot yet be placed inside a struct, tuple, or
-optional because those aggregate destructors are the next ownership milestone.
+elements. A List may also be a struct field; the containing struct receives
+generated recursive retain/release helpers and can itself be nested or stored
+in another List. Lists inside tuples, optionals, and self-referential managed
+struct graphs remain pending.
 
 ## Paths
 
@@ -83,6 +85,10 @@ Typed request routing waits for closure callbacks and managed request strings.
 `code_view`, and event parsing. Widgets are ordinary typed structs; a `Button`
 stores a checked `fn() void` callback and handles release events. Rendering uses
 the bundled cross-platform raylib runtime without Python or Tk.
+
+`ButtonGroup` demonstrates managed aggregate ownership in the standard library:
+its `buttons: List<Button>` field is recursively retained and released whenever
+the group is copied, assigned, passed, returned, or leaves scope.
 
 See [`zyenlang/v2/std/gui.md`](../zyenlang/v2/std/gui.md) for the complete
 window lifecycle, drawing API, event format, and runnable examples. User

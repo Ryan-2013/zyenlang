@@ -514,9 +514,29 @@ List literal 是 owned storage。`GET_ARGS__` 與 `value.__attributes__` 則先�
 borrowed view；把它存進區域變數後第一次修改會 copy-on-write，不會改動作業系統
 參數或 struct metadata。`List<List<T>>` 與 `List<Box<T>>` 會遞迴 retain/release。
 
-目前 managed List 還不能放進 struct field、tuple 或 optional；這要等通用的
-managed aggregate destructor 完成。`str` 本身仍是 borrowed，因此 List 只保存
-字串位址，不會複製字串內容。
+List 可以直接成為 struct field。含 List 的 struct 也會成為 managed value；
+編譯器會替它產生遞迴 retain/release，套用到複製、整體或欄位賦值、參數、回傳、
+`stop`、`break`、`continue` 與 scope exit：
+
+```zy
+struct Inventory {
+    public items: List<i32> = []
+}
+
+struct Store {
+    public inventory: Inventory = Inventory{}
+}
+
+let store = Store{}
+LIST_PUSH__(store.inventory.items, 10)
+let alias = store
+// alias 與 store 的 items 共用同一份 ARC storage
+```
+
+也支援 `List<Inventory>` 及跨模組 public struct。`Node { children: List<Node> }`
+這類遞迴 managed type 目前會在 `zy check` 明確拒絕；List 放進 tuple 或 optional
+也仍待對應 destructor。`str` 本身仍是 borrowed，因此 List 只保存字串位址，
+不會複製字串內容。完整範例見 `examples/v2_struct_list.zy`。
 
 ## 11. null 與 optional
 
@@ -601,7 +621,7 @@ Box 使用 C11 atomic ARC。複製、傳參、賦值、回傳，以及正常離�
 - Box 可以保存 primitive、借用 `str` 或沒有 managed field 的具體 struct。
 - struct field、List、tuple、optional 或另一個 Box 內不能再放 Box。
 - `Box<str>` 只擁有 Box cell，不擁有底下的字串資料。
-- owned UTF-8 string、managed aggregate destructor、`Ref<T>` 與 `Raw<T>` 尚未完成。
+- owned UTF-8 string、tuple/optional managed destructor、`Ref<T>` 與 `Raw<T>` 尚未完成。
 
 不支援的 managed 組合會在編譯期報錯，不會靜默產生錯誤釋放程式。
 

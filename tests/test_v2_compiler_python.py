@@ -1062,9 +1062,194 @@ def test_v2_dynamic_list_reports_mutation_errors(tmp_path: Path) -> None:
     assert "list_errors.zy:3:5: List index out of range" in result.stderr.replace("\\", "/")
 
 
-def test_v2_list_field_waits_for_managed_aggregate_destructors() -> None:
-    source = """struct Bad {
+def test_v2_list_fields_retain_release_copy_assign_return_and_nest(tmp_path: Path) -> None:
+    source = tmp_path / "managed_struct_lists.zy"
+    source.write_text(
+        """struct Bag {
+    values: List<i32> = []
+}
+
+struct Shelf {
+    bag: Bag = Bag{}
+}
+
+struct EmptyBag {
     values: List<i32>
+}
+
+fn make_bag() Bag {
+    let bag = Bag{}
+    bag.values.push(10)
+    return bag
+}
+
+fn count(bag: Bag) usize {
+    return bag.values.len()
+}
+
+fn make_values() List<i32> {
+    return make_bag().values
+}
+
+fn identity<T>(value: T) T {
+    return value
+}
+
+fn pass_bag(value: Bag) Bag {
+    return value
+}
+
+fn main() i32 {
+    let first = make_bag()
+    first.values.push(20)
+    let second = first
+    LIST_SET__(second.values, 0, 42) catch err {
+        return 10
+    }
+    first = Bag{values: [7, 8, 9]}
+    if count(second) != 2 {
+        return 11
+    }
+    let first_value = second.values.get(0) catch err {
+        return 12
+    }
+    if first_value != 42 {
+        return 13
+    }
+    let shelves: List<Shelf> = [Shelf{bag: second}]
+    let pulled = shelves.get(0) catch err {
+        return 14
+    }
+    if pulled.bag.values.len() != 2 {
+        return 15
+    }
+    let extracted = make_values()
+    if extracted.len() != 1 {
+        return 16
+    }
+    let empty = Bag{}
+    if empty.values.len() != 0 {
+        return 17
+    }
+    let generic_copy = identity(second)
+    if generic_copy.values.len() != 2 {
+        return 18
+    }
+    let attributes = make_bag().__attributes__
+    if attributes.len() != 1 {
+        return 19
+    }
+    let callback: fn(Bag) Bag = pass_bag
+    let indirect = callback(make_bag())
+    if indirect.values.len() != 1 {
+        return 20
+    }
+    let source_values: List<i32> = [99]
+    let from_borrowed = Bag{values: source_values}
+    source_values = []
+    if from_borrowed.values.len() != 1 {
+        return 21
+    }
+    let replacement_values: List<i32> = [6, 7]
+    from_borrowed.values = replacement_values
+    replacement_values = []
+    if from_borrowed.values.len() != 2 {
+        return 22
+    }
+    let zero_initialized = EmptyBag{}
+    LIST_PUSH__(zero_initialized.values, 4)
+    if zero_initialized.values.len() != 1 {
+        return 23
+    }
+    return 0
+}
+""",
+        encoding="utf-8",
+    )
+    compiler = Compiler()
+    generated = compiler.emit_file(source)
+    executable = tmp_path / ("managed-struct-lists.exe" if sys.platform.startswith("win") else "managed-struct-lists")
+    compiler.build_file(source, executable)
+    result = subprocess.run([str(executable)], capture_output=True, text=True, check=False)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "zy2_struct_Bag_retain" in generated
+    assert "zy2_struct_Bag_release" in generated
+    assert "zy2_struct_Shelf_retain" in generated
+    assert "zy2_struct_Shelf_release" in generated
+
+
+def test_v2_managed_struct_lists_clean_up_on_loop_control(tmp_path: Path) -> None:
+    source = tmp_path / "managed_struct_loop.zy"
+    source.write_text(
+        """struct Batch {
+    values: List<i32> = []
+}
+
+fn main() i32 {
+    let iteration = 0
+    while iteration < 3 {
+        iteration += 1
+        let batch = Batch{values: [iteration]}
+        if iteration == 1 {
+            continue
+        }
+        if iteration == 2 {
+            break
+        }
+        if batch.values.len() == 0 {
+            return 1
+        }
+    }
+    return 0
+}
+""",
+        encoding="utf-8",
+    )
+    executable = tmp_path / ("managed-struct-loop.exe" if sys.platform.startswith("win") else "managed-struct-loop")
+    Compiler().build_file(source, executable)
+    result = subprocess.run([str(executable)], capture_output=True, text=True, check=False)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_v2_managed_struct_list_fields_cross_stop_and_recover(tmp_path: Path) -> None:
+    source = tmp_path / "managed_struct_error.zy"
+    source.write_text(
+        """struct Batch {
+    values: List<i32> = []
+}
+
+fn checked(ok: bool) Batch throws Error {
+    let batch = Batch{values: [1, 2]}
+    if !ok {
+        stop "recovered"
+    }
+    return batch
+}
+
+fn main() i32 {
+    let batch = checked(false) catch err {
+        recover Batch{values: [7]}
+    }
+    if batch.values.len() != 1 {
+        return 1
+    }
+    return 0
+}
+""",
+        encoding="utf-8",
+    )
+    executable = tmp_path / ("managed-struct-error.exe" if sys.platform.startswith("win") else "managed-struct-error")
+    Compiler().build_file(source, executable)
+    result = subprocess.run([str(executable)], capture_output=True, text=True, check=False)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_v2_recursive_list_struct_ownership_is_rejected_during_check() -> None:
+    source = """struct Node {
+    children: List<Node> = []
 }
 
 fn main() i32 {
@@ -1072,8 +1257,48 @@ fn main() i32 {
 }
 """
 
-    with pytest.raises(CompileError, match="List<T> fields require managed aggregate destructors"):
+    with pytest.raises(CompileError, match="recursive managed struct ownership: Node -> Node"):
         Compiler().check_source(source)
+
+
+def test_v2_imported_struct_with_list_field_keeps_ownership(tmp_path: Path) -> None:
+    model = tmp_path / "model.zy"
+    model.write_text(
+        """public struct Playlist {
+    public tracks: List<i32> = []
+}
+
+public fn make() Playlist {
+    return Playlist{tracks: [3, 5, 8]}
+}
+""",
+        encoding="utf-8",
+    )
+    source = tmp_path / "main.zy"
+    source.write_text(
+        """import "model.zy" as model
+
+fn main() i32 {
+    let first = model.make()
+    let second = first
+    first.tracks.clear()
+    if second.tracks.len() != 0 {
+        return 1
+    }
+    second.tracks.push(13)
+    if first.tracks.len() != 1 {
+        return 2
+    }
+    return 0
+}
+""",
+        encoding="utf-8",
+    )
+    executable = tmp_path / ("imported-managed-struct.exe" if sys.platform.startswith("win") else "imported-managed-struct")
+    Compiler().build_file(source, executable)
+    result = subprocess.run([str(executable)], capture_output=True, text=True, check=False)
+
+    assert result.returncode == 0, result.stdout + result.stderr
 
 
 def test_v2_semicolons_are_rejected() -> None:
@@ -1725,10 +1950,21 @@ fn main() i32 {
     if button.y != 134 || label.y != 43 || !button.contains(30, 140) || button.contains(300, 140) {
         return 1
     }
-    if !button.handle("release\\t30\\t140") {
+    let group = gui.button_group()
+    group.add(button)
+    if group.buttons.len() != 1 {
         return 2
     }
-    if button.handle("release\\t300\\t140") {
+    let handled = group.handle("release\\t30\\t140") catch err {
+        return 3
+    }
+    if !handled {
+        return 4
+    }
+    let missed = group.handle("release\\t300\\t140") catch err {
+        return 5
+    }
+    if missed {
         return 3
     }
     return 0

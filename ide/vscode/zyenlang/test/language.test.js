@@ -58,6 +58,7 @@ assert.deepStrictEqual(language.importPathAt('import <std/pa', 14), { kind: 'std
 assert.strictEqual(language.importPathAt('let value = 1', 13), null);
 assert(language.BUILTINS.path.some(([name]) => name === 'join'));
 assert(language.BUILTINS.gui.some(([name]) => name === 'button'));
+assert(language.BUILTINS.gui.some(([name]) => name === 'button_group'));
 
 const masked = language.parseDocument('fn main() i32 {\n    let value = 1 // value in comment\n    let text = "value in text"\n}', 'masked.zy');
 assert(masked.maskedLines[1].includes('let value'));

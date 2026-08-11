@@ -24,6 +24,27 @@ state. Copies share ARC storage and
 therefore observe each other's mutations. Nested Lists and Box elements are
 retained and released recursively.
 
+Lists may be stored directly in struct fields. A struct containing a List is
+itself managed: copies retain every managed field, replacement releases the old
+fields, and parameters, returns, `stop`, `break`, `continue`, and scope exit all
+run recursive cleanup.
+
+```zy
+struct Inventory {
+    public items: List<i32> = []
+}
+
+let inventory = Inventory{}
+LIST_PUSH__(inventory.items, 10)
+let alias = inventory
+// Both values share the same ARC List storage.
+```
+
+Nested structs and `List<StructWithList>` are also supported. A recursive type
+such as `Node { children: List<Node> }` is still rejected during `zy check` until
+recursive managed type helpers are emitted in separate declaration/body phases.
+Lists inside tuples or optionals remain disabled for the same reason.
+
 The old `.len()`, `.get(index)`, `.push(value)`, and `.set(index, value)`
 spellings remain compatibility aliases for existing source code. New source
 should use the uppercase compiler forms and index syntax.

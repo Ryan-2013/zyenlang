@@ -6,9 +6,11 @@ ZyenLang API。
 
 ## Retained widgets
 
-第一層元件包含 `Application`、`Panel`、`Label`、`Button` 與 `Column`。
+第一層元件包含 `Application`、`Panel`、`Label`、`Button`、`ButtonGroup` 與 `Column`。
 元件是普通、強型別的 struct，可以保存、傳參或組合；`draw()` 負責呈現，
 `Button.handle(event)` 負責命中測試並呼叫 `fn() void` callback。
+`ButtonGroup` 直接以 `List<Button>` struct field 保存元件，提供 `add`、`draw`、
+`handle`；後兩者因 checked List indexing 而宣告 `throws Error`。
 
 ```zy
 import <std/gui> as gui
@@ -26,13 +28,21 @@ fn main() i32 {
     let layout = gui.column(40, 48, 220, 54, 14)
     let heading = layout.label_at(0, "Settings")
     let save = layout.button_at(1, "Save", clicked)
+    let buttons = gui.button_group()
+    buttons.add(save)
     let running = true
     while running {
         if app.begin_frame() != 0 {
             break
         }
         heading.draw()
-        save.draw()
+        let draw_result = buttons.draw() catch err {
+            io.eprint(err.message)
+            return 2
+        }
+        if draw_result != 0 {
+            return draw_result
+        }
         if app.present() != 0 {
             break
         }
@@ -40,7 +50,10 @@ fn main() i32 {
         if event == "quit" {
             running = false
         } else if event != "" {
-            save.handle(event)
+            let handled = buttons.handle(event) catch err {
+                io.eprint(err.message)
+                return 3
+            }
         }
     }
     return app.close()
@@ -55,6 +68,7 @@ application_colored(title, width, height, background) Application
 panel(x, y, width, height) Panel
 label(x, y, value) Label
 button(x, y, width, height, label, on_click) Button
+button_group() ButtonGroup
 column(x, y, width, row_height, gap) Column
 ```
 

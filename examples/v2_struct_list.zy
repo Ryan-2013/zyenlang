@@ -1,0 +1,27 @@
+import <std/io> as io
+
+struct Inventory {
+    public items: List<i32> = []
+}
+
+struct Store {
+    public inventory: Inventory = Inventory{}
+}
+
+fn make_store() Store {
+    let store = Store{}
+    LIST_PUSH__(store.inventory.items, 10)
+    LIST_PUSH__(store.inventory.items, 20)
+    return store
+}
+
+fn main() i32 {
+    let store = make_store()
+    let alias = store
+    let first = alias.inventory.items[0] catch err {
+        io.eprint(err.message)
+        return 1
+    }
+    io.print(f"items={store.inventory.items.len()}, first={first}")
+    return 0
+}

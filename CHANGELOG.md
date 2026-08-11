@@ -11,6 +11,8 @@
   module where it appears.
 - `std/gui` retained `Application`, `Panel`, `Label`, `Button`, and `Column`
   structs over the existing cross-platform raylib drawing API.
+- List fields in structs, including nested managed structs, managed struct
+  parameters/returns/assignment, `List<StructWithList>`, and GUI `ButtonGroup`.
 - Individual manuals for every implemented v2 standard-library module.
 - v2 function and native-function parameters can declare typed default values.
   Missing positional arguments are filled at the call site, including imported

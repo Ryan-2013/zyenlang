@@ -332,6 +332,25 @@ class CBackend:
                     self.type_lines.append(f"    {self.c_type(field.typ)} {self.ident(field.name)};")
                 self.type_lines.append("};")
                 self.type_lines.append("")
+                if self.is_managed(typ):
+                    name = self.type_name(typ)
+                    self.type_lines.append(f"static inline ZY2_MAYBE_UNUSED {name} {name}_retain({name} value) {{")
+                    for field in struct.fields:
+                        if self.is_managed(field.typ):
+                            field_name = self.ident(field.name)
+                            self.type_lines.append(
+                                f"    value.{field_name} = {self.retain_expr(f'value.{field_name}', field.typ)};"
+                            )
+                    self.type_lines.append("    return value;")
+                    self.type_lines.append("}")
+                    self.type_lines.append(f"static inline ZY2_MAYBE_UNUSED void {name}_release({name} value) {{")
+                    for field in reversed(struct.fields):
+                        if self.is_managed(field.typ):
+                            self.type_lines.append(
+                                f"    {self.release_stmt(f'value.{self.ident(field.name)}', field.typ)}"
+                            )
+                    self.type_lines.append("}")
+                    self.type_lines.append("")
             elif isinstance(typ, FunctionType):
                 for item in (*typ.params, typ.return_type):
                     if isinstance(item, FunctionType):
@@ -777,6 +796,18 @@ class CBackend:
             return self.emit_cast(expression)
         if isinstance(expression, ir.IRField):
             receiver = self.emit_expr(expression.receiver)
+            if receiver.owned:
+                receiver_temp = self.temp("field_receiver")
+                result_temp = self.temp("field_value")
+                prelude = list(receiver.prelude)
+                prelude.append(
+                    f"{self.c_type(expression.receiver.typ)} {receiver_temp} = {receiver.code};"
+                )
+                field_code = f"({receiver_temp}).{self.ident(expression.name)}"
+                field_value = self.retain_expr(field_code, expression.typ)
+                prelude.append(f"{self.c_type(expression.typ)} {result_temp} = {field_value};")
+                prelude.append(self.release_stmt(receiver_temp, expression.receiver.typ))
+                return CExpr(result_temp, prelude, owned=self.is_managed(expression.typ))
             return CExpr(f"({receiver.code}).{self.ident(expression.name)}", receiver.prelude)
         if isinstance(expression, ir.IRFunctionRef):
             return CExpr(expression.target, [])
@@ -859,7 +890,12 @@ class CBackend:
     def emit_struct_metadata(self, expression: ir.IRStructMetadata) -> CExpr:
         receiver = self.emit_expr(expression.receiver)
         prelude = list(receiver.prelude)
-        prelude.append(f"(void)({receiver.code});")
+        if receiver.owned:
+            receiver_temp = self.temp("metadata_receiver")
+            prelude.append(f"{self.c_type(expression.receiver.typ)} {receiver_temp} = {receiver.code};")
+            prelude.append(self.release_stmt(receiver_temp, expression.receiver.typ))
+        else:
+            prelude.append(f"(void)({receiver.code});")
         items = self.struct_metadata_items(expression.struct_name, expression.category)
         if not items:
             return CExpr(f"{self.type_name(expression.typ)}_borrow(NULL, 0)", prelude)
@@ -1015,6 +1051,14 @@ class CBackend:
         comparison = self.equality_code(expression.left.typ, left_temp, right_temp)
         if expression.operator == "!=":
             comparison = f"!({comparison})"
+        if left.owned or right.owned:
+            result = self.temp("equal")
+            prelude.append(f"bool {result} = ({comparison});")
+            if left.owned:
+                prelude.append(self.release_stmt(left_temp, expression.left.typ))
+            if right.owned:
+                prelude.append(self.release_stmt(right_temp, expression.right.typ))
+            return CExpr(result, prelude)
         return CExpr(f"({comparison})", prelude)
 
     def equality_code(self, typ: Type, left: str, right: str) -> str:
@@ -1260,11 +1304,28 @@ class CBackend:
             f"{expression.span.line}, {expression.span.column}, \"attempted to call an empty function value\");"
         )
         args: list[str] = []
+        owned_arg_releases: list[str] = []
         for arg in expression.args:
             value = self.emit_expr(arg)
             prelude.extend(value.prelude)
-            args.append(value.code)
-        return CExpr(f"{callee_temp}({', '.join(args)})", prelude)
+            if self.is_managed(arg.typ) and value.owned:
+                temp = self.temp("indirect_argument")
+                prelude.append(f"{self.c_type(arg.typ)} {temp} = {value.code};")
+                args.append(temp)
+                owned_arg_releases.append(self.release_stmt(temp, arg.typ))
+            else:
+                args.append(value.code)
+        code = f"{callee_temp}({', '.join(args)})"
+        if owned_arg_releases:
+            if expression.typ == VOID:
+                prelude.append(f"(void)({code});")
+                prelude.extend(owned_arg_releases)
+                return CExpr("((void)0)", prelude)
+            result = self.temp("indirect_call")
+            prelude.append(f"{self.c_type(expression.typ)} {result} = {code};")
+            prelude.extend(owned_arg_releases)
+            return CExpr(result, prelude, owned=self.is_managed(expression.typ))
+        return CExpr(code, prelude, owned=self.is_managed(expression.typ))
 
     def finish_throwing_result(
         self,
@@ -1327,12 +1388,18 @@ class CBackend:
     def emit_aggregate(self, typ: Type, values: tuple[ir.IRExpr, ...], names: list[str]) -> CExpr:
         prelude: list[str] = []
         fields: list[str] = []
+        struct_fields = (
+            {field.name: field.typ for field in self.structs[typ.name].fields}
+            if isinstance(typ, NamedType) and typ.name in self.structs
+            else {}
+        )
         for name, item in zip(names, values):
             value = self.emit_expr(item)
             prelude.extend(value.prelude)
-            fields.append(f".{name} = {value.code}")
+            field_type = struct_fields.get(name, item.typ)
+            fields.append(f".{name} = {self.take_or_retain(value, field_type)}")
         body = ", ".join(fields)
-        return CExpr(f"({self.c_type(typ)}){{ {body} }}", prelude)
+        return CExpr(f"({self.c_type(typ)}){{ {body} }}", prelude, owned=self.is_managed(typ))
 
     def emit_list(self, expression: ir.IRList) -> CExpr:
         element = expression.typ.args[0] if isinstance(expression.typ, NamedType) else VOID
@@ -1427,14 +1494,23 @@ class CBackend:
             return "0"
         return f"({self.c_type(typ)}){{0}}"
 
-    @staticmethod
-    def is_managed(typ: Type) -> bool:
-        return is_box(typ) or is_list(typ)
+    def is_managed(self, typ: Type, visiting: set[str] | None = None) -> bool:
+        if is_box(typ) or is_list(typ):
+            return True
+        if isinstance(typ, NamedType) and typ.name in self.structs:
+            visiting = set() if visiting is None else set(visiting)
+            if typ.name in visiting:
+                return False
+            visiting.add(typ.name)
+            return any(self.is_managed(field.typ, visiting) for field in self.structs[typ.name].fields)
+        return False
 
     def retain_expr(self, code: str, typ: Type) -> str:
         if is_box(typ):
             return f"{self.type_name(typ)}_retain({code})"
         if is_list(typ):
+            return f"{self.type_name(typ)}_retain({code})"
+        if isinstance(typ, NamedType) and typ.name in self.structs and self.is_managed(typ):
             return f"{self.type_name(typ)}_retain({code})"
         return code
 
@@ -1442,6 +1518,8 @@ class CBackend:
         if is_box(typ):
             return f"{self.type_name(typ)}_release({code});"
         if is_list(typ):
+            return f"{self.type_name(typ)}_release({code});"
+        if isinstance(typ, NamedType) and typ.name in self.structs and self.is_managed(typ):
             return f"{self.type_name(typ)}_release({code});"
         return f"(void)({code});"
 

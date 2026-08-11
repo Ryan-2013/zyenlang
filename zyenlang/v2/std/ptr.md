@@ -25,6 +25,8 @@ compiler/runtime intrinsics and compile to inline C operations. They do not
 make an external C call per access.
 
 Box payloads are currently limited to primitives, borrowed `str`, and concrete
-structs without managed fields. Managed aggregate destructors must land before
-Box can be nested in another Box, List, tuple, optional, or struct field.
+structs without managed fields. Structs containing List fields now have managed
+destructors, but Box still needs a Box-specific recursive payload destructor
+before it can own those structs or appear in a struct field, tuple, optional,
+or another Box. `List<Box<T>>` is supported for valid unmanaged `T` payloads.
 `std/ptr` remains pending as the future facade for `Ref<T>` and `Raw<T>`.

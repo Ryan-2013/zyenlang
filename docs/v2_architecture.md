@@ -187,8 +187,13 @@ that no ARC control block remains after `main` returns.
 storage containing items, length, and capacity. Owned aliases share mutations.
 Process arguments and struct metadata are borrowed views; their first mutation
 creates owned storage. Nested Lists and Box elements recursively retain and
-release. List values in struct fields, tuples, and optionals remain rejected
-until general managed aggregate destructors exist.
+release. List values may now appear in struct fields through compiler-generated
+struct retain/release helpers. Managed structs can be copied, assigned, passed,
+returned, nested in another struct, or stored as List elements. Lists inside
+tuples and optionals remain rejected.
+Self-referential managed types such as `Node { children: List<Node> }` receive a
+check-time diagnostic until helper declarations and bodies are emitted in two
+phases.
 
 This is deliberately not described as complete general memory management yet.
 `Box<T>` may currently contain a primitive, borrowed `str`, or an unmanaged
@@ -240,7 +245,7 @@ mutable UTF-8 text buffer, and is tested independently of a specific IDE shell.
 
 ## Next implementation order
 
-1. Complete generic struct instantiation and managed aggregate destructors.
+1. Complete generic struct instantiation and recursive managed type cycles.
 2. Add owned UTF-8 strings and checked iteration syntax.
 3. Extend native declarations into the template-driven v2 c_module ABI.
 4. Add closure task arguments, `Channel<T>`, and a coroutine scheduler.

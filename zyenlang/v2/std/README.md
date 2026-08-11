@@ -33,8 +33,8 @@ It does not import or mirror the v0.1 modules.
 | `string` | Pending | Will own allocated UTF-8 strings. |
 | `channel` | Pending | Requires managed generic payload ownership. |
 
-`List<T>` itself is managed, but List fields in structs wait for recursive
-managed aggregate destructors. `request.Response.body` and `.error` are
-thread-local borrowed strings. They
+`List<T>` and structs containing List fields are managed recursively. Lists in
+tuples, optionals, and self-referential managed type graphs remain pending.
+`request.Response.body` and `.error` are thread-local borrowed strings. They
 remain valid until the next request on the same thread. The ownership pass will
 upgrade them to owned strings without changing the public fields.

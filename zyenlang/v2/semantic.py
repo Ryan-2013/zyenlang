@@ -80,6 +80,7 @@ class Lowerer:
         self.functions: dict[str, FunctionSymbol] = {}
         self.methods: dict[tuple[str, str], FunctionSymbol] = {}
         self.scopes: list[dict[str, Type]] = []
+        self.narrowed_scopes: list[dict[str, Type]] = []
         self.task_scopes: list[dict[str, tuple[bool, SourceSpan]]] = []
         self.current_function: FunctionSymbol | None = None
         self.current_receiver: str | None = None
@@ -525,10 +526,12 @@ class Lowerer:
 
     def push_scope(self) -> None:
         self.scopes.append({})
+        self.narrowed_scopes.append({})
         self.task_scopes.append({})
 
     def pop_scope(self) -> None:
         self.scopes.pop()
+        self.narrowed_scopes.pop()
         self.task_scopes.pop()
 
     def validate_current_task_scope(self) -> None:
@@ -571,6 +574,54 @@ class Lowerer:
             if name in scope:
                 return scope[name]
         return None
+
+    def find_local_scope_index(self, name: str) -> int | None:
+        for index in range(len(self.scopes) - 1, -1, -1):
+            if name in self.scopes[index]:
+                return index
+        return None
+
+    def find_narrowed_local(self, name: str) -> Type | None:
+        declaration = self.find_local_scope_index(name)
+        if declaration is None:
+            return None
+        for index in range(len(self.narrowed_scopes) - 1, declaration - 1, -1):
+            narrowed = self.narrowed_scopes[index].get(name)
+            if narrowed is not None:
+                return narrowed
+        return None
+
+    def invalidate_narrowing(self, name: str) -> None:
+        declaration = self.find_local_scope_index(name)
+        if declaration is None:
+            return
+        for index in range(declaration, len(self.narrowed_scopes)):
+            self.narrowed_scopes[index].pop(name, None)
+
+    def lower_narrowed_block(self, block: ast.Block, name: str, inner: Type) -> ir.IRBlock:
+        self.push_scope()
+        try:
+            self.narrowed_scopes[-1][name] = inner
+            lowered = self.lower_block(block, push_scope=False)
+            self.validate_current_task_scope()
+            return lowered
+        finally:
+            self.pop_scope()
+
+    def optional_null_narrowing(self, expression: ast.Expr) -> tuple[str, Type, bool] | None:
+        if not isinstance(expression, ast.BinaryExpr) or expression.operator not in {"==", "!="}:
+            return None
+        candidate: ast.Expr | None = None
+        if isinstance(expression.left, ast.NullExpr):
+            candidate = expression.right
+        elif isinstance(expression.right, ast.NullExpr):
+            candidate = expression.left
+        if not isinstance(candidate, ast.NameExpr):
+            return None
+        typ = self.find_local(candidate.name)
+        if not isinstance(typ, OptionalType):
+            return None
+        return candidate.name, typ.inner, expression.operator == "!="
 
     def lower_block(self, block: ast.Block, *, push_scope: bool = True) -> ir.IRBlock:
         if push_scope:
@@ -619,8 +670,24 @@ class Lowerer:
             return ir.IRRecover(statement.span, value)
         if isinstance(statement, ast.IfStmt):
             condition = self.lower_expr(statement.condition, BOOL)
-            then_block = self.lower_block(statement.then_block)
-            else_block = self.lower_block(statement.else_block) if statement.else_block else None
+            narrowing = self.optional_null_narrowing(statement.condition)
+            if narrowing is None:
+                then_block = self.lower_block(statement.then_block)
+                else_block = self.lower_block(statement.else_block) if statement.else_block else None
+            else:
+                name, inner, non_null_when_true = narrowing
+                then_block = (
+                    self.lower_narrowed_block(statement.then_block, name, inner)
+                    if non_null_when_true
+                    else self.lower_block(statement.then_block)
+                )
+                else_block = None
+                if statement.else_block is not None:
+                    else_block = (
+                        self.lower_block(statement.else_block)
+                        if non_null_when_true
+                        else self.lower_narrowed_block(statement.else_block, name, inner)
+                    )
             return ir.IRIf(statement.span, condition, then_block, else_block)
         if isinstance(statement, ast.IfLetStmt):
             value = self.lower_expr(statement.value)
@@ -657,10 +724,12 @@ class Lowerer:
         raise self.error("unsupported statement", statement.span)
 
     def lower_assignment(self, statement: ast.AssignStmt) -> ir.IRAssign:
+        assigned_name: str | None = None
         if isinstance(statement.target, ast.NameExpr):
             if statement.target.name in PROCESS_SPECIAL_VALUES:
                 raise self.error("process special values cannot be assigned", statement.target.span)
             target_type = self.lookup_local(statement.target.name, statement.target.span)
+            assigned_name = statement.target.name
             if is_task(target_type):
                 raise self.error("Task<T> variables cannot be reassigned", statement.target.span)
             target: ir.IRExpr = ir.IRName(target_type, statement.target.span, statement.target.name)
@@ -674,6 +743,8 @@ class Lowerer:
             if is_task(target.typ):
                 raise self.error("Task<T> fields are not assignable", statement.target.span)
         value = self.lower_expr(statement.value, target.typ)
+        if assigned_name is not None and not isinstance(value, ir.IROptionalSome):
+            self.invalidate_narrowing(assigned_name)
         return ir.IRAssign(statement.span, target, value)
 
     def lower_let(self, statement: ast.LetStmt) -> ir.IRLet:
@@ -809,7 +880,11 @@ class Lowerer:
             if local_type is not None:
                 if is_task(local_type):
                     raise self.error("Task<T> can only be consumed with `await task`", expression.span)
-                return self.coerce(ir.IRName(local_type, expression.span, expression.name), expected, expression.span)
+                local = ir.IRName(local_type, expression.span, expression.name)
+                narrowed_type = self.find_narrowed_local(expression.name)
+                if narrowed_type is not None:
+                    local = ir.IROptionalValue(narrowed_type, expression.span, local)
+                return self.coerce(local, expected, expression.span)
             symbol = self.functions.get(expression.name)
             if symbol is not None:
                 return self.coerce(self.lower_function_ref(symbol, expression.span), expected, expression.span)
@@ -1092,7 +1167,7 @@ class Lowerer:
                 return ir.IRCall(VOID, expression.span, target, (arg,))
             local_type = self.find_local(name)
             if local_type is not None:
-                callee = ir.IRName(local_type, expression.callee.span, name)
+                callee = self.lower_expr(expression.callee)
                 return self.lower_indirect_call(callee, expression.args, expression.span)
             symbol = self.functions.get(name)
             if symbol is None:

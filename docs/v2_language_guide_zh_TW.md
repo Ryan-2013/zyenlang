@@ -549,6 +549,11 @@ if value == null {
     io.print("none")
 }
 
+value = 10
+if value != null {
+    io.print((str)value) // 此分支中 value 會縮窄為 i32
+}
+
 let another: i32 | null = 7
 if let number = another {
     io.print("some")
@@ -560,7 +565,8 @@ let display: str = (str)maybe_text // "null"
 
 `(str)(str | null)` 是安全的顯示轉換：有值時回傳原字串，沒有值時回傳字面
 `"null"`，不會把 null 當成有效指標解參考。目前不支援 `i32 | str` 這類一般
-union。
+union。`value != null` 的 true 分支與 `value == null` 的 else 分支會做區域
+flow narrowing；離開該分支後，變數仍保持原本的 `T | null` 型別。
 
 ## 12. 錯誤處理
 

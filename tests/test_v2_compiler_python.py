@@ -145,6 +145,70 @@ def test_v2_optional_str_cast_is_safe_and_evaluates_once(tmp_path: Path) -> None
     assert generated.count(".has_value ?") == 2
 
 
+def test_v2_null_comparison_narrows_optional_local_in_matching_branch(tmp_path: Path) -> None:
+    source = tmp_path / "optional_narrowing.zy"
+    source.write_text(
+        """import <std/io> as io
+
+fn main() i32 {
+    let num: i32 | null = null
+    num = 10
+    if (num != null) {
+        num = 12
+        io.print((str)num)
+    }
+
+    let second: i32 | null = 4
+    if second == null {
+        return 2
+    } else {
+        io.print((str)second)
+    }
+    return 0
+}
+""",
+        encoding="utf-8",
+    )
+
+    compiler = Compiler()
+    generated = compiler.emit_file(source)
+    executable = tmp_path / ("optional-narrowing.exe" if sys.platform.startswith("win") else "optional-narrowing")
+    compiler.build_file(source, executable)
+    result = subprocess.run([str(executable)], capture_output=True, text=True, check=False)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert result.stdout.splitlines() == ["12", "4"]
+    assert ".has_value" in generated
+    assert ".value" in generated
+
+
+def test_v2_optional_narrowing_does_not_escape_its_branch() -> None:
+    source = """fn main() i32 {
+    let num: i32 | null = 10
+    if num != null {
+        let inside: i32 = num
+    }
+    return (i32)num
+}
+"""
+    with pytest.raises(CompileError, match="cannot cast `i32 \\| null` to `i32`"):
+        Compiler().check_source(source)
+
+
+def test_v2_assignment_to_null_invalidates_optional_narrowing() -> None:
+    source = """fn main() i32 {
+    let num: i32 | null = 10
+    if num != null {
+        num = null
+        return (i32)num
+    }
+    return 0
+}
+"""
+    with pytest.raises(CompileError, match="cannot cast `i32 \\| null` to `i32`"):
+        Compiler().check_source(source)
+
+
 def test_v2_blocks_use_lexical_scope_without_erasing_outer_variables(tmp_path: Path) -> None:
     valid = tmp_path / "lexical_scope.zy"
     valid.write_text("""fn main() i32 {
@@ -576,6 +640,7 @@ fn main() i32 {
         "io.zy",
         "process.zy",
         "path.zy",
+        "fs.zy",
         "thread.zy",
         "request.zy",
         "server.zy",

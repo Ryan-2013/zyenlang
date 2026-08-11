@@ -43,6 +43,11 @@ class IROptionalSome(IRExpr):
 
 
 @dataclass(frozen=True)
+class IROptionalValue(IRExpr):
+    optional: IRExpr
+
+
+@dataclass(frozen=True)
 class IRName(IRExpr):
     name: str
 

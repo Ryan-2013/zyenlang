@@ -113,6 +113,8 @@ class CBackend:
                 expression(value.task)
             elif isinstance(value, ir.IROptionalSome):
                 expression(value.value)
+            elif isinstance(value, ir.IROptionalValue):
+                expression(value.optional)
             elif isinstance(value, ir.IRFString):
                 for item in value.parts:
                     if isinstance(item, ir.IRExpr):
@@ -211,6 +213,8 @@ class CBackend:
             add(value.typ)
             if isinstance(value, ir.IROptionalSome):
                 expression(value.value)
+            elif isinstance(value, ir.IROptionalValue):
+                expression(value.optional)
             elif isinstance(value, ir.IRFString):
                 for item in value.parts:
                     if isinstance(item, ir.IRExpr):
@@ -785,6 +789,9 @@ class CBackend:
                 f"({self.c_type(expression.typ)}){{ .has_value = true, .value = {value.code} }}",
                 value.prelude,
             )
+        if isinstance(expression, ir.IROptionalValue):
+            optional = self.emit_expr(expression.optional)
+            return CExpr(f"({optional.code}).value", optional.prelude)
         if isinstance(expression, ir.IRName):
             return CExpr(self.ident(expression.name), [])
         if isinstance(expression, ir.IRUnary):

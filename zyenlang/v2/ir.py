@@ -18,13 +18,28 @@ class IRInt(IRExpr):
 
 
 @dataclass(frozen=True)
+class IRFloat(IRExpr):
+    value: str
+
+
+@dataclass(frozen=True)
 class IRString(IRExpr):
     value: str
 
 
 @dataclass(frozen=True)
+class IRFString(IRExpr):
+    parts: tuple[str | IRExpr, ...]
+
+
+@dataclass(frozen=True)
 class IRBool(IRExpr):
     value: bool
+
+
+@dataclass(frozen=True)
+class IRStaticTypeTest(IRExpr):
+    pass
 
 
 @dataclass(frozen=True)
@@ -35,6 +50,11 @@ class IRNull(IRExpr):
 @dataclass(frozen=True)
 class IROptionalSome(IRExpr):
     value: IRExpr
+
+
+@dataclass(frozen=True)
+class IROptionalValue(IRExpr):
+    optional: IRExpr
 
 
 @dataclass(frozen=True)
@@ -56,9 +76,19 @@ class IRBinary(IRExpr):
 
 
 @dataclass(frozen=True)
+class IRCast(IRExpr):
+    value: IRExpr
+
+
+@dataclass(frozen=True)
 class IRField(IRExpr):
     receiver: IRExpr
     name: str
+
+
+@dataclass(frozen=True)
+class IRFunctionRef(IRExpr):
+    target: str
 
 
 @dataclass(frozen=True)
@@ -66,6 +96,12 @@ class IRCall(IRExpr):
     target: str
     args: tuple[IRExpr, ...]
     throws: Type | None = None
+
+
+@dataclass(frozen=True)
+class IRIndirectCall(IRExpr):
+    callee: IRExpr
+    args: tuple[IRExpr, ...]
 
 
 @dataclass(frozen=True)
@@ -82,6 +118,28 @@ class IRList(IRExpr):
 class IRStruct(IRExpr):
     name: str
     fields: tuple[tuple[str, IRExpr], ...]
+
+
+@dataclass(frozen=True)
+class IRStructMetadata(IRExpr):
+    receiver: IRExpr
+    struct_name: str
+    category: str
+
+
+@dataclass(frozen=True)
+class IRBox(IRExpr):
+    value: IRExpr
+
+
+@dataclass(frozen=True)
+class IRBoxValue(IRExpr):
+    box: IRExpr
+
+
+@dataclass(frozen=True)
+class IRArcCount(IRExpr):
+    value: IRExpr
 
 
 @dataclass(frozen=True)
@@ -168,14 +226,34 @@ class IRContinue(IRStmt):
 
 
 @dataclass(frozen=True)
+class IRFree(IRStmt):
+    name: str
+    typ: Type
+
+
+@dataclass(frozen=True)
+class IRSkip(IRStmt):
+    source_name: str
+    destination_name: str
+    typ: Type
+
+
+@dataclass(frozen=True)
 class IRExprStmt(IRStmt):
     value: IRExpr
+
+
+@dataclass(frozen=True)
+class IRHoistedLocal:
+    name: str
+    typ: Type
 
 
 @dataclass(frozen=True)
 class IRBlock:
     statements: tuple[IRStmt, ...]
     span: SourceSpan
+    hoisted: tuple[IRHoistedLocal, ...] = ()
 
 
 @dataclass(frozen=True)

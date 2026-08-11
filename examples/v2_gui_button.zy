@@ -1,0 +1,46 @@
+import <std/gui> as gui
+import <std/io> as io
+
+fn button_click() void {
+    io.print("Button clicked")
+}
+
+fn main() i32 {
+    let app = gui.application_colored("ZyenLang Widgets", 800, 480, "#20201F")
+    if app.open() != 0 {
+        return 1
+    }
+    let layout = gui.column(40, 48, 220, 54, 14)
+    let heading = layout.label_at(0, "Retained widgets")
+    let button = layout.button_at(1, "Click me", button_click)
+    let buttons = gui.button_group()
+    buttons.add(button)
+    let running: bool = true
+    while running {
+        if app.begin_frame() != 0 {
+            break
+        }
+        heading.draw()
+        let draw_result = buttons.draw() catch err {
+            io.eprint(err.message)
+            return 2
+        }
+        if draw_result != 0 {
+            return draw_result
+        }
+        if app.present() != 0 {
+            break
+        }
+        let event: str = app.next_event(0)
+        if event == "quit" {
+            running = false
+        }
+        if event != "" {
+            let handled = buttons.handle(event) catch err {
+                io.eprint(err.message)
+                return 3
+            }
+        }
+    }
+    return app.close()
+}

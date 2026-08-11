@@ -15,19 +15,26 @@ KEYWORDS = {
     "else",
     "false",
     "fn",
+    "FREE__",
     "if",
     "import",
     "let",
+    "LIST_LEN__",
+    "LIST_PUSH__",
+    "LIST_SET__",
     "mut",
     "native",
     "null",
     "private",
+    "PRINT_CMD__",
     "public",
     "recover",
     "return",
     "stop",
     "spawn",
+    "SKIP__",
     "struct",
+    "STR_TO_LIST__",
     "throws",
     "true",
     "TYPEOF__",
@@ -37,10 +44,18 @@ KEYWORDS = {
 RENAMED_SPECIAL_WORDS = {
     "GET_ARGS": "GET_ARGS__",
     "GET_EXE": "GET_EXE__",
+    "LEN": "LIST_LEN__",
+    "LEN__": "LIST_LEN__",
+    "PUSH": "LIST_PUSH__",
+    "PUSH__": "LIST_PUSH__",
+    "SET": "LIST_SET__",
+    "SET__": "LIST_SET__",
     "typeof": "TYPEOF__",
 }
 
-TWO_CHAR_SYMBOLS = {"==", "!=", "<=", ">=", "&&", "||", "->"}
+SPECIAL_VALUE_WORDS = {"FILE__", "GET_ARGS__", "GET_EXE__"}
+
+TWO_CHAR_SYMBOLS = {"==", "!=", "<=", ">=", "&&", "||", "->", "+=", "-=", "*=", "/=", "%="}
 ONE_CHAR_SYMBOLS = set("{}()[],:.=+-*/%<>!|")
 
 
@@ -121,6 +136,61 @@ def lex(source: str, source_name: str = "<source>") -> list[Token]:
         if ch == ";":
             raise CompileError("semicolons were removed in ZyenLang 0.2", span(), source_name)
 
+        if source.startswith('f"', i):
+            start = span()
+            i += 2
+            column += 2
+            content_start = i
+            brace_depth = 0
+            in_expression_string = False
+            escaped = False
+            while i < len(source):
+                current = source[i]
+                if current in "\r\n":
+                    raise CompileError("f-string literals cannot contain a raw newline", start, source_name)
+                if brace_depth > 0:
+                    if in_expression_string:
+                        if current == '"' and not escaped:
+                            in_expression_string = False
+                        escaped = current == "\\" and not escaped
+                        if current != "\\":
+                            escaped = False
+                    else:
+                        if current == '"':
+                            in_expression_string = True
+                            escaped = False
+                        elif current == "{":
+                            brace_depth += 1
+                        elif current == "}":
+                            brace_depth -= 1
+                else:
+                    if current == '"' and not escaped:
+                        break
+                    if not escaped and current == "{":
+                        if i + 1 < len(source) and source[i + 1] == "{":
+                            i += 2
+                            column += 2
+                            continue
+                        brace_depth = 1
+                    elif not escaped and current == "}":
+                        if i + 1 < len(source) and source[i + 1] == "}":
+                            i += 2
+                            column += 2
+                            continue
+                        raise CompileError("single `}` is not allowed in an f-string; use `}}`", start, source_name)
+                    escaped = current == "\\" and not escaped
+                    if current != "\\":
+                        escaped = False
+                i += 1
+                column += 1
+            if i >= len(source):
+                message = "unterminated f-string interpolation" if brace_depth else "unterminated f-string literal"
+                raise CompileError(message, start, source_name)
+            tokens.append(Token("FSTRING", source[content_start:i], start))
+            i += 1
+            column += 1
+            continue
+
         if ch == '"':
             start = span()
             start_i = i
@@ -154,8 +224,30 @@ def lex(source: str, source_name: str = "<source>") -> list[Token]:
             while i < len(source) and (source[i].isdigit() or source[i] == "_"):
                 i += 1
                 column += 1
+            kind = "INT"
+            if i + 1 < len(source) and source[i] == "." and source[i + 1].isdigit():
+                kind = "FLOAT"
+                i += 1
+                column += 1
+                while i < len(source) and (source[i].isdigit() or source[i] == "_"):
+                    i += 1
+                    column += 1
+            if i < len(source) and source[i] in "eE":
+                exponent_digit = i + 1
+                if exponent_digit < len(source) and source[exponent_digit] in "+-":
+                    exponent_digit += 1
+                if exponent_digit < len(source) and source[exponent_digit].isdigit():
+                    kind = "FLOAT"
+                    i += 1
+                    column += 1
+                    if i < len(source) and source[i] in "+-":
+                        i += 1
+                        column += 1
+                    while i < len(source) and (source[i].isdigit() or source[i] == "_"):
+                        i += 1
+                        column += 1
             value = source[start_i:i].replace("_", "")
-            tokens.append(Token("INT", value, start))
+            tokens.append(Token(kind, value, start))
             continue
 
         if ch.isalpha() or ch == "_":
@@ -167,6 +259,17 @@ def lex(source: str, source_name: str = "<source>") -> list[Token]:
             value = source[start_i:i]
             if replacement := RENAMED_SPECIAL_WORDS.get(value):
                 raise CompileError(f"`{value}` was renamed to `{replacement}`", start, source_name)
+            if (
+                value.endswith("__")
+                and value.upper() == value
+                and value not in KEYWORDS
+                and value not in SPECIAL_VALUE_WORDS
+            ):
+                raise CompileError(
+                    f"`{value}` is reserved for compiler special forms",
+                    start,
+                    source_name,
+                )
             kind = value.upper() if value in KEYWORDS else "IDENT"
             tokens.append(Token(kind, value, start))
             continue

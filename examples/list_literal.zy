@@ -1,8 +1,0 @@
-fn main() -> int {
-    let xs = [1, 2, "hi", true];
-    print((str)(xs));
-    print((str)(xs.len()));
-    print((str)(xs.get(0)));
-    print((str)(xs.get(2)));
-    return 0;
-}

@@ -1,4 +1,4 @@
-"""Python-level tests for `zy doctor` (ZEP-0007).
+"""Python-level tests for `zy doctor`.
 
 Smoke-level: spawn doctor as a subprocess and assert the JSON output has
 the expected shape and that the exit code matches the worst severity.
@@ -18,15 +18,15 @@ import sys
 
 REQUIRED_CHECK_IDS = {
     # Environment
-    "python_version", "tkinter", "cc", "cc_compiles", "zy_on_path",
+    "python_version", "cc", "cc_compiles", "zy_on_path",
     # Installation
-    "package_installed", "package_version", "transpiler_importable",
-    "std_modules_count", "std_mirror_sync",
+    "package_installed", "package_version", "compiler_importable",
+    "std_modules_count",
     # Configuration
-    "vscode_ext", "zed_support", "tmpdir_writable",
+    "vscode_ext", "tmpdir_writable",
 }
 
-REQUIRED_RUNTIME_IDS = {"smoke_transpile", "smoke_compile", "smoke_run"}
+REQUIRED_RUNTIME_IDS = {"smoke_check", "smoke_build", "smoke_run"}
 
 VALID_CATEGORIES = {"environment", "installation", "configuration", "runtime"}
 VALID_STATUSES = {"pass", "warning", "error", "info"}

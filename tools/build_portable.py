@@ -68,9 +68,9 @@ def portable_name(version: str) -> str:
 
 
 def copy_release_content(stage: Path) -> None:
-    for name in ("README.md", "README.zh-TW.md", "LICENSE", "CHANGELOG.md", "SPEC_v0_1.md"):
+    for name in ("README.md", "README.zh-TW.md", "LICENSE", "CHANGELOG.md"):
         shutil.copy2(ROOT / name, stage / name)
-    for name in ("docs", "examples", "apps"):
+    for name in ("docs", "examples"):
         shutil.copytree(ROOT / name, stage / name, dirs_exist_ok=True)
     shutil.copy2(ROOT / "docs/portable_release.md", stage / "PORTABLE.md")
 
@@ -183,28 +183,6 @@ def main() -> int:
     run(command)
     shutil.copytree(pyinstaller_dist / "zy", stage)
 
-    v2_command = [
-        sys.executable,
-        "-m",
-        "PyInstaller",
-        "--noconfirm",
-        "--clean",
-        "--onedir",
-        "--name",
-        "zy2",
-        "--distpath",
-        str(pyinstaller_dist),
-        "--workpath",
-        str(pyinstaller_build / "zy2"),
-        "--specpath",
-        str(pyinstaller_spec),
-        "--collect-data",
-        "zyenlang",
-        str(ROOT / "zy2.py"),
-    ]
-    run(v2_command)
-    shutil.copy2(pyinstaller_dist / "zy2" / ("zy2.exe" if sys.platform.startswith("win") else "zy2"), stage)
-    shutil.copytree(pyinstaller_dist / "zy2" / "_internal", stage / "_internal", dirs_exist_ok=True)
     shutil.copytree(zig_dir, stage / "toolchain")
     runtime = raylib_runtime()
     shutil.copy2(runtime, stage / runtime.name)
@@ -212,23 +190,19 @@ def main() -> int:
     write_path_helpers(stage)
 
     zy = stage / ("zy.exe" if sys.platform.startswith("win") else "zy")
-    zy2 = stage / ("zy2.exe" if sys.platform.startswith("win") else "zy2")
-    gui_demo = stage / ("zytk-demo.exe" if sys.platform.startswith("win") else "zytk-demo")
+    gui_demo = stage / ("zyenlang-gui-demo.exe" if sys.platform.startswith("win") else "zyenlang-gui-demo")
+    language_demo = stage / ("zyenlang-tour.exe" if sys.platform.startswith("win") else "zyenlang-tour")
     run([str(zy), "version"], cwd=stage)
-    run([str(zy), "check", "examples/hello.zy"], cwd=stage)
-    run([str(zy), "run", "examples/hello.zy"], cwd=stage)
-    run([str(zy), "build", "apps/zytk_demo.zy", "--exe", str(gui_demo)], cwd=stage)
-    run([str(zy2), "--version"], cwd=stage)
-    run([str(zy2), "check", "examples/v2_language_tour.zy"], cwd=stage)
+    run([str(zy), "check", "examples/v2_language_tour.zy"], cwd=stage)
+    run([str(zy), "run", "examples/v2_language_tour.zy"], cwd=stage)
+    run([str(zy), "build", "examples/v2_gui_basic.zy", "-o", str(gui_demo), "--release"], cwd=stage)
     with tempfile.TemporaryDirectory() as package_smoke:
         run([str(zy), "pkg", "--project", package_smoke, "init", "--name", "portable-smoke"], cwd=stage)
-        run([str(zy2), "pkg", "--project", package_smoke, "install", "--locked"], cwd=stage)
-    v2_demo = stage / ("zy2-language-tour.exe" if sys.platform.startswith("win") else "zy2-language-tour")
-    run([str(zy2), "build", "examples/v2_language_tour.zy", "-o", str(v2_demo), "--release"], cwd=stage)
+        run([str(zy), "pkg", "--project", package_smoke, "install", "--locked"], cwd=stage)
+    run([str(zy), "build", "examples/v2_language_tour.zy", "-o", str(language_demo), "--release"], cwd=stage)
     for generated in (
-        stage / "apps/zytk_demo.c",
         gui_demo.with_suffix(".pdb"),
-        v2_demo.with_suffix(".pdb"),
+        language_demo.with_suffix(".pdb"),
     ):
         generated.unlink(missing_ok=True)
     if sys.platform.startswith("win"):

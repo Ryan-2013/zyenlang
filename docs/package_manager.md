@@ -1,8 +1,8 @@
-# ZyenLang package manager v1
+# ZyenLang 0.2 package manager
 
 ZyenLang 0.2.1 implements phase 1 of ZEP-0017: local path dependencies,
 deterministic lockfiles, a content-addressed package cache, and checked package
-imports. The package manager is available as `zy pkg`, `zy2 pkg`, or `zypkg`.
+imports. The package manager is available as `zy pkg` or `zypkg`.
 
 ## Create a project
 
@@ -68,7 +68,7 @@ manifest hash and all package digests to match the existing lockfile. It can
 repopulate a missing cache entry only when the path source still has the
 locked content.
 
-The cache defaults to `~/.zyen/packages/v1/<sha256>/`. Set `ZYEN_HOME` to move
+The cache defaults to `~/.zyen/packages/0.2/<sha256>/`. Set `ZYEN_HOME` to move
 the ZyenLang home directory.
 
 ## Security and limits

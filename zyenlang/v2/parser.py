@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import json
+
 from . import ast
 from .diagnostics import CompileError, SourceSpan
 from .lexer import Token, lex
+from .types import BUILTIN_NAMES
 
 
 PRECEDENCE = {
@@ -19,6 +22,27 @@ PRECEDENCE = {
     "*": 6,
     "/": 6,
     "%": 6,
+}
+
+CAST_OPERAND_STARTS = {
+    "INT",
+    "FLOAT",
+    "STRING",
+    "FSTRING",
+    "TRUE",
+    "FALSE",
+    "NULL",
+    "IDENT",
+    "LIST_LEN__",
+    "LIST_PUSH__",
+    "LIST_SET__",
+    "PRINT_CMD__",
+    "STR_TO_LIST__",
+    "(",
+    "[",
+    "SPAWN",
+    "AWAIT",
+    "TYPEOF__",
 }
 
 
@@ -138,7 +162,7 @@ class Parser:
             params: list[ast.Param] = []
             self.skip_newlines()
             while not self.at(")"):
-                params.append(self.parse_param())
+                params.append(self.parse_param(allow_default=True))
                 self.skip_newlines()
                 if not self.match(","):
                     break
@@ -232,7 +256,7 @@ class Parser:
         params: list[ast.Param] = []
         self.skip_newlines()
         while not self.at(")"):
-            params.append(self.parse_param())
+            params.append(self.parse_param(allow_default=True))
             self.skip_newlines()
             if not self.match(","):
                 break
@@ -265,16 +289,41 @@ class Parser:
             throws=throws,
         )
 
-    def parse_param(self) -> ast.Param:
+    def parse_param(self, *, allow_default: bool = False) -> ast.Param:
         mutable = self.match("MUT") is not None
         name = self.expect("IDENT", "expected a parameter name")
         self.expect(":", "expected `:` after parameter name")
-        return ast.Param(name.value, self.parse_type(), name.span, mutable)
+        type_node = self.parse_type()
+        default = None
+        if self.match("="):
+            if not allow_default:
+                raise CompileError("method receivers cannot have default values", name.span, self.source_name)
+            default = self.parse_expression()
+        return ast.Param(name.value, type_node, name.span, mutable, default)
 
     def parse_type(self) -> ast.TypeNode:
         self.skip_newlines()
         start = self.current.span
-        if self.match("("):
+        if self.match("FN"):
+            self.expect("(", "expected `(` after `fn` in function type")
+            self.skip_newlines()
+            params: list[ast.TypeNode] = []
+            while not self.at(")"):
+                params.append(self.parse_type())
+                self.skip_newlines()
+                if not self.match(","):
+                    break
+                self.skip_newlines()
+            self.expect(")", "expected `)` after function type parameters")
+            self.skip_newlines()
+            if self.match("->"):
+                raise CompileError(
+                    "ZyenLang 0.2 function types use `fn(P...) R` without `->`",
+                    self.previous().span,
+                    self.source_name,
+                )
+            node: ast.TypeNode = ast.FunctionTypeNode(start, tuple(params), self.parse_type())
+        elif self.match("("):
             self.skip_newlines()
             items: list[ast.TypeNode] = []
             if not self.at(")"):
@@ -287,7 +336,7 @@ class Parser:
             self.expect(")", "expected `)` after tuple type")
             if len(items) < 2:
                 raise CompileError("tuple types need at least two members", start, self.source_name)
-            node: ast.TypeNode = ast.TupleTypeNode(start, tuple(items))
+            node = ast.TupleTypeNode(start, tuple(items))
         else:
             first = self.expect("IDENT", "expected a type")
             name_parts = [first.value]
@@ -378,13 +427,23 @@ class Parser:
         if token := self.match("CONTINUE"):
             self.require_statement_end()
             return ast.ContinueStmt(token.span)
+        if token := self.match("FREE__", "SKIP__"):
+            self.expect("(", f"{token.value} requires `(`")
+            name = self.expect("IDENT", f"{token.value} expects one local variable")
+            self.expect(")", f"expected `)` after {token.value} local")
+            self.require_statement_end()
+            if token.kind == "FREE__":
+                return ast.FreeStmt(token.span, name.value)
+            return ast.SkipStmt(token.span, name.value)
 
         start = self.current.span
         value = self.parse_expression()
-        if self.match("="):
+        if assignment := self.match("=", "+=", "-=", "*=", "/=", "%="):
             if not isinstance(value, (ast.NameExpr, ast.FieldExpr)):
                 raise CompileError("assignment target must be a local or struct field", value.span, self.source_name)
             assigned = self.parse_expression()
+            if assignment.kind != "=":
+                assigned = ast.BinaryExpr(value.span, value, assignment.kind[0], assigned)
             self.require_statement_end()
             return ast.AssignStmt(start, value, assigned)
         self.require_statement_end()
@@ -460,6 +519,9 @@ class Parser:
         return expression
 
     def parse_unary(self, *, allow_struct_literal: bool) -> ast.Expr:
+        cast = self.try_parse_cast(allow_struct_literal=allow_struct_literal)
+        if cast is not None:
+            return cast
         if token := self.match("!", "-"):
             return ast.UnaryExpr(token.span, token.kind, self.parse_unary(allow_struct_literal=allow_struct_literal))
         if token := self.match("SPAWN"):
@@ -470,10 +532,43 @@ class Parser:
         if token := self.match("AWAIT"):
             return ast.AwaitExpr(token.span, self.parse_unary(allow_struct_literal=allow_struct_literal))
         if token := self.match("TYPEOF__"):
-            value = self.parse_unary(allow_struct_literal=allow_struct_literal)
+            self.expect("(", "TYPEOF__ now uses `TYPEOF__(value, Type)`")
+            self.skip_newlines()
+            value = self.parse_expression()
+            self.skip_newlines()
+            self.expect(",", "TYPEOF__ requires a comma before its type")
+            self.skip_newlines()
             target_type = self.parse_type()
+            self.skip_newlines()
+            self.expect(")", "expected `)` after TYPEOF__ type")
             return ast.TypeOfExpr(token.span, value, target_type)
         return self.parse_postfix(allow_struct_literal=allow_struct_literal)
+
+    def try_parse_cast(self, *, allow_struct_literal: bool) -> ast.CastExpr | None:
+        if not self.at("("):
+            return None
+        checkpoint = self.index
+        start = self.advance().span
+        try:
+            target_type = self.parse_type()
+            self.skip_newlines()
+            if not self.match(")"):
+                self.index = checkpoint
+                return None
+            builtin_unary = (
+                isinstance(target_type, ast.NamedTypeNode)
+                and target_type.name in BUILTIN_NAMES
+                and not target_type.args
+                and self.current.kind in {"!", "-"}
+            )
+            if self.current.kind not in CAST_OPERAND_STARTS and not builtin_unary:
+                self.index = checkpoint
+                return None
+        except CompileError:
+            self.index = checkpoint
+            return None
+        value = self.parse_unary(allow_struct_literal=allow_struct_literal)
+        return ast.CastExpr(start, target_type, value)
 
     def parse_postfix(self, *, allow_struct_literal: bool) -> ast.Expr:
         expression = self.parse_primary(allow_struct_literal=allow_struct_literal)
@@ -481,6 +576,13 @@ class Parser:
             if self.match("."):
                 name = self.expect("IDENT", "expected a field or method name after `.`")
                 expression = ast.FieldExpr(expression.span, expression, name.value)
+                continue
+            if token := self.match("["):
+                self.skip_newlines()
+                index = self.parse_expression()
+                self.skip_newlines()
+                self.expect("]", "expected `]` after index expression")
+                expression = ast.IndexExpr(token.span, expression, index)
                 continue
             if self.match("("):
                 args: list[ast.Expr] = []
@@ -507,13 +609,41 @@ class Parser:
     def parse_primary(self, *, allow_struct_literal: bool) -> ast.Expr:
         if token := self.match("INT"):
             return ast.IntExpr(token.span, int(token.value))
+        if token := self.match("FLOAT"):
+            return ast.FloatExpr(token.span, token.value)
         if token := self.match("STRING"):
             return ast.StringExpr(token.span, token.value)
+        if token := self.match("FSTRING"):
+            return self.parse_fstring(token)
         if token := self.match("TRUE", "FALSE"):
             return ast.BoolExpr(token.span, token.kind == "TRUE")
         if token := self.match("NULL"):
             return ast.NullExpr(token.span)
+        if token := self.match("LIST_LEN__", "LIST_PUSH__", "LIST_SET__", "PRINT_CMD__", "STR_TO_LIST__"):
+            self.expect("(", f"{token.value} requires `(`")
+            args: list[ast.Expr] = []
+            self.skip_newlines()
+            while not self.at(")"):
+                args.append(self.parse_expression())
+                self.skip_newlines()
+                if not self.match(","):
+                    break
+                self.skip_newlines()
+            self.expect(")", f"expected `)` after {token.value} arguments")
+            return ast.CallExpr(token.span, ast.NameExpr(token.span, token.value), tuple(args))
         if token := self.match("IDENT"):
+            if allow_struct_literal and self.looks_like_generic_struct_literal():
+                raise CompileError(
+                    "generic struct construction is scheduled after the bootstrap milestone",
+                    token.span,
+                    self.source_name,
+                )
+            if allow_struct_literal and self.looks_like_qualified_struct_literal():
+                parts = [token.value]
+                while self.match("."):
+                    parts.append(self.expect("IDENT", "expected a struct name after `.`").value)
+                qualified = Token("IDENT", ".".join(parts), token.span)
+                return self.parse_struct_literal(qualified)
             if allow_struct_literal and self.at("{"):
                 return self.parse_struct_literal(token)
             return ast.NameExpr(token.span, token.value)
@@ -546,6 +676,114 @@ class Parser:
             self.expect("]", "expected `]` after list literal")
             return ast.ListExpr(token.span, tuple(items))
         raise CompileError("expected an expression", self.current.span, self.source_name)
+
+    def parse_fstring(self, token: Token) -> ast.FStringExpr:
+        raw = token.value
+        parts: list[str | ast.Expr] = []
+        text: list[str] = []
+        index = 0
+
+        def flush_text() -> None:
+            if not text:
+                return
+            encoded = '"' + "".join(text) + '"'
+            try:
+                parts.append(json.loads(encoded))
+            except json.JSONDecodeError as exc:
+                raise CompileError(f"invalid f-string escape: {exc.msg}", token.span, self.source_name) from exc
+            text.clear()
+
+        while index < len(raw):
+            if raw.startswith("{{", index):
+                text.append("{")
+                index += 2
+                continue
+            if raw.startswith("}}", index):
+                text.append("}")
+                index += 2
+                continue
+            if raw[index] != "{":
+                text.append(raw[index])
+                index += 1
+                continue
+
+            flush_text()
+            expression_start = index + 1
+            index = expression_start
+            depth = 1
+            in_string = False
+            escaped = False
+            while index < len(raw) and depth > 0:
+                current = raw[index]
+                if in_string:
+                    if current == '"' and not escaped:
+                        in_string = False
+                    escaped = current == "\\" and not escaped
+                    if current != "\\":
+                        escaped = False
+                elif current == '"':
+                    in_string = True
+                elif current == "{":
+                    depth += 1
+                elif current == "}":
+                    depth -= 1
+                    if depth == 0:
+                        break
+                index += 1
+            expression_source = raw[expression_start:index]
+            if not expression_source.strip():
+                raise CompileError("f-string interpolation cannot be empty", token.span, self.source_name)
+            nested_tokens = lex(expression_source, self.source_name)
+            column_base = token.span.column + 2 + expression_start
+            nested_tokens = [
+                Token(
+                    item.kind,
+                    item.value,
+                    SourceSpan(token.span.line, column_base + item.span.column - 1, self.source_name),
+                )
+                for item in nested_tokens
+            ]
+            nested = Parser(nested_tokens, self.source_name)
+            value = nested.parse_expression()
+            nested.skip_newlines()
+            if not nested.at("EOF"):
+                raise CompileError("unexpected token in f-string interpolation", nested.current.span, self.source_name)
+            parts.append(value)
+            index += 1
+        flush_text()
+        return ast.FStringExpr(token.span, tuple(parts))
+
+    def looks_like_generic_struct_literal(self) -> bool:
+        if not self.at("<"):
+            return False
+        checkpoint = self.index
+        found = False
+        try:
+            self.advance()
+            self.skip_newlines()
+            while not self.at(">"):
+                self.parse_type()
+                self.skip_newlines()
+                if not self.match(","):
+                    break
+                self.skip_newlines()
+            self.expect(">")
+            found = self.at("{")
+        except CompileError:
+            found = False
+        self.index = checkpoint
+        return found
+
+    def looks_like_qualified_struct_literal(self) -> bool:
+        index = self.index
+        if index >= len(self.tokens) or self.tokens[index].kind != ".":
+            return False
+        while index < len(self.tokens) and self.tokens[index].kind == ".":
+            index += 1
+            if index >= len(self.tokens) or self.tokens[index].kind != "IDENT":
+                return False
+            index += 1
+        return index < len(self.tokens) and self.tokens[index].kind == "{"
 
     def parse_struct_literal(self, name: Token) -> ast.StructExpr:
         self.expect("{")

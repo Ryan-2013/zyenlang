@@ -31,6 +31,12 @@ class OptionalTypeNode(TypeNode):
 
 
 @dataclass(frozen=True)
+class FunctionTypeNode(TypeNode):
+    params: tuple[TypeNode, ...] = ()
+    return_type: TypeNode | None = None
+
+
+@dataclass(frozen=True)
 class Expr:
     span: SourceSpan
 
@@ -41,8 +47,18 @@ class IntExpr(Expr):
 
 
 @dataclass(frozen=True)
+class FloatExpr(Expr):
+    value: str
+
+
+@dataclass(frozen=True)
 class StringExpr(Expr):
     value: str
+
+
+@dataclass(frozen=True)
+class FStringExpr(Expr):
+    parts: tuple[str | Expr, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -77,6 +93,12 @@ class BinaryExpr(Expr):
 class FieldExpr(Expr):
     receiver: Expr
     name: str
+
+
+@dataclass(frozen=True)
+class IndexExpr(Expr):
+    receiver: Expr
+    index: Expr
 
 
 @dataclass(frozen=True)
@@ -129,6 +151,12 @@ class AwaitExpr(Expr):
 class TypeOfExpr(Expr):
     value: Expr
     target_type: TypeNode
+
+
+@dataclass(frozen=True)
+class CastExpr(Expr):
+    target_type: TypeNode
+    value: Expr
 
 
 @dataclass(frozen=True)
@@ -202,6 +230,16 @@ class ContinueStmt(Stmt):
 
 
 @dataclass(frozen=True)
+class FreeStmt(Stmt):
+    name: str
+
+
+@dataclass(frozen=True)
+class SkipStmt(Stmt):
+    name: str
+
+
+@dataclass(frozen=True)
 class ExprStmt(Stmt):
     value: Expr
 
@@ -236,6 +274,7 @@ class Param:
     type_node: TypeNode
     span: SourceSpan
     mutable: bool = False
+    default: Expr | None = None
 
 
 @dataclass(frozen=True)

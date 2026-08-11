@@ -38,12 +38,14 @@ jobs:
         run: python tools/check_layout.py
       - name: Python and language tests
         run: python -m pytest -q
+      - name: Run typed v2 native path smoke
+        run: zy run examples/v2_path_basic.zy --release
       - name: Compile cross-platform GUI smoke
         shell: bash
         run: |
           suffix=""
           if [[ "$RUNNER_OS" == "Windows" ]]; then suffix=".exe"; fi
-          zy build examples/tk_portable_smoke.zy --exe "gui-smoke${suffix}"
+          zy build examples/v2_gui_basic.zy -o "gui-smoke${suffix}" --release
 
   vscode:
     timeout-minutes: 10

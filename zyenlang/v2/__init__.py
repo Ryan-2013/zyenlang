@@ -1,8 +1,7 @@
 """ZyenLang 0.2 compiler pipeline.
 
-The v2 compiler is intentionally isolated from the legacy line-oriented
-transpiler.  Frontend nodes and typed IR do not contain C source fragments,
-so multiple backends can consume the same checked program.
+Frontend nodes and typed IR do not contain C source fragments, so multiple
+backends can consume the same checked program.
 """
 
 from .compiler import Compiler, CompilerOptions

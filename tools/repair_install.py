@@ -4,7 +4,7 @@ from pathlib import Path
 
 root = Path(__file__).resolve().parents[1]
 print(f"ZyenLang root: {root}")
-needed = [root / "pyproject.toml", root / "zyen.py", root / "zyenlang" / "transpiler.py"]
+needed = [root / "pyproject.toml", root / "zyen.py", root / "zyenlang" / "v2" / "compiler.py"]
 missing = [str(p) for p in needed if not p.exists()]
 if missing:
     print("Missing required files:")
@@ -22,4 +22,4 @@ for cmd in cmds:
 
 print("\nTesting zy command...")
 subprocess.run(["zy", "--help"], check=False)
-print("\nDone. Try: zy run examples/add.zy")
+print("\nDone. Try: zy run examples/v2_language_tour.zy")

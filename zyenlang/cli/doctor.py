@@ -1,4 +1,4 @@
-"""`zy doctor` entry point and output formatters. See ZEP-0007."""
+"""`zy doctor` entry point and output formatters."""
 
 from __future__ import annotations
 
@@ -94,7 +94,7 @@ def run_doctor(verbose: bool = False, json_out: bool = False,
 
 
 def add_subparser(sub: argparse._SubParsersAction) -> None:
-    p = sub.add_parser("doctor", help="diagnose installation / environment issues (ZEP-0007)")
+    p = sub.add_parser("doctor", help="diagnose installation and environment issues")
     p.add_argument("-v", "--verbose", action="store_true",
                    help="show details for every check, not just failures")
     p.add_argument("--json", action="store_true",

@@ -76,8 +76,48 @@
   },
   "Type check": {
     "prefix": "TYPEOF__",
-    "body": "TYPEOF__ ${1:value} ${2:i32}",
-    "description": "Test a value's runtime type"
+    "body": "TYPEOF__(${1:value}, ${2:i32})",
+    "description": "Test a value's static type"
+  },
+  "Interpolated string": {
+    "prefix": "fstr",
+    "body": "f\"${1:label}={${2:value}}\"",
+    "description": "Format typed values in a string"
+  },
+  "List length": {
+    "prefix": "LIST_LEN__",
+    "body": "LIST_LEN__(${1:list})",
+    "description": "Read a built-in List length"
+  },
+  "List push": {
+    "prefix": "LIST_PUSH__",
+    "body": "LIST_PUSH__(${1:list}, ${2:value})",
+    "description": "Append a strongly typed List value"
+  },
+  "List set": {
+    "prefix": "LIST_SET__",
+    "body": ["LIST_SET__(${1:list}, ${2:index}, ${3:value}) catch ${4:err} {", "    recover", "}"],
+    "description": "Replace a checked List element"
+  },
+  "Colored terminal output": {
+    "prefix": "PRINT_CMD__",
+    "body": "PRINT_CMD__(${1:text}, \"${2:#FFFFFF}\")",
+    "description": "Print one line with a terminal color"
+  },
+  "String characters": {
+    "prefix": "STR_TO_LIST__",
+    "body": "let ${1:chars}: List<str> = STR_TO_LIST__(${2:text})",
+    "description": "Split UTF-8 text into a List of characters"
+  },
+  "End local lifetime": {
+    "prefix": "FREE__",
+    "body": "FREE__(${1:local})",
+    "description": "End a local binding and release managed storage"
+  },
+  "Promote local one block": {
+    "prefix": "SKIP__",
+    "body": "SKIP__(${1:local})",
+    "description": "Keep a local visible after its current block"
   },
   "HTTP GET": {
     "prefix": "requestget",
@@ -86,7 +126,7 @@
   },
   "GUI frame loop": {
     "prefix": "gui",
-    "body": ["import <std/gui> as gui", "", "let window: gui.Window = gui.window(\"${1:ZyenLang}\", ${2:960}, ${3:640})", "window.open()", "while true {", "    window.begin_frame()", "    ${0}", "    window.present()", "    if window.next_event(16) == \"close\" {", "        break", "    }", "}", "window.close()"],
-    "description": "Create a cross-platform GUI frame loop"
+    "body": ["import <std/gui> as gui", "", "let app = gui.application_colored(\"${1:ZyenLang}\", ${2:960}, ${3:640}, \"#20201F\")", "app.open()", "while true {", "    app.begin_frame()", "    ${0}", "    app.present()", "    if app.next_event(16) == \"quit\" {", "        break", "    }", "}", "app.close()"],
+    "description": "Create a cross-platform GUI application loop"
   }
 }

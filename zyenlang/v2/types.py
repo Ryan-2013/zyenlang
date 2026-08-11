@@ -48,6 +48,15 @@ class OptionalType(Type):
 
 
 @dataclass(frozen=True)
+class FunctionType(Type):
+    params: tuple[Type, ...]
+    return_type: Type
+
+    def display(self) -> str:
+        return f"fn({', '.join(item.display() for item in self.params)}) {self.return_type.display()}"
+
+
+@dataclass(frozen=True)
 class TypeVar(Type):
     name: str
 
@@ -76,10 +85,20 @@ INTEGER_TYPES = {
 
 FLOAT_TYPES = {"f32", "f64"}
 BUILTIN_NAMES = set(INTEGER_TYPES) | FLOAT_TYPES | {"bool", "str", "void", "Error"}
+SIGNED_INTEGER_TYPES = {"i8", "i16", "i32", "i64", "isize"}
+UNSIGNED_INTEGER_TYPES = {"u8", "u16", "u32", "u64", "usize"}
 
 
 def is_integer(typ: Type) -> bool:
     return isinstance(typ, PrimitiveType) and typ.name in INTEGER_TYPES
+
+
+def is_signed_integer(typ: Type) -> bool:
+    return isinstance(typ, PrimitiveType) and typ.name in SIGNED_INTEGER_TYPES
+
+
+def is_unsigned_integer(typ: Type) -> bool:
+    return isinstance(typ, PrimitiveType) and typ.name in UNSIGNED_INTEGER_TYPES
 
 
 def is_float(typ: Type) -> bool:
@@ -90,12 +109,36 @@ def is_numeric(typ: Type) -> bool:
     return is_integer(typ) or is_float(typ)
 
 
+def common_numeric_type(left: Type, right: Type) -> Type | None:
+    if not is_numeric(left) or not is_numeric(right):
+        return None
+    if left == right:
+        return left
+    if is_float(left) or is_float(right):
+        if left == PrimitiveType("f64") or right == PrimitiveType("f64"):
+            return PrimitiveType("f64")
+        return PrimitiveType("f32")
+
+    low = min(INTEGER_TYPES[left.name][0], INTEGER_TYPES[right.name][0])
+    high = max(INTEGER_TYPES[left.name][1], INTEGER_TYPES[right.name][1])
+    candidates = ("i8", "i16", "i32", "i64") if low < 0 else ("u8", "u16", "u32", "u64")
+    for name in candidates:
+        candidate_low, candidate_high = INTEGER_TYPES[name]
+        if candidate_low <= low and high <= candidate_high:
+            return PrimitiveType(name)
+    return None
+
+
 def is_list(typ: Type) -> bool:
     return isinstance(typ, NamedType) and typ.name == "List" and len(typ.args) == 1
 
 
 def is_task(typ: Type) -> bool:
     return isinstance(typ, NamedType) and typ.name == "Task" and len(typ.args) == 1
+
+
+def is_box(typ: Type) -> bool:
+    return isinstance(typ, NamedType) and typ.name == "Box" and len(typ.args) == 1
 
 
 def resolve_type_node(
@@ -114,6 +157,16 @@ def resolve_type_node(
         return OptionalType(inner)
     if isinstance(node, ast.TupleTypeNode):
         return TupleType(tuple(resolve_type_node(item, known_structs, type_vars, source_name) for item in node.items))
+    if isinstance(node, ast.FunctionTypeNode):
+        if node.return_type is None:
+            raise CompileError("function type is missing its return type", node.span, source_name)
+        params = tuple(resolve_type_node(item, known_structs, type_vars, source_name) for item in node.params)
+        if any(item == VOID for item in params):
+            raise CompileError("function type parameters cannot be void", node.span, source_name)
+        return FunctionType(
+            params,
+            resolve_type_node(node.return_type, known_structs, type_vars, source_name),
+        )
     if not isinstance(node, ast.NamedTypeNode):
         raise CompileError("unsupported type syntax", node.span, source_name)
     if node.name in type_vars:
@@ -162,4 +215,9 @@ def substitute(typ: Type, mapping: dict[str, Type]) -> Type:
         return TupleType(tuple(substitute(item, mapping) for item in typ.items))
     if isinstance(typ, OptionalType):
         return OptionalType(substitute(typ.inner, mapping))
+    if isinstance(typ, FunctionType):
+        return FunctionType(
+            tuple(substitute(item, mapping) for item in typ.params),
+            substitute(typ.return_type, mapping),
+        )
     return typ

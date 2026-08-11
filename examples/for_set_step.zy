@@ -1,8 +1,0 @@
-fn main() -> int {
-    let sum: int = 0;
-    for (let i: int = 0; i < 5; set i += 1) {
-        set sum += i;
-    }
-    print((str)(sum));
-    return 0;
-}

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 import subprocess
@@ -70,7 +71,7 @@ class Compiler:
                 native_links=program.native_links,
             )
 
-    def run_file(self, path: Path) -> int:
+    def run_file(self, path: Path, program_args: Sequence[str] = ()) -> int:
         program = self.check_file(path)
         if self.options.backend != "c":
             raise ValueError(f"unknown backend `{self.options.backend}`")
@@ -88,4 +89,4 @@ class Compiler:
                 native_sources=program.native_sources,
                 native_links=program.native_links,
             )
-            return subprocess.run([str(exe_path)], check=False).returncode
+            return subprocess.run([str(exe_path), *program_args], check=False).returncode

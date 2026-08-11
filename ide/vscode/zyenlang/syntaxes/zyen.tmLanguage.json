@@ -151,7 +151,7 @@
       "patterns": [
         {
           "name": "meta.field.declaration.zyen",
-          "match": "^\\s*(?:(public|private)\\s+)?([A-Za-z_]\\w*)\\s*(:)\\s*([A-Za-z_][A-Za-z0-9_<>| ,()]*)",
+          "match": "^\\s*(?:(public|private)\\s+)?(?:let\\s+(?:this\\.)?)?([A-Za-z_]\\w*)\\s*(:)\\s*([A-Za-z_][A-Za-z0-9_<>| ,()]*)",
           "captures": {
             "1": { "name": "storage.modifier.visibility.zyen" },
             "2": { "name": "variable.other.member.zyen" },
@@ -179,7 +179,7 @@
         { "name": "keyword.declaration.zyen", "match": "\\b(let|fn|struct|import|as|native|source)\\b" },
         { "name": "storage.modifier.mutable.zyen", "match": "\\bmut\\b" },
         { "name": "storage.modifier.zyen", "match": "\\b(public|private)\\b" },
-        { "name": "keyword.operator.typeof.zyen", "match": "\\bTYPEOF__\\b" }
+        { "name": "keyword.operator.special-form.zyen", "match": "\\b(TYPEOF__|LIST_LEN__|LIST_PUSH__|LIST_SET__|PRINT_CMD__|STR_TO_LIST__|FREE__|SKIP__)\\b" }
       ]
     },
     "types": {
@@ -192,14 +192,14 @@
       "patterns": [
         { "name": "constant.language.boolean.zyen", "match": "\\b(true|false)\\b" },
         { "name": "constant.language.null.zyen", "match": "\\bnull\\b" },
-        { "name": "constant.language.process.zyen", "match": "\\b(GET_ARGS__|GET_EXE__)\\b" }
+        { "name": "constant.language.compiler.zyen", "match": "\\b(FILE__|GET_ARGS__|GET_EXE__)\\b" }
       ]
     },
     "numbers": {
       "patterns": [
         { "name": "constant.numeric.hex.zyen", "match": "\\b0x[0-9A-Fa-f](?:_?[0-9A-Fa-f])*\\b" },
         { "name": "constant.numeric.binary.zyen", "match": "\\b0b[01](?:_?[01])*\\b" },
-        { "name": "constant.numeric.float.zyen", "match": "\\b[0-9](?:_?[0-9])*\\.[0-9](?:_?[0-9])*(?:[eE][+-]?[0-9]+)?\\b" },
+        { "name": "constant.numeric.float.zyen", "match": "\\b(?:[0-9](?:_?[0-9])*\\.[0-9](?:_?[0-9])*(?:[eE][+-]?[0-9](?:_?[0-9])*)?|[0-9](?:_?[0-9])*[eE][+-]?[0-9](?:_?[0-9])*)\\b" },
         { "name": "constant.numeric.integer.zyen", "match": "\\b[0-9](?:_?[0-9])*\\b" }
       ]
     },

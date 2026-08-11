@@ -1,3 +1,0 @@
-fn say_hi() -> void {
-    print("hi from parent import");
-}

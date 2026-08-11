@@ -7,9 +7,10 @@ import sys
 
 from . import __version__
 from .compiler import Compiler, CompilerOptions
-from .diagnostics import CompileError
+from .diagnostics import CompileError, render_error
 from .modules import MAX_SOURCE_BYTES
 from .package_manager import PackageError, configure_parser as configure_package_parser, handle_command as handle_package_command
+from zyenlang.cli.doctor import add_subparser as add_doctor_subparser, handle as handle_doctor
 
 
 def read_stdin_source(source_name: str, limit: int = MAX_SOURCE_BYTES) -> str:
@@ -28,7 +29,7 @@ def read_stdin_source(source_name: str, limit: int = MAX_SOURCE_BYTES) -> str:
 
 
 def make_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="zy2", description="ZyenLang 0.2 compiler bootstrap")
+    parser = argparse.ArgumentParser(prog="zy", description="ZyenLang 0.2 compiler")
     parser.add_argument("--version", action="version", version=f"ZyenLang {__version__}")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
@@ -48,16 +49,33 @@ def make_parser() -> argparse.ArgumentParser:
 
     package = subparsers.add_parser("pkg", help="manage project dependencies")
     configure_package_parser(package)
+    add_doctor_subparser(subparsers)
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
-    args = make_parser().parse_args(argv)
+    arguments = list(sys.argv[1:] if argv is None else argv)
+    program_args: list[str] = []
+    if arguments and arguments[0] == "run" and "--" in arguments:
+        separator = arguments.index("--")
+        program_args = arguments[separator + 1:]
+        arguments = arguments[:separator]
+    parser = make_parser()
+    if arguments and arguments[0] == "run" and not program_args:
+        args, direct_program_args = parser.parse_known_args(arguments)
+        option_like = next((value for value in direct_program_args if value.startswith("-")), None)
+        if option_like is not None:
+            parser.error(f"program option `{option_like}` must follow `--`")
+        program_args = direct_program_args
+    else:
+        args = parser.parse_args(arguments)
+    if args.command == "doctor":
+        return handle_doctor(args)
     if args.command == "pkg":
         try:
             return handle_package_command(args)
         except PackageError as exc:
-            print(f"zy2 pkg: {exc}", file=sys.stderr)
+            print(render_error(f"zy pkg: {exc}", sys.stderr), file=sys.stderr)
             return 2
     compiler = Compiler(
         CompilerOptions(
@@ -78,12 +96,12 @@ def main(argv: list[str] | None = None) -> int:
             print(args.output)
             return 0
         if args.command == "run":
-            return compiler.run_file(args.input)
+            return compiler.run_file(args.input, program_args)
     except CompileError as exc:
-        print(exc, file=sys.stderr)
+        print(render_error(exc, sys.stderr), file=sys.stderr)
         return 1
     except (FileNotFoundError, subprocess.CalledProcessError) as exc:
-        print(f"zy2: {exc}", file=sys.stderr)
+        print(render_error(f"zy: {exc}", sys.stderr), file=sys.stderr)
         return 2
     return 2
 

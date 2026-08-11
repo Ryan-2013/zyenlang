@@ -1,0 +1,18 @@
+import <std/path> as path
+
+fn main() i32 {
+    let source: str = path.join("src", "main.zy")
+    if source != "src/main.zy" {
+        return 1
+    }
+    if path.basename(source) != "main.zy" {
+        return 2
+    }
+    if path.dirname(source) != "src" {
+        return 3
+    }
+    if path.extension(source) != ".zy" {
+        return 4
+    }
+    return 0
+}

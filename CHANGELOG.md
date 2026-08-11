@@ -2,7 +2,62 @@
 
 ## Unreleased
 
-No changes yet.
+### Added
+
+- Decimal and scientific-notation literals, defaulting to `f64` and honoring
+  an immediate `f32` type context.
+- `SKIP__(local)` one-block binding promotion and `FREE__(local)` explicit
+  binding termination with ARC-aware retain/release behavior.
+- `PRINT_CMD__(text, color)` terminal truecolor output and pure-ZyenLang
+  `std/io` wrappers for white `print` and red `eprint`.
+- `STR_TO_LIST__(text)`, which splits valid UTF-8 into an ARC-managed
+  `List<str>` with one Unicode code point per element.
+- Typed v2 f-strings with expression interpolation, escaped braces, once-only
+  evaluation, and checked formatting for strings, numeric values, booleans,
+  and optional strings.
+- `FILE__`, a compiler special value containing the absolute path of the `.zy`
+  module where it appears.
+- `std/gui` retained `Application`, `Panel`, `Label`, `Button`, and `Column`
+  structs over the existing cross-platform raylib drawing API.
+- List fields in structs, including nested managed structs, managed struct
+  parameters/returns/assignment, `List<StructWithList>`, and GUI `ButtonGroup`.
+- Individual manuals for every implemented v2 standard-library module.
+- v2 function and native-function parameters can declare typed default values.
+  Missing positional arguments are filled at the call site, including imported
+  functions and a defaulted parameter before a later required parameter.
+
+### Changed
+
+- A catch used as a standalone statement may now use bare `recover` or one
+  recovery value of any type because the result is discarded. Value-producing
+  catches remain strongly typed, and discarded managed success/recovery values
+  are released immediately.
+- Generic `TYPEOF__` branches now narrow matching locals during template
+  validation, and concrete monomorphizations omit statically impossible
+  branches instead of reporting false `List<T>` assignment errors.
+- Retired the v0.1 compiler, standard library, examples, tests, editor assets,
+  compatibility imports, and `zy1`/`zy2` command split. ZyenLang now ships one
+  v0.2 compiler through `zy`, `zyen`, and `python -m zyenlang`.
+- Portable archives, Windows MSI packages, CI, `zy doctor`, and the VS Code
+  extension now validate and publish only the v0.2 compiler and standard
+  library.
+- Compiler diagnostics, uncaught `stop`, runtime panics, and `io.eprint` use red
+  text on interactive terminals, with `NO_COLOR` and `ZYEN_COLOR` control.
+- Mixed numeric arithmetic now uses deterministic promotion. Integer/float
+  expressions such as `i32 + f64` produce `f64`, mixed integers choose the
+  smallest lossless fixed-width type, and impossible `i64`/`u64` combinations
+  require an explicit cast. Floating-point modulo is rejected during checking.
+- Equality for user structs, tuples, and optionals now compares values
+  structurally and evaluates both operands once. Generic equality is checked
+  again after specialization, while unsupported types such as `List<T>` report
+  a compiler diagnostic instead of producing invalid C struct comparisons.
+- Generic function templates are now checked before monomorphization. Mixing a
+  concrete type such as `i32` with unconstrained `T` requires an explicit cast,
+  and every concrete specialization validates that cast again.
+- VS Code symbol parsing recognizes generic functions and keeps default values
+  out of parameter type names and in function signature help.
+- Added a complete `std/gui` usage guide covering the cross-platform raylib
+  lifecycle, drawing functions, and events.
 
 ## v0.2.1 - 2026-07-30
 

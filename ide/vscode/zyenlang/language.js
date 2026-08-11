@@ -1,9 +1,10 @@
 'use strict';
 
 const KEYWORDS = [
-  'as', 'await', 'break', 'catch', 'continue', 'else', 'false', 'fn', 'if',
+  'as', 'await', 'break', 'catch', 'continue', 'else', 'false', 'fn', 'FREE__', 'if',
   'import', 'let', 'mut', 'native', 'null', 'private', 'public', 'recover', 'return',
-  'source', 'spawn', 'stop', 'struct', 'throws', 'true', 'TYPEOF__', 'while'
+  'SKIP__', 'source', 'spawn', 'stop', 'struct', 'throws', 'true', 'TYPEOF__',
+  'LIST_LEN__', 'LIST_PUSH__', 'LIST_SET__', 'PRINT_CMD__', 'STR_TO_LIST__', 'while'
 ];
 
 const TYPES = [
@@ -12,7 +13,58 @@ const TYPES = [
   'u64', 'usize', 'void'
 ];
 
-const SPECIAL_VALUES = ['GET_ARGS__', 'GET_EXE__'];
+const SPECIAL_VALUES = ['FILE__', 'GET_ARGS__', 'GET_EXE__'];
+
+const SPECIAL_FORMS = [
+  {
+    name: 'FREE__',
+    detail: 'FREE__(local) void',
+    snippet: 'FREE__(${1:local})',
+    documentation: 'End a binding in its declaring block and immediately release managed storage.'
+  },
+  {
+    name: 'LIST_LEN__',
+    detail: 'LIST_LEN__(list: List<T>) usize',
+    snippet: 'LIST_LEN__(${1:list})',
+    documentation: 'Return the number of elements in a built-in List<T>.'
+  },
+  {
+    name: 'LIST_PUSH__',
+    detail: 'LIST_PUSH__(list: List<T>, value: T) void',
+    snippet: 'LIST_PUSH__(${1:list}, ${2:value})',
+    documentation: 'Append a strongly typed value to a local List<T> variable.'
+  },
+  {
+    name: 'LIST_SET__',
+    detail: 'LIST_SET__(list: List<T>, index: i32, value: T) void throws Error',
+    snippet: 'LIST_SET__(${1:list}, ${2:index}, ${3:value})',
+    documentation: 'Replace a List<T> element with checked bounds.'
+  },
+  {
+    name: 'PRINT_CMD__',
+    detail: 'PRINT_CMD__(text: str, color: str) void',
+    snippet: 'PRINT_CMD__(${1:text}, "${2:#FFFFFF}")',
+    documentation: 'Write one line using a #RRGGBB terminal color when color output is enabled.'
+  },
+  {
+    name: 'SKIP__',
+    detail: 'SKIP__(local) void',
+    snippet: 'SKIP__(${1:local})',
+    documentation: 'Promote a local by one lexical block; an unexecuted block leaves its zero value.'
+  },
+  {
+    name: 'STR_TO_LIST__',
+    detail: 'STR_TO_LIST__(text: str) List<str>',
+    snippet: 'STR_TO_LIST__(${1:text})',
+    documentation: 'Split UTF-8 text into an ARC-managed List with one Unicode character per element.'
+  },
+  {
+    name: 'TYPEOF__',
+    detail: 'TYPEOF__(value, Type) bool',
+    snippet: 'TYPEOF__(${1:value}, ${2:Type})',
+    documentation: 'Compare static types at compile time without evaluating the value.'
+  }
+];
 
 const BUILTINS = {
   io: [
@@ -24,8 +76,29 @@ const BUILTINS = {
     ['is_empty', 'fn is_empty<T>(values: List<T>) bool']
   ],
   process: [
-    ['args', 'fn args() List<str>'],
-    ['executable', 'fn executable() str']
+    ['args', 'fn args(value: List<str>) List<str>'],
+    ['executable', 'fn executable(value: str) str']
+  ],
+  path: [
+    ['separator', 'fn separator() str'],
+    ['normalize', 'fn normalize(value: str) str'],
+    ['join', 'fn join(left: str, right: str) str'],
+    ['basename', 'fn basename(value: str) str'],
+    ['dirname', 'fn dirname(value: str) str'],
+    ['parent', 'fn parent(value: str) str'],
+    ['extension', 'fn extension(value: str) str'],
+    ['stem', 'fn stem(value: str) str'],
+    ['with_extension', 'fn with_extension(value: str, next_extension: str) str'],
+    ['is_absolute', 'fn is_absolute(value: str) bool'],
+    ['exists', 'fn exists(value: str) bool'],
+    ['is_file', 'fn is_file(value: str) bool'],
+    ['is_dir', 'fn is_dir(value: str) bool']
+  ],
+  fs: [
+    ['read_text', 'fn read_text(path: str) str throws Error'],
+    ['write_text', 'fn write_text(path: str, value: str) i32 throws Error'],
+    ['append_text', 'fn append_text(path: str, value: str) i32 throws Error'],
+    ['tree', 'fn tree(path: str) str throws Error']
   ],
   thread: [
     ['sleep_ms', 'fn sleep_ms(milliseconds: i32) i32'],
@@ -50,8 +123,15 @@ const BUILTINS = {
     ['serve', 'fn serve(host: str, port: i32, body: str, max_requests: i32) i32 throws Error']
   ],
   gui: [
+    ['application', 'fn application(title: str, width: i32, height: i32) Application'],
+    ['application_colored', 'fn application_colored(title: str, width: i32, height: i32, background: str) Application'],
     ['window', 'fn window(title: str, width: i32, height: i32) Window'],
     ['window_colored', 'fn window_colored(title: str, width: i32, height: i32, background: str) Window'],
+    ['panel', 'fn panel(x: i32, y: i32, width: i32, height: i32) Panel'],
+    ['label', 'fn label(x: i32, y: i32, value: str) Label'],
+    ['button', 'fn button(x: i32, y: i32, width: i32, height: i32, label: str, on_click: fn() void) Button'],
+    ['button_group', 'fn button_group() ButtonGroup'],
+    ['column', 'fn column(x: i32, y: i32, width: i32, row_height: i32, gap: i32) Column'],
     ['pick_file', 'fn pick_file() i32'],
     ['line', 'fn line(x1: i32, y1: i32, x2: i32, y2: i32, color: str, width: i32) i32'],
     ['rect', 'fn rect(x: i32, y: i32, width: i32, height: i32, color: str) i32'],
@@ -104,6 +184,17 @@ function splitTopLevel(value) {
   return parts;
 }
 
+function parameterType(value) {
+  let depth = 0;
+  for (let index = 0; index < value.length; index += 1) {
+    const char = value[index];
+    if ('(<[{'.includes(char)) depth += 1;
+    else if (')>]}'.includes(char)) depth -= 1;
+    else if (char === '=' && depth === 0) return value.slice(0, index).trim();
+  }
+  return value.trim();
+}
+
 function parameterSymbols(parameters, line, baseColumn, container) {
   const result = [];
   let searchFrom = 0;
@@ -111,13 +202,14 @@ function parameterSymbols(parameters, line, baseColumn, container) {
     const match = parameter.match(/^(?:(mut)\s+)?([A-Za-z_]\w*)\s*:\s*(.+)$/);
     if (!match) continue;
     const name = match[2];
+    const type = parameterType(match[3]);
     const relative = parameters.indexOf(name, searchFrom);
     searchFrom = relative + name.length;
     result.push({
       name,
       kind: 'parameter',
-      type: match[3].trim(),
-      detail: `${match[1] ? 'mut ' : ''}${name}: ${match[3].trim()}`,
+      type,
+      detail: `${match[1] ? 'mut ' : ''}${name}: ${type}`,
       line,
       column: baseColumn + relative,
       endColumn: baseColumn + relative + name.length,
@@ -125,6 +217,69 @@ function parameterSymbols(parameters, line, baseColumn, container) {
     });
   }
   return result;
+}
+
+function closingDelimiter(value, start, open, close) {
+  let depth = 0;
+  for (let index = start; index < value.length; index += 1) {
+    if (value[index] === open) depth += 1;
+    else if (value[index] === close) {
+      depth -= 1;
+      if (depth === 0) return index;
+    }
+  }
+  return -1;
+}
+
+function parseFunctionHeader(line) {
+  const prefix = line.match(/^\s*(?:(public|private)\s+)?(?:(native)\s+)?fn\s+/);
+  if (!prefix) return null;
+  let cursor = prefix[0].length;
+  let receiverName;
+  let receiverType;
+  if (line[cursor] === '(') {
+    const receiverEnd = closingDelimiter(line, cursor, '(', ')');
+    if (receiverEnd < 0) return null;
+    const receiver = line.slice(cursor + 1, receiverEnd).match(/^\s*([A-Za-z_]\w*)\s*:\s*(.+?)\s*$/);
+    if (!receiver) return null;
+    receiverName = receiver[1];
+    receiverType = receiver[2];
+    cursor = receiverEnd + 1;
+    while (/\s/.test(line[cursor] || '')) cursor += 1;
+  }
+  const nameMatch = line.slice(cursor).match(/^([A-Za-z_]\w*)/);
+  if (!nameMatch) return null;
+  const name = nameMatch[1];
+  const nameStart = cursor;
+  cursor += name.length;
+  while (/\s/.test(line[cursor] || '')) cursor += 1;
+  if (line[cursor] === '<') {
+    const genericEnd = closingDelimiter(line, cursor, '<', '>');
+    if (genericEnd < 0) return null;
+    cursor = genericEnd + 1;
+    while (/\s/.test(line[cursor] || '')) cursor += 1;
+  }
+  if (line[cursor] !== '(') return null;
+  const parameterStart = cursor + 1;
+  const parameterEnd = closingDelimiter(line, cursor, '(', ')');
+  if (parameterEnd < 0) return null;
+  const parameters = line.slice(parameterStart, parameterEnd);
+  const returnAndThrows = line
+    .slice(parameterEnd + 1)
+    .replace(/\s*\{.*$/, '')
+    .replace(/\s*=.*$/, '')
+    .trim();
+  return {
+    visibility: prefix[1] || 'public',
+    native: Boolean(prefix[2]),
+    receiverName,
+    receiverType,
+    name,
+    nameStart,
+    parameterStart,
+    parameters,
+    returnAndThrows
+  };
 }
 
 function precedingDocs(lines, lineNumber) {
@@ -146,14 +301,15 @@ function addSymbol(result, symbol) {
 
 function parseDocument(text, uri = '') {
   const lines = text.split(/\r?\n/);
-  const result = { uri, imports: [], symbols: [], exports: [], lines };
+  const maskedLines = lines.map(maskLine);
+  const result = { uri, imports: [], symbols: [], exports: [], lines, maskedLines };
   let depth = 0;
   let activeStruct = null;
   let activeFunction = null;
 
   for (let lineNumber = 0; lineNumber < lines.length; lineNumber += 1) {
     const original = lines[lineNumber];
-    const line = maskLine(original);
+    const line = maskedLines[lineNumber];
     const trimmed = line.trim();
 
     const importMatch = original.match(/^\s*import\s+(<([^>]+)>|"([^"]+)")\s*(?:as\s+([A-Za-z_]\w*))?/);
@@ -191,20 +347,16 @@ function parseDocument(text, uri = '') {
       });
     }
 
-    const functionMatch = line.match(/^\s*(?:(public|private)\s+)?(?:(native)\s+)?fn\s+(?:\(\s*([A-Za-z_]\w*)\s*:\s*([^\)]+)\s*\)\s*)?([A-Za-z_]\w*)\s*\(([^)]*)\)\s*([^\{=]*?)(?:\s*\{|\s*=|\s*$)/);
+    const functionMatch = parseFunctionHeader(line);
     if (functionMatch) {
-      const receiverName = functionMatch[3];
-      const receiverType = functionMatch[4] && functionMatch[4].trim();
-      const name = functionMatch[5];
-      const parameters = functionMatch[6];
-      const returnAndThrows = functionMatch[7].trim();
-      const column = original.indexOf(name, original.indexOf('fn') + 2);
-      const kind = functionMatch[2] ? 'native' : receiverType ? 'method' : 'function';
-      const signature = original.trim().replace(/\s*\{\s*$/, '').replace(/\s*=.*$/, '');
+      const { receiverName, receiverType, name, parameters, returnAndThrows } = functionMatch;
+      const column = functionMatch.nameStart;
+      const kind = functionMatch.native ? 'native' : receiverType ? 'method' : 'function';
+      const signature = original.trim().replace(/\s*\{\s*$/, '').replace(/\s*=\s*"[^"]*"\s*$/, '');
       const symbol = {
         name,
         kind,
-        visibility: functionMatch[1] || 'public',
+        visibility: functionMatch.visibility,
         receiverName,
         receiverType,
         parameters,
@@ -231,8 +383,7 @@ function parseDocument(text, uri = '') {
           container: name
         });
       }
-      const parameterStart = original.indexOf('(', column + name.length) + 1;
-      result.symbols.push(...parameterSymbols(parameters, lineNumber, parameterStart, name));
+      result.symbols.push(...parameterSymbols(parameters, lineNumber, functionMatch.parameterStart, name));
     }
 
     if (activeStruct && depth === activeStruct.depth && !functionMatch) {
@@ -329,12 +480,21 @@ function callAt(line, column) {
   return null;
 }
 
+function importPathAt(line, column) {
+  const before = line.slice(0, column);
+  const standard = before.match(/^\s*import\s+<std\/([A-Za-z_]\w*)?$/);
+  if (standard) return { kind: 'std', prefix: standard[1] || '' };
+  return null;
+}
+
 module.exports = {
   BUILTINS,
   KEYWORDS,
+  SPECIAL_FORMS,
   SPECIAL_VALUES,
   TYPES,
   callAt,
+  importPathAt,
   parseDocument,
   qualifierAt,
   splitTopLevel,

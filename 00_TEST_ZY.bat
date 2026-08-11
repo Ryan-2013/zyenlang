@@ -2,6 +2,7 @@
 setlocal
 cd /d "%~dp0"
 zy --help
-zy run examples\add.zy
-zy run examples\list_basic.zy
+zy check examples\v2_language_tour.zy
+zy run examples\v2_language_tour.zy
+zy run examples\v2_file_tree.zy -- examples
 pause

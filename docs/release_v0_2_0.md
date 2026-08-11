@@ -1,7 +1,7 @@
 # ZyenLang v0.2.0 release notes
 
 ZyenLang v0.2.0 is the first formal release of the new typed compiler pipeline.
-It ships as `zy2` beside the legacy-compatible `zy` command.
+It ships through the `zy` command.
 
 ## Downloads
 
@@ -44,10 +44,9 @@ All native packages include Zig 0.16.0. Verify downloads with
 - Release actions are pinned to immutable commits and artifacts are attested.
 - Windows MSI installation is per-user and restores PATH on uninstall.
 
-## Compatibility and limitations
+## Limitations
 
-The v0.2 syntax intentionally differs from v0.1. Existing programs continue to
-use `zy`; new programs should use `zy2`.
+The v0.2 language is invoked through `zy`.
 
 Native C is an explicit trust boundary: `check` does not compile it, while
 `build` and `run` do. ARC does not prevent cycles and cannot guarantee the

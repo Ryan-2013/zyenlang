@@ -47,8 +47,33 @@ assert.deepStrictEqual(language.qualifierAt('    io.pr', 9), { qualifier: 'io', 
 assert.deepStrictEqual(language.callAt('    pair(1, other(', 11), { name: 'pair', activeParameter: 1 });
 assert.deepStrictEqual(language.splitTopLevel('List<i32>, fn(i32, str), i32 | null'), ['List<i32>', 'fn(i32, str)', 'i32 | null']);
 assert(language.KEYWORDS.includes('TYPEOF__'));
+assert(language.KEYWORDS.includes('LIST_LEN__'));
+assert(language.KEYWORDS.includes('LIST_PUSH__'));
+assert(language.KEYWORDS.includes('LIST_SET__'));
+assert(language.KEYWORDS.includes('PRINT_CMD__'));
+assert(language.KEYWORDS.includes('STR_TO_LIST__'));
+assert(language.KEYWORDS.includes('FREE__'));
+assert(language.KEYWORDS.includes('SKIP__'));
 assert(!language.KEYWORDS.includes('typeof'));
-assert.deepStrictEqual(language.SPECIAL_VALUES, ['GET_ARGS__', 'GET_EXE__']);
+assert.deepStrictEqual(language.SPECIAL_VALUES, ['FILE__', 'GET_ARGS__', 'GET_EXE__']);
+assert(language.SPECIAL_FORMS.some((item) => item.name === 'LIST_PUSH__' && item.snippet.includes('${2:value}')));
+assert(language.SPECIAL_FORMS.some((item) => item.name === 'PRINT_CMD__' && item.documentation.includes('#RRGGBB')));
+assert(language.SPECIAL_FORMS.some((item) => item.name === 'STR_TO_LIST__' && item.detail.endsWith('List<str>')));
+assert(language.SPECIAL_FORMS.some((item) => item.name === 'FREE__' && item.detail === 'FREE__(local) void'));
+assert(language.SPECIAL_FORMS.some((item) => item.name === 'SKIP__' && item.detail === 'SKIP__(local) void'));
+assert(language.SPECIAL_FORMS.some((item) => item.name === 'TYPEOF__' && item.detail === 'TYPEOF__(value, Type) bool'));
+assert.deepStrictEqual(language.importPathAt('import <std/pa', 14), { kind: 'std', prefix: 'pa' });
+assert.strictEqual(language.importPathAt('let value = 1', 13), null);
+assert(language.BUILTINS.path.some(([name]) => name === 'join'));
+assert(language.BUILTINS.fs.some(([name]) => name === 'tree'));
+assert(language.BUILTINS.fs.some(([name]) => name === 'write_text'));
+assert(language.BUILTINS.gui.some(([name]) => name === 'button'));
+assert(language.BUILTINS.gui.some(([name]) => name === 'button_group'));
+
+const masked = language.parseDocument('fn main() i32 {\n    let value = 1 // value in comment\n    let text = "value in text"\n}', 'masked.zy');
+assert(masked.maskedLines[1].includes('let value'));
+assert(!masked.maskedLines[1].includes('value in comment'));
+assert(!masked.maskedLines[2].includes('value in text'));
 
 const nativeSource = `native source "bridge.c"
 private native fn editor_open(path: str) i32 = "zy2_editor_open"`;
@@ -57,6 +82,23 @@ assert(nativeParsed.exports.some((item) => item.kind === 'native' && item.name =
 
 const mutableParsed = language.parseDocument('fn update(mut value: i32) i32 { return value }', 'mut.zy');
 assert(mutableParsed.symbols.some((item) => item.kind === 'parameter' && item.name === 'value' && item.detail === 'mut value: i32'));
+
+const defaultParameterParsed = language.parseDocument('fn add<T>(a: i32 = 10, b: T) T { return (T)(a + (i32)b) }', 'defaults.zy');
+assert(defaultParameterParsed.exports.some((item) => item.kind === 'function' && item.name === 'add' && item.returnType === 'T'));
+assert(defaultParameterParsed.symbols.some((item) => item.kind === 'parameter' && item.name === 'a' && item.type === 'i32'));
+assert(defaultParameterParsed.symbols.some((item) => item.kind === 'parameter' && item.name === 'b' && item.type === 'T'));
+assert(defaultParameterParsed.exports.some((item) => item.name === 'add' && item.detail.includes('a: i32 = 10')));
+
+const callbackParsed = language.parseDocument(`struct Button {
+    public let when_click_func: fn() void
+}
+fn apply(callback: fn(i32, i32) i32, value: i32) i32 { return callback(value, value) }
+fn pick() fn(i32, i32) i32 { return apply }
+`, 'callbacks.zy');
+assert(callbackParsed.exports.some((item) => item.kind === 'field' && item.name === 'when_click_func' && item.type === 'fn() void'));
+assert(callbackParsed.exports.some((item) => item.kind === 'function' && item.name === 'apply' && item.returnType === 'i32'));
+assert(callbackParsed.symbols.some((item) => item.kind === 'parameter' && item.name === 'callback' && item.type === 'fn(i32, i32) i32'));
+assert(callbackParsed.exports.some((item) => item.kind === 'function' && item.name === 'pick' && item.returnType === 'fn(i32, i32) i32'));
 
 const defaultAlias = language.parseDocument('import "tools.zy"', 'alias.zy');
 assert.strictEqual(defaultAlias.imports[0].name, 'tools');
@@ -67,5 +109,15 @@ assert(manifest.capabilities.untrustedWorkspaces.restrictedConfigurations.includ
 const extensionSource = fs.readFileSync(path.join(__dirname, '..', 'extension.js'), 'utf8');
 assert(extensionSource.includes('new vscode.ProcessExecution'));
 assert(!extensionSource.includes('.sendText('));
+assert(extensionSource.includes('registerDocumentHighlightProvider'));
+assert(extensionSource.includes('parsed.maskedLines'));
+
+const snippets = fs.readFileSync(path.join(__dirname, '..', 'snippets', 'zyen.code-snippets'), 'utf8');
+assert(snippets.includes('TYPEOF__(${1:value}, ${2:i32})'));
+assert(snippets.includes('LIST_SET__(${1:list}, ${2:index}, ${3:value})'));
+assert(snippets.includes('PRINT_CMD__(${1:text}'));
+assert(snippets.includes('STR_TO_LIST__(${2:text})'));
+assert(snippets.includes('FREE__(${1:local})'));
+assert(snippets.includes('SKIP__(${1:local})'));
 
 console.log('language tests passed');

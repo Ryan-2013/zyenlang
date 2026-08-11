@@ -1,7 +1,7 @@
-public fn print(value: str) {
-    __runtime_write_line(value)
+public fn print(text: str) void {
+    PRINT_CMD__(text, "#FFFFFF")
 }
 
-public fn eprint(value: str) {
-    __runtime_write_error(value)
+public fn eprint(text: str) void {
+    PRINT_CMD__(text, "#ff0000")
 }

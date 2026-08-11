@@ -1,6 +1,0 @@
-import <std/c_module> as c_module;
-
-fn main() -> int {
-    let native: c_module.Module = c_module.load("recursive_struct.zlcm.h");
-    return 0;
-}

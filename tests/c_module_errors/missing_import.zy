@@ -1,4 +1,0 @@
-fn main() -> int {
-    let math: c_module.Module = c_module.load("../native_math.zlcm.h");
-    return math.add(20, 22);
-}

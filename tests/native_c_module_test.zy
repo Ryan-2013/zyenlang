@@ -1,9 +1,0 @@
-import <std/test>;
-import <std/c_module> as c_module;
-
-fn main() -> int {
-    let t: TestStats = test.new_stats("native c module");
-    let math: c_module.Module = c_module.load("native_math.zlcm.h");
-    t.eq_int("native compile-time load", math.add(b: 32, a: 10), 42);
-    return t.summary();
-}

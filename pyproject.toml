@@ -17,7 +17,6 @@ authors = [{name = "ZyenLang"}]
 zy = "zyenlang.cli.main:main"
 zyen = "zyenlang.cli.main:main"
 zyenv = "zyenlang.cli.zyenv:main"
-zy2 = "zyenlang.v2.__main__:main"
 zypkg = "zyenlang.v2.package_manager:main"
 
 [tool.setuptools.packages.find]
@@ -26,9 +25,7 @@ namespaces = true
 
 [tool.setuptools.package-data]
 zyenlang = [
-    "std/*.zy",
-    "std/*.c",
-    "std/*.h",
+    "v2/README.md",
     "v2/std/*.zy",
     "v2/std/*.md",
     "v2/std/*.c",

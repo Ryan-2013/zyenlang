@@ -1,9 +1,0 @@
-fn identity(value: int) -> int {
-    return value;
-}
-
-fn main() -> int {
-    let values: List = [];
-    values.append(identity);
-    return 0;
-}

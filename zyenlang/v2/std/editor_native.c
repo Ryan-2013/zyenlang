@@ -239,10 +239,11 @@ static void editor_add_completion(const char* value, size_t length, const char* 
 static void editor_refresh_completion(void) {
     static const char* language_words[] = {
         "as", "await", "bool", "break", "catch", "continue", "else", "Error", "f32", "f64",
-        "false", "fn", "GET_ARGS__", "GET_EXE__", "i8", "i16", "i32", "i64", "if", "import", "isize", "let", "List",
-        "native", "null", "private", "public", "recover", "return", "spawn", "stop", "str",
-        "struct", "throws", "true", "TYPEOF__", "u8", "u16", "u32", "u64", "usize", "void", "while",
-        "begin_frame", "close", "eprint", "get", "len", "next_event", "open", "present", "print", "save", "window"
+        "false", "FILE__", "fn", "FREE__", "GET_ARGS__", "GET_EXE__", "i8", "i16", "i32", "i64", "if", "import", "isize", "let", "List",
+        "LIST_LEN__", "LIST_PUSH__", "LIST_SET__",
+        "native", "null", "PRINT_CMD__", "private", "public", "recover", "return", "spawn", "stop", "str",
+        "SKIP__", "struct", "STR_TO_LIST__", "throws", "true", "TYPEOF__", "u8", "u16", "u32", "u64", "usize", "void", "while",
+        "application", "begin_frame", "button", "close", "column", "eprint", "get", "label", "next_event", "open", "panel", "present", "print", "save", "window"
     };
     editor_clear_completion();
     if (!g_editor.data || g_editor.cursor == 0) return;

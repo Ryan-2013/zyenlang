@@ -12,7 +12,7 @@ def test_msi_identifiers_are_stable_and_safe() -> None:
     assert msi_id("cmp", "toolchain/lib/file.h") == msi_id("cmp", "toolchain/lib/file.h")
     assert msi_id("cmp", "a") != msi_id("cmp", "b")
     assert stable_guid("component:zy.exe") == stable_guid("component:zy.exe")
-    assert stable_guid("component:zy.exe") != stable_guid("component:zy2.exe")
+    assert stable_guid("component:zy.exe") != stable_guid("component:toolchain/zig.exe")
     assert UPGRADE_CODE.startswith("{") and UPGRADE_CODE.endswith("}")
 
 
@@ -28,8 +28,7 @@ def test_msi_contains_product_files_and_safe_user_path_update(tmp_path: Path) ->
 
     stage = tmp_path / "zyv200"
     (stage / "examples").mkdir(parents=True)
-    (stage / "zy.exe").write_bytes(b"legacy")
-    (stage / "zy2.exe").write_bytes(b"v2")
+    (stage / "zy.exe").write_bytes(b"current")
     (stage / "examples" / "hello.zy").write_text("fn main() i32 { return 0 }", encoding="utf-8")
     output = tmp_path / "zyenlang.msi"
 

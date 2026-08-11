@@ -1,7 +1,15 @@
 # ZyenLang 0.2 compiler architecture
 
-ZyenLang 0.2 is a parallel compiler. It does not extend the v0.1
-line-oriented transpiler.
+ZyenLang 0.2 uses a typed frontend, backend-neutral IR, and C reference backend.
+The installed package has one public compiler:
+
+```text
+zyenlang/
+  cli/       public `zy` entry point and diagnostics
+  v2/        typed compiler, runtime, package manager, and standard library
+```
+
+The `v2` directory is an internal source namespace, not a second public command.
 
 ```text
 source
@@ -32,12 +40,14 @@ same checked IR that the future LLVM backend will consume.
 - standard, locked package, and relative module loading;
 - separate debug (`-O0`) and release (`-O2`) C builds;
 - a backend protocol and explicit LLVM backend boundary.
-- process special values `GET_ARGS__` and `GET_EXE__`;
+- process special values `GET_ARGS__` and `GET_EXE__`, plus per-module `FILE__`;
 - structured native C declarations with checked symbols, sources, and links;
 - `while`, direct assignment, `break`, and `continue`;
 - linear `Task<T>` values using `spawn call()` and exactly-once `await task`.
-- compile-time `TYPEOF__ value Type` boolean expressions;
-- checked `List<T>.get(i32) T throws Error` access.
+- compile-time `TYPEOF__(value, Type)` boolean expressions;
+- checked explicit casts written `(Type)value`;
+- shared struct metadata exposed as `value.__attributes__` and `value.__methods__`;
+- built-in `LIST_LEN__`, `LIST_PUSH__`, `LIST_SET__`, and checked `List<T>[i32]` operations.
 
 ## Type tests
 
@@ -45,21 +55,60 @@ same checked IR that the future LLVM backend will consume.
 
 ```zy
 let value: i32 = 12
-let is_integer: bool = TYPEOF__ value i32
-let is_text: bool = TYPEOF__ value str
-let is_argument_list: bool = TYPEOF__ GET_ARGS__ List<str>
+let is_integer: bool = TYPEOF__(value, i32)
+let is_text: bool = TYPEOF__(value, str)
 ```
 
-The operand is type-checked but never evaluated at runtime. Use parentheses
-around compound operands, for example `TYPEOF__ (left + right) i32`. This is a
-static type test, not runtime reflection or a string-returning type query.
+The operand is type-checked but never evaluated at runtime. Compound operands
+use the same form, for example `TYPEOF__(left + right, i32)`. This is a static
+type test, not runtime reflection or a string-returning type query.
+
+## Explicit casts
+
+Explicit conversions use `(Type)value` and remain visible at the call site:
+
+```zy
+let wide: i64 = (i64)42
+let enabled: bool = (bool)wide
+let flag: str = (str)enabled
+
+operation() catch err {
+    io.print((str)err.message)
+    recover
+}
+```
+
+The first implementation supports numeric-to-numeric conversions, numeric and
+`bool` conversions, and numeric/bool to `str`. Numeric formatting uses a
+compiler-generated lexical buffer and does not allocate heap memory. An entire
+`Error` cannot be cast to `str`; use `(str)err.message` so the selected data is
+explicit. Text parsing, pointer casts, optional casts, and user-defined
+conversions remain pending.
+
+## Struct metadata
+
+Every concrete struct value exposes two read-only metadata views:
+
+```zy
+let fields: List<str> = player.__attributes__
+let methods: List<str> = player.__methods__
+```
+
+The attribute list contains declared fields in source order. The method list
+contains declared receiver methods in source order. Both public and private
+members are described, but normal visibility rules still control access.
+`__attributes__` and `__methods__` are reserved member names.
+
+The compiler emits one static name table per used struct/category. Instances
+do not physically contain two Lists, so metadata does not enlarge every game
+object or require ARC allocation. The returned `List<str>` is a read-only view
+with program lifetime.
 
 ## Standard library reset
 
-The v2 standard library lives in `zyenlang/v2/std`. It is not copied from
-v0.1. Generic `list`, `error`, `option`, and `io` modules are the first checked
-modules. `ptr`, `string`, `task`, `channel`, `tk`, and `request` are rebuilt
-only after their required runtime layer exists.
+The standard library lives in `zyenlang/v2/std`. Generic `list`, `error`,
+`option`, and `io` modules are checked like application modules. Native-backed
+modules are built only when their required runtime layer exists.
 
 Console output is a library API, not a bare language function:
 
@@ -82,17 +131,78 @@ were ordinary local variables:
 ```zy
 let args: List<str> = GET_ARGS__
 let executable: str = GET_EXE__
+let source_file: str = FILE__
 ```
 
 `GET_ARGS__` contains only user arguments, so the executable name is excluded.
 `GET_EXE__` contains `argv[0]`. Both values borrow process-owned memory and stay
 valid for the complete program lifetime. They are reserved and cannot be
-shadowed by local declarations. Compiler special words are uppercase and end
-in `__`, making them visually distinct from variables and ordinary functions.
+shadowed by local declarations, and may appear only inside the root `main`.
+Helper functions receive them through ordinary parameters. `FILE__` is a
+compile-time borrowed string containing the absolute path of the module where
+the expression appears; it remains valid in every function. Compiler special
+words are uppercase and end in `__`, making them visually distinct from
+variables and ordinary functions. `TYPEOF__` is compile-time-only and also
+remains valid in every function.
 
-The v2 standard library receives no private native-module privilege. Future
-GUI and HTTP modules must use the same public v2 c_module ABI available to
-third-party packages.
+`std/process` receives no exception to that rule. Its explicit facade packages
+values supplied by `main`:
+
+```zy
+let args = process.args(GET_ARGS__)
+let executable = process.executable(GET_EXE__)
+```
+
+The standard library receives no private native-module privilege. GUI and
+HTTP modules use the same checked `native source`, `native link`, and `native
+fn` declarations available to third-party packages.
+
+## Ownership status
+
+The first v2 ARC milestone manages heap cells through `Box<T>`:
+
+```zy
+let value = Box(42)
+let alias = value
+alias.value = 43
+
+let references: usize = value.__strong_count__
+```
+
+`Box(value)` creates an atomic ARC control block. Copying a Box retains it;
+assignment releases the replaced value; function parameters receive a scoped
+retained reference; function returns transfer an owned reference. Normal scope
+exit, `return`, `stop`, `break`, `continue`, discarded temporaries, and
+temporary call arguments release automatically. The executable wrapper checks
+that no ARC control block remains after `main` returns.
+
+`List<T>` uses the same atomic ARC controls around a type-specialized dynamic
+storage containing items, length, and capacity. Owned aliases share mutations.
+Process arguments and struct metadata are borrowed views; their first mutation
+creates owned storage. Nested Lists and Box elements recursively retain and
+release. List values may now appear in struct fields through compiler-generated
+struct retain/release helpers. Managed structs can be copied, assigned, passed,
+returned, nested in another struct, or stored as List elements. Lists inside
+tuples and optionals remain rejected.
+Self-referential managed types such as `Node { children: List<Node> }` receive a
+check-time diagnostic until helper declarations and bodies are emitted in two
+phases.
+
+This is deliberately not described as complete general memory management yet.
+`Box<T>` may currently contain a primitive, borrowed `str`, or an unmanaged
+concrete struct. Strings remain borrowed `const char*`, and native modules
+remain responsible for resources they allocate. Awaiting `Task<T>` still joins
+the worker and destroys its control block exactly once.
+
+Blocks use lexical scope. Inner declarations are unavailable after their
+closing brace, while outer declarations remain visible and mutable. Casting a
+`str | null` to `str` evaluates the optional once and produces the contained
+string or the literal `"null"`.
+`SKIP__(local)` promotes a binding by one lexical block through a zero-initialized
+parent slot; managed values are retained into that slot and released with the
+parent scope. `FREE__(local)` emits an immediate managed release where needed,
+removes the binding from later cleanup, and permits a compiler-renamed binding
+with the same source name. Neither form accepts linear `Task<T>` values.
 
 Project package imports use `<package/module>`. The module loader accepts only
 dependencies declared by the importing project or package, resolves them from
@@ -100,22 +210,35 @@ dependencies declared by the importing project or package, resolves them from
 imports from escaping a package root. Package installation and lockfile rules
 are documented in [the package manager guide](package_manager.md).
 
-`List<T>.get(index)` performs a checked access and returns `T throws Error`.
+`List<T>` is a compiler-recognized generic type constructor, not a standard
+library struct. `LIST_LEN__(list)` lowers to the specialized storage length helper.
+`list[index]` performs checked access and returns `T throws Error`.
+`LIST_PUSH__(list, value)` and `LIST_SET__(list, index, value)` lower directly to the
+specialized mutation helpers; `LIST_SET__` returns `void throws Error`.
 Out-of-range errors carry the `.zy` call site's file, line, and column.
+`STR_TO_LIST__(text)` specializes `List<str>` and attaches a packed UTF-8
+character buffer to the List storage, so the same ARC owner releases both the
+item table and character data. `PRINT_CMD__(text, color)` lowers to the shared
+terminal truecolor runtime and emits plain text when color is disabled.
+Decimal and scientific-notation literals lower as typed `IRFloat` values,
+defaulting to `f64` and using `f32` when required by the immediate context.
+Generic `TYPEOF__` conditions are tri-state during template validation; a
+matching true branch narrows the local, while concrete monomorphizations omit
+branches whose static type test cannot succeed.
 
 ## Commands
 
-During bootstrap the compiler can run directly from the source tree:
+The compiler can run directly from the source tree:
 
 ```powershell
-python -m zyenlang.v2 check examples\v2_language_tour.zy
-python -m zyenlang.v2 run examples\v2_language_tour.zy
-python -m zyenlang.v2 run examples\v2_language_tour.zy --release
-python -m zyenlang.v2 build examples\v2_language_tour.zy -o build\tour.c
-python -m zyenlang.v2 build examples\v2_language_tour.zy -o build\tour.exe --release
+python -m zyenlang check examples\v2_language_tour.zy
+python -m zyenlang run examples\v2_language_tour.zy
+python -m zyenlang run examples\v2_language_tour.zy --release
+python -m zyenlang build examples\v2_language_tour.zy -o build\tour.c
+python -m zyenlang build examples\v2_language_tour.zy -o build\tour.exe --release
 ```
 
-After editable installation, the same interface is available as `zy2`.
+After editable installation, the compiler is available as `zy`.
 
 ## Editor tooling
 
@@ -127,8 +250,8 @@ mutable UTF-8 text buffer, and is tested independently of a specific IDE shell.
 
 ## Next implementation order
 
-1. Complete generic struct instantiation and typed List mutation/iteration.
-2. Add ownership IR, owned UTF-8 strings, `Box<T>`, and scope cleanup.
+1. Complete generic struct instantiation and recursive managed type cycles.
+2. Add owned UTF-8 strings and checked iteration syntax.
 3. Extend native declarations into the template-driven v2 c_module ABI.
 4. Add closure task arguments, `Channel<T>`, and a coroutine scheduler.
 5. Add direct LLVM IR and object emission without changing frontend semantics.

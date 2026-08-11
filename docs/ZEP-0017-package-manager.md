@@ -75,7 +75,7 @@ that introduced incompatible constraints.
 Downloaded archives are immutable and content-addressed under:
 
 ```text
-~/.zyen/packages/v1/<sha256>/
+~/.zyen/packages/0.2/<sha256>/
 ```
 
 The project stores no copied dependency source. The compiler reads `zy.lock`,
@@ -110,7 +110,7 @@ the portable ZyenLang archive needs no system Python installation.
 
 ## Implemented phase 1
 
-ZyenLang 0.2.1 provides `zy pkg` and the equivalent `zy2 pkg` command with
+ZyenLang 0.2.1 provides `zy pkg` with
 `init`, `add`, `remove`, `install`, `install --locked`, and `list`. It supports
 local path dependencies, transitive dependency locking, SHA-256 addressed
 cache entries, compiler resolution of `<package/module>`, and package-root

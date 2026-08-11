@@ -7,8 +7,7 @@ design goal is to build structured programs from a small language surface:
 values, structs, and functions.
 
 Version 0.2 introduces a new lexer, parser, typed AST/IR, semantic checker,
-module loader, and C backend. The new compiler is invoked with `zy2`. The
-`zy` command remains available for v0.1 source compatibility.
+module loader, and C backend. The compiler is invoked with `zy`.
 
 ## Download
 
@@ -55,10 +54,11 @@ fn main() i32 {
 ```
 
 ```powershell
-zy2 check main.zy
-zy2 run main.zy
-zy2 build main.zy -o main.exe --release
-zy2 build main.zy -o main.c
+zy check main.zy
+zy run main.zy
+zy run main.zy -- first-argument second-argument
+zy build main.zy -o main.exe --release
+zy build main.zy -o main.c
 ```
 
 ## Language
@@ -66,15 +66,19 @@ zy2 build main.zy -o main.c
 ZyenLang 0.2 currently provides:
 
 - fixed-width integers, floats, `bool`, `str`, and explicit types;
+- typed f-strings such as `f"answer={value}"` with once-only interpolation;
 - inferred or typed `let` declarations with newline-terminated statements;
 - structs with defaults, public/private fields, and receiver methods;
+- ARC-managed `List<T>` struct fields with recursive copy and cleanup;
+- named top-level function values, checked indirect calls, and struct callback fields;
 - tuple returns and typed destructuring;
 - generic functions and strongly typed `List<T>` values;
 - `T | null` optionals and `if let` unwrapping;
 - `throws Error`, `stop`, `catch`, and `recover`;
 - `while`, assignment, `break`, and `continue`;
 - linear `Task<T>` values with `spawn` and exactly-once `await`;
-- `TYPEOF__ value Type` compile-time checks;
+- decimal `f64`/contextual `f32` literals, generic-aware `TYPEOF__`, `FILE__`,
+  terminal `PRINT_CMD__`, UTF-8 `STR_TO_LIST__`, and scoped `SKIP__`/`FREE__`;
 - standard, package, and relative modules plus checked native C declarations.
 
 See [the v0.2 architecture](docs/v2_architecture.md),
@@ -96,13 +100,15 @@ zy pkg list
 Packages are imported from their `src/` directory with
 `import <math-lib/math> as math`. See the
 [package manager guide](docs/package_manager.md) for manifests, cache safety,
-and current v1 limits.
+and current local-path limits.
 
 ## Standard library
 
 The v0.2 standard library includes typed list/error/option helpers, process
-arguments, OS threads, HTTP client and server modules, and a cross-platform GUI
-backend. Every module uses the same import mechanism as third-party modules.
+arguments, portable filesystem and path operations, OS threads, HTTP client and
+server modules, and a cross-platform GUI backend with retained `Application`,
+`Panel`, `Label`, `Button`, and `Column` widgets. Every module uses the same
+import mechanism as third-party modules.
 
 ```zy
 import <std/request> as request
@@ -115,6 +121,12 @@ fn main() i32 {
     }
     return 0
 }
+```
+
+A complete filesystem CLI is included as `examples/v2_file_tree.zy`:
+
+```powershell
+zy run examples/v2_file_tree.zy -- . tree.txt
 ```
 
 ## VS Code
@@ -131,14 +143,14 @@ command strings.
 git clone https://github.com/Ryan-2013/zyenlang.git
 cd zyenlang
 python -m pip install -e .
-zy2 --version
+zy --version
 python -m pytest -q
 ```
 
 ## Security boundary
 
-`zy2 check` parses and type-checks code but does not compile or execute native
-C. `zy2 build` and `zy2 run` intentionally compile `native source` declarations,
+`zy check` parses and type-checks code but does not compile or execute native
+C. `zy build` and `zy run` intentionally compile `native source` declarations,
 so treat an unfamiliar ZyenLang project like an unfamiliar C project and
 review it before building. Module depth, module count, source size, archive
 extraction, native symbol names, and linker library names are validated.
@@ -147,10 +159,7 @@ ZyenLang remains an experimental language. ARC does not make borrowed native
 resources or external C libraries memory-safe, and the project does not claim
 Rust-equivalent safety.
 
-## Compatibility
-
-Existing v0.1 programs continue to use `zy`. Their syntax reference and ZEPs
-remain in [docs/current_syntax_zh_TW.md](docs/current_syntax_zh_TW.md) and the
-[ZyenLang ZEP repository](https://github.com/Ryan-2013/zyenlang-zeps).
+The compiler implementation and standard library live in `zyenlang/v2`. The
+repository and release packages contain only the ZyenLang 0.2 language line.
 
 License: MIT.

@@ -1,5 +1,0 @@
-fn main() -> int {
-    let source: ptr<int> = ptr<int>;
-    let invalid: ptr<float> = source;
-    return 0;
-}

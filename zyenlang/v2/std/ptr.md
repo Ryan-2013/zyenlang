@@ -1,29 +1,32 @@
 # `std/ptr` v2 contract
 
-`std/ptr` will be the only ordinary source-level memory API. ZyenLang 0.2 has
-no `*` or `&` expression operators.
+ZyenLang 0.2 has no `*` or `&` expression operators. The first ownership
+milestone exposes `Box<T>` directly as a compiler-managed type:
 
 ```zy
-import <std/ptr> as ptr
-
-let value: ptr.Box<i32> = ptr.box(12)
-value.set(20)
-let current: i32 = value.get()
+let value: Box<i32> = Box(12)
+let alias = value
+alias.value = 20
+let current: i32 = value.value
+let references: usize = value.__strong_count__
 ```
 
 The public types are:
 
-- `Box<T>` owns one heap value and releases it when its final owner leaves.
+- `Box<T>` is implemented. It owns one heap cell and releases it when its
+  final atomic ARC owner leaves.
 - `Ref<T>` is a checked, non-owning borrow whose lifetime cannot escape the
-  operation that created it.
+  operation that created it. It is not implemented yet.
 - `Raw<T>` is an unsafe C address available only to native compatibility code.
+  It is not implemented yet.
 
-The compiler retains private ownership primitives so it can insert moves and
-cleanup at every return and scope exit. The public module will be implemented
-through the v2 native ABI, with `get` and `set` emitted as intrinsics or
-`static inline` operations. A normal external C call per access is forbidden
-because it would block optimization.
+Box construction, retain, release, payload access, and scope cleanup are
+compiler/runtime intrinsics and compile to inline C operations. They do not
+make an external C call per access.
 
-This file is a contract, not a placeholder implementation. `std/ptr` becomes
-importable only when the ownership pass, escape checks, and native ABI tests
-all pass.
+Box payloads are currently limited to primitives, borrowed `str`, and concrete
+structs without managed fields. Structs containing List fields now have managed
+destructors, but Box still needs a Box-specific recursive payload destructor
+before it can own those structs or appear in a struct field, tuple, optional,
+or another Box. `List<Box<T>>` is supported for valid unmanaged `T` payloads.
+`std/ptr` remains pending as the future facade for `Ref<T>` and `Raw<T>`.

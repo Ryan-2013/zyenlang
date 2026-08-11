@@ -43,3 +43,34 @@ def test_only_v02_standard_library_is_present() -> None:
     assert (package / "v2" / "std" / "list.zy").is_file()
     assert not (package / "v1").exists()
     assert not (project / "std").exists()
+
+
+def test_run_accepts_direct_program_arguments(monkeypatch, tmp_path: Path) -> None:
+    entry = importlib.import_module("zyenlang.v2.__main__")
+    received: list[tuple[Path, list[str]]] = []
+
+    class FakeCompiler:
+        def run_file(self, path: Path, arguments: list[str]) -> int:
+            received.append((path, arguments))
+            return 19
+
+    monkeypatch.setattr(entry, "Compiler", lambda _options: FakeCompiler())
+
+    source = tmp_path / "main.zy"
+    assert entry.main(["run", str(source), "folder", "output.txt"]) == 19
+    assert received == [(source, ["folder", "output.txt"])]
+
+
+def test_run_keeps_double_dash_program_arguments(monkeypatch, tmp_path: Path) -> None:
+    entry = importlib.import_module("zyenlang.v2.__main__")
+    received: list[list[str]] = []
+
+    class FakeCompiler:
+        def run_file(self, _path: Path, arguments: list[str]) -> int:
+            received.append(arguments)
+            return 0
+
+    monkeypatch.setattr(entry, "Compiler", lambda _options: FakeCompiler())
+
+    assert entry.main(["run", str(tmp_path / "main.zy"), "--", "-h"]) == 0
+    assert received == [["-h"]]

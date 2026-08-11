@@ -60,7 +60,15 @@ def main(argv: list[str] | None = None) -> int:
         separator = arguments.index("--")
         program_args = arguments[separator + 1:]
         arguments = arguments[:separator]
-    args = make_parser().parse_args(arguments)
+    parser = make_parser()
+    if arguments and arguments[0] == "run" and not program_args:
+        args, direct_program_args = parser.parse_known_args(arguments)
+        option_like = next((value for value in direct_program_args if value.startswith("-")), None)
+        if option_like is not None:
+            parser.error(f"program option `{option_like}` must follow `--`")
+        program_args = direct_program_args
+    else:
+        args = parser.parse_args(arguments)
     if args.command == "doctor":
         return handle_doctor(args)
     if args.command == "pkg":

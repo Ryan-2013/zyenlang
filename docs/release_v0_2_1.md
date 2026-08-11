@@ -17,9 +17,9 @@ consistent visual convention for compiler-provided special words.
 Portable packages and the MSI include the compiler runtime and pinned Zig
 0.16.0 toolchain. They do not require a separate Python, GCC, or MSYS2 install.
 
-## Package manager v1
+## Package manager
 
-`zy pkg` and `zy2 pkg` now provide:
+`zy pkg` now provides:
 
 ```text
 init
@@ -32,7 +32,7 @@ list
 
 The first phase supports local path dependencies, transitive dependency
 edges, deterministic `zy.lock` files, and SHA-256 content-addressed storage at
-`~/.zyen/packages/v1`. The compiler resolves checked imports such as
+`~/.zyen/packages/0.2`. The compiler resolves checked imports such as
 `import <math-lib/math> as math` directly from locked cache entries.
 
 Installation never runs package code or build scripts. Symlinks, special

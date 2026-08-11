@@ -1,9 +1,8 @@
 # ZyenLang 0.2 release packages
 
-Every platform archive contains both compiler commands:
+Every platform archive contains:
 
-- `zy2`: the ZyenLang 0.2 typed compiler;
-- `zy`: the legacy v0.1 compatibility compiler;
+- `zy`: the ZyenLang 0.2 typed compiler;
 - a pinned Zig 0.16.0 C toolchain;
 - standard libraries, examples, documentation, and GUI runtime.
 
@@ -19,8 +18,8 @@ that exact directory to the user PATH and removes it during uninstall.
 Open a new terminal after installation:
 
 ```powershell
-zy2 --version
-zy2 run examples\v2_language_tour.zy
+zy --version
+zy run examples\v2_language_tour.zy
 ```
 
 The MSI is reproducibly generated from the already-tested portable directory.
@@ -32,8 +31,8 @@ Authenticode-signed.
 ```powershell
 cd zyv201
 .\add-to-user-path.cmd
-.\zy2.exe --version
-.\zy2.exe run examples\v2_language_tour.zy
+.\zy.exe --version
+.\zy.exe run examples\v2_language_tour.zy
 ```
 
 The helper changes only the current user's PATH. It supports a dry run through
@@ -44,8 +43,8 @@ The helper changes only the current user's PATH. It supports a dry run through
 ```bash
 cd zyv201
 ./add-to-user-path.sh
-./zy2 --version
-./zy2 run examples/v2_language_tour.zy
+./zy --version
+./zy run examples/v2_language_tour.zy
 ```
 
 Linux still needs its normal system OpenGL/X11 libraries. The archive does not
@@ -53,5 +52,5 @@ install display drivers or system packages.
 
 ## Compiler override
 
-The portable v2 compiler selects bundled Zig first. Set `ZY2_CC` to override
-it, for example `ZY2_CC=clang`. The legacy compiler uses `ZY_CC`.
+The portable compiler selects bundled Zig first. Set `ZY_CC` to override it,
+for example `ZY_CC=clang`.

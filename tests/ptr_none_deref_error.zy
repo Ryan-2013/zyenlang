@@ -1,5 +1,0 @@
-fn main() -> int {
-    let missing: ptr<int> = None;
-    print((str)*missing);
-    return 0;
-}

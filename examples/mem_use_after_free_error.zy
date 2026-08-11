@@ -1,8 +1,0 @@
-import <std/mem>;
-
-fn main() -> int {
-    let p: ptr<int> = mem.alloc_int(1);
-    mem.free(p);
-    print((str)(*p)); // runtime error: Freed pointer dereference
-    return 0;
-}

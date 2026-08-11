@@ -78,7 +78,7 @@ def zyen_home() -> Path:
 
 
 def package_cache_root() -> Path:
-    return zyen_home() / "packages" / "v1"
+    return zyen_home() / "packages" / "0.2"
 
 
 def cache_path(digest: str) -> Path:
@@ -150,7 +150,7 @@ def load_manifest(root: Path) -> PackageManifest:
             raise PackageError(f"invalid dependency name `{dependency_name}`")
         if not isinstance(raw_spec, dict) or set(raw_spec) != {"path"} or not isinstance(raw_spec.get("path"), str):
             raise PackageError(
-                f"dependency `{dependency_name}` must use {{ path = \"../package\" }}; registry and Git sources are not in package manager v1"
+                f"dependency `{dependency_name}` must use {{ path = \"../package\" }}; registry and Git sources are not supported yet"
             )
         dependency_path = raw_spec["path"].strip()
         if not dependency_path or "\x00" in dependency_path:
@@ -213,6 +213,7 @@ def _package_files(root: Path) -> list[tuple[Path, str, int]]:
 
 def compute_package_digest(root: Path) -> str:
     digest = hashlib.sha256()
+    # Keep the original digest domain so existing 0.2 lockfiles remain valid.
     digest.update(b"ZyenLang package v1\0")
     for path, relative, size in _package_files(root):
         encoded_path = relative.encode("utf-8")
@@ -394,7 +395,7 @@ def read_lock(project_root: Path) -> LockFile:
         if not SEMVER_RE.fullmatch(version):
             raise PackageError(f"invalid {LOCK_NAME}: package `{name}` has invalid version `{version}`")
         if source_type != "path":
-            raise PackageError(f"package manager v1 only supports path sources, got `{source_type}`")
+            raise PackageError(f"the current package manager only supports path sources, got `{source_type}`")
         if not source or "\x00" in source:
             raise PackageError(f"invalid {LOCK_NAME}: package `{name}` has an invalid source path")
         if not re.fullmatch(r"[0-9a-f]{64}", digest):
@@ -537,7 +538,7 @@ def add_dependency(project_root: Path, source: Path) -> LockFile:
     source = source.resolve()
     if not source.is_dir():
         raise PackageError(
-            f"local package path not found: {source}; package manager v1 does not support registry or Git sources"
+            f"local package path not found: {source}; registry and Git sources are not supported yet"
         )
     dependency = load_manifest(source)
     if dependency.name == manifest.name:
@@ -627,7 +628,7 @@ def handle_command(args: argparse.Namespace) -> int:
 
 
 def make_parser(prog: str = "zy pkg") -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog=prog, description="ZyenLang package manager v1")
+    parser = argparse.ArgumentParser(prog=prog, description="ZyenLang 0.2 package manager")
     configure_parser(parser)
     return parser
 

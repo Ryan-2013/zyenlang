@@ -5,9 +5,9 @@ Run from the project root:
     python tools/install_zy_module.py
 
 After install:
-    zy check examples/add.zy
-    zy run examples/add.zy
-    zy build examples/add.zy -o main.c
+    zy check examples/v2_language_tour.zy
+    zy run examples/v2_language_tour.zy
+    zy build examples/v2_language_tour.zy -o main.c
 """
 from __future__ import annotations
 
@@ -31,8 +31,8 @@ def main() -> int:
 
     print("\nInstalled. Try:")
     print("  zy --help")
-    print("  zy run examples/add.zy")
-    print("  zy build examples/add.zy -o main.c")
+    print("  zy run examples/v2_language_tour.zy")
+    print("  zy build examples/v2_language_tour.zy -o main.c")
     return 0
 
 

@@ -1,9 +1,0 @@
-struct CarDirectFieldError {
-    let *this.value: ptr<int> = 0;
-}
-
-fn main() -> int {
-    let *car_ptr: ptr<CarDirectFieldError> = CarDirectFieldError{};
-    print((str)(*car_ptr.value));
-    return 0;
-}

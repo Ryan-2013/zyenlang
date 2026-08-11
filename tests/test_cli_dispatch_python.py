@@ -8,56 +8,38 @@ def cli_module():
     return importlib.import_module("zyenlang.cli.main")
 
 
-def test_zy_defaults_to_the_current_v2_compiler(monkeypatch) -> None:
+def test_zy_forwards_to_the_current_compiler(monkeypatch) -> None:
     cli = cli_module()
     received: list[list[str]] = []
-    monkeypatch.setattr(cli, "v2_main", lambda argv: received.append(argv) or 17)
-    monkeypatch.setattr(cli, "legacy_main", lambda argv: 99)
+    monkeypatch.setattr(cli, "compiler_main", lambda argv: received.append(argv) or 17)
 
     assert cli.main(["run", "main.zy"]) == 17
     assert received == [["run", "main.zy"]]
 
 
-def test_zy_legacy_subcommand_uses_the_v1_compiler(monkeypatch) -> None:
+def test_zy_version_alias_uses_version_flag(monkeypatch) -> None:
     cli = cli_module()
     received: list[list[str]] = []
-    monkeypatch.setattr(cli, "legacy_main", lambda argv: received.append(argv) or 23)
-    monkeypatch.setattr(cli, "v2_main", lambda argv: 99)
-
-    assert cli.main(["legacy", "run", "old.zy"]) == 23
-    assert received == [["run", "old.zy"]]
-
-
-def test_zy1_entry_always_uses_the_v1_compiler(monkeypatch) -> None:
-    cli = cli_module()
-    received: list[list[str]] = []
-    monkeypatch.setattr(cli, "legacy_main", lambda argv: received.append(argv) or 31)
-
-    assert cli.legacy_entry(["check", "old.zy"]) == 31
-    assert received == [["check", "old.zy"]]
-
-
-def test_zy_version_alias_uses_v2_version_flag(monkeypatch) -> None:
-    cli = cli_module()
-    received: list[list[str]] = []
-    monkeypatch.setattr(cli, "v2_main", lambda argv: received.append(argv) or 0)
+    monkeypatch.setattr(cli, "compiler_main", lambda argv: received.append(argv) or 0)
 
     assert cli.main(["version"]) == 0
     assert received == [["--version"]]
 
 
-def test_legacy_imports_alias_the_versioned_v1_modules() -> None:
-    old_transpiler = importlib.import_module("zyenlang.transpiler")
-    v1_transpiler = importlib.import_module("zyenlang.v1.transpiler")
-    old_c_module = importlib.import_module("zyenlang.c_module")
-    v1_c_module = importlib.import_module("zyenlang.v1.c_module")
+def test_only_current_public_compiler_commands_are_packaged() -> None:
+    project = Path(__file__).resolve().parents[1]
+    pyproject = (project / "pyproject.toml").read_text(encoding="utf-8")
 
-    assert old_transpiler is v1_transpiler
-    assert old_c_module is v1_c_module
+    assert '\nzy = "zyenlang.cli.main:main"' in pyproject
+    assert '\nzyen = "zyenlang.cli.main:main"' in pyproject
+    assert "\nzy1 =" not in pyproject
+    assert "\nzy2 =" not in pyproject
 
 
-def test_compiler_generations_have_separate_bundled_std_directories() -> None:
+def test_only_v02_standard_library_is_present() -> None:
+    project = Path(__file__).resolve().parents[1]
     package = Path(importlib.import_module("zyenlang").__file__).resolve().parent
 
-    assert (package / "v1" / "std" / "list.zy").is_file()
     assert (package / "v2" / "std" / "list.zy").is_file()
+    assert not (package / "v1").exists()
+    assert not (project / "std").exists()

@@ -1,21 +1,15 @@
 # ZyenLang 0.2 compiler architecture
 
-ZyenLang 0.2 is a parallel compiler. It does not extend the v0.1
-line-oriented transpiler.
-
-The installed package keeps the two compiler generations in explicit version
-namespaces:
+ZyenLang 0.2 uses a typed frontend, backend-neutral IR, and C reference backend.
+The installed package has one public compiler:
 
 ```text
 zyenlang/
-  cli/       shared `zy` / `zy1` command dispatch
-  v1/        preserved v0.1 transpiler, tools, and standard library
-  v2/        current typed compiler, runtime, and standard library
+  cli/       public `zy` entry point and diagnostics
+  v2/        typed compiler, runtime, package manager, and standard library
 ```
 
-Files such as `zyenlang/transpiler.py` are compatibility aliases only. Compiler
-development belongs in the matching version directory so v1 maintenance cannot
-silently change the v2 frontend or IR.
+The `v2` directory is an internal source namespace, not a second public command.
 
 ```text
 source
@@ -112,10 +106,9 @@ with program lifetime.
 
 ## Standard library reset
 
-The v2 standard library lives in `zyenlang/v2/std`. It is not copied from
-v0.1. Generic `list`, `error`, `option`, and `io` modules are the first checked
-modules. `ptr`, `string`, `task`, `channel`, `tk`, and `request` are rebuilt
-only after their required runtime layer exists.
+The standard library lives in `zyenlang/v2/std`. Generic `list`, `error`,
+`option`, and `io` modules are checked like application modules. Native-backed
+modules are built only when their required runtime layer exists.
 
 Console output is a library API, not a bare language function:
 
@@ -160,7 +153,7 @@ let args = process.args(GET_ARGS__)
 let executable = process.executable(GET_EXE__)
 ```
 
-The v2 standard library receives no private native-module privilege. GUI and
+The standard library receives no private native-module privilege. GUI and
 HTTP modules use the same checked `native source`, `native link`, and `native
 fn` declarations available to third-party packages.
 
@@ -221,19 +214,17 @@ Out-of-range errors carry the `.zy` call site's file, line, and column.
 
 ## Commands
 
-During bootstrap the compiler can run directly from the source tree:
+The compiler can run directly from the source tree:
 
 ```powershell
-python -m zyenlang.v2 check examples\v2_language_tour.zy
-python -m zyenlang.v2 run examples\v2_language_tour.zy
-python -m zyenlang.v2 run examples\v2_language_tour.zy --release
-python -m zyenlang.v2 build examples\v2_language_tour.zy -o build\tour.c
-python -m zyenlang.v2 build examples\v2_language_tour.zy -o build\tour.exe --release
+python -m zyenlang check examples\v2_language_tour.zy
+python -m zyenlang run examples\v2_language_tour.zy
+python -m zyenlang run examples\v2_language_tour.zy --release
+python -m zyenlang build examples\v2_language_tour.zy -o build\tour.c
+python -m zyenlang build examples\v2_language_tour.zy -o build\tour.exe --release
 ```
 
-After editable installation, the current compiler is available as `zy`; `zy2`
-is an equivalent compatibility name. Legacy v0.1 source uses `zy1` or
-`zy legacy`.
+After editable installation, the compiler is available as `zy`.
 
 ## Editor tooling
 

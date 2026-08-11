@@ -7,7 +7,7 @@ The official editor extension for ZyenLang 0.2.
 - ZyenLang 0.2 syntax highlighting and bracket-aware editing
 - completion for keywords, types, special forms, import paths, symbols, struct members, and standard modules
 - hover signatures, parameter hints, Go to Definition, code-only Find References, document highlights, outline, and workspace symbols
-- live `zy2 check` diagnostics for the current unsaved buffer
+- live `zy check` diagnostics for the current unsaved buffer
 - Run, Build Executable, and Emit C Source commands
 - optional **ZyenLang Ember** theme using `#20201F` with `#D97757` accents
 
@@ -21,7 +21,7 @@ time, file-size, and output limits.
 
 ## Requirements
 
-Install ZyenLang and make sure `zy2 --version` works in a new terminal. If the
+Install ZyenLang and make sure `zy --version` works in a new terminal. If the
 compiler is elsewhere, set `zyenlang.compilerPath` to its executable path.
 
 ## Commands
@@ -37,7 +37,7 @@ The editor title also shows Run and Check buttons for `.zy` files.
 
 ## Settings
 
-- `zyenlang.compilerPath`: compiler executable, default `zy2`
+- `zyenlang.compilerPath`: compiler executable, default `zy`
 - `zyenlang.diagnostics.enable`: live checking, default `true`
 - `zyenlang.diagnostics.delay`: typing debounce in milliseconds, default `300`
 - `zyenlang.diagnostics.timeout`: check timeout in milliseconds, default `15000`

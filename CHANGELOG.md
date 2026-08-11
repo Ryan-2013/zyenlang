@@ -20,6 +20,12 @@
 
 ### Changed
 
+- Retired the v0.1 compiler, standard library, examples, tests, editor assets,
+  compatibility imports, and `zy1`/`zy2` command split. ZyenLang now ships one
+  v0.2 compiler through `zy`, `zyen`, and `python -m zyenlang`.
+- Portable archives, Windows MSI packages, CI, `zy doctor`, and the VS Code
+  extension now validate and publish only the v0.2 compiler and standard
+  library.
 - Compiler diagnostics, uncaught `stop`, runtime panics, and `io.eprint` use red
   text on interactive terminals, with `NO_COLOR` and `ZYEN_COLOR` control.
 - Mixed numeric arithmetic now uses deterministic promotion. Integer/float

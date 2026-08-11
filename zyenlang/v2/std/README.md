@@ -1,7 +1,7 @@
 # ZyenLang 0.2 standard library
 
-This directory is the clean-room standard library for the typed v2 compiler.
-It does not import or mirror the v0.1 modules.
+This directory is the standard library for the typed ZyenLang 0.2 compiler.
+It is the only bundled ZyenLang standard library.
 
 ## Rules
 
@@ -11,7 +11,7 @@ It does not import or mirror the v0.1 modules.
   typed `native fn` declarations; std modules receive no private loading list.
 - `Box<T>` ownership is a tested compiler/runtime primitive. The future
   `std/ptr` facade will add checked `Ref<T>` and native-only `Raw<T>`.
-- Every module must pass `python -m zyenlang.v2 check --library` before it is
+- Every module must pass `python -m zyenlang check --library` before it is
   added to the portable release.
 
 ## Bootstrap status

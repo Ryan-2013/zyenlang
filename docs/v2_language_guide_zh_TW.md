@@ -1,8 +1,6 @@
 # ZyenLang 0.2.1 語言完整入門
 
-這份文件只描述目前 `zy` 編譯器已經實作並測試的 ZyenLang 0.2 語法。`zy2`
-是同一套編譯器的相容名稱。舊版請使用 `zy1` 或 `zy legacy`；舊版的 `int`、
-`set`、分號、`let *`、`ptr<T>` 與 struct 內嵌 method 寫法，不適用於 0.2。
+這份文件只描述目前 `zy` 編譯器已經實作並測試的 ZyenLang 0.2 語法。
 
 ## 1. 執行程式
 
@@ -19,15 +17,8 @@ zy build main.zy -o build\main.exe --release
 直接從原始碼目錄執行時：
 
 ```powershell
-python -m zyenlang.v2 check main.zy
-python -m zyenlang.v2 run main.zy
-```
-
-`zy2` 保留為 v2 相容別名。執行舊版 v0.1 程式時使用：
-
-```powershell
-zy1 run old.zy
-zy legacy run old.zy
+python -m zyenlang check main.zy
+python -m zyenlang run main.zy
 ```
 
 最小程式：
@@ -723,11 +714,11 @@ import <math-lib/math> as math
 套件管理器：
 
 ```powershell
-zy2 pkg init --name my-app
-zy2 pkg add ..\math-lib
-zy2 pkg install --locked
-zy2 pkg list
-zy2 pkg remove math-lib
+zy pkg init --name my-app
+zy pkg add ..\math-lib
+zy pkg install --locked
+zy pkg list
+zy pkg remove math-lib
 ```
 
 目前套件管理器只支援本機 path dependency，尚未加入 registry 與 Git dependency。

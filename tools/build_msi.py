@@ -45,8 +45,8 @@ def build_msi(stage: Path, output: Path, version: str) -> Path:
     validate_version(version)
     stage = stage.resolve()
     output = output.resolve()
-    if not (stage / "zy.exe").is_file() or not (stage / "zy2.exe").is_file():
-        raise SystemExit("portable stage must contain both zy.exe and zy2.exe")
+    if not (stage / "zy.exe").is_file():
+        raise SystemExit("portable stage must contain zy.exe")
     output.parent.mkdir(parents=True, exist_ok=True)
 
     product_code = stable_guid(f"product:{version}:windows-x64")

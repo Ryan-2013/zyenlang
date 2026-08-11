@@ -1,6 +1,0 @@
-import <std/c_module> as c_module;
-
-fn main() -> int {
-    c_module.load("../native_math.zlcm.h");
-    return 0;
-}

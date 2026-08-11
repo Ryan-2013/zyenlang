@@ -1,9 +1,0 @@
-import <std/config>;
-
-fn main() -> int {
-    let cfg: str = "name=Zyen\nthreads=4\nenabled=true";
-    print((str)(config.get_str(cfg, "name", "unknown")));
-    print((str)(config.get_int(cfg, "threads", 1)));
-    print((str)(config.get_bool(cfg, "enabled", false)));
-    return 0;
-}

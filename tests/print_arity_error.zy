@@ -1,4 +1,0 @@
-fn main() -> int {
-    print("left", "right");
-    return 0;
-}

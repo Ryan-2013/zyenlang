@@ -1,6 +1,0 @@
-fn main() -> int {
-    let *text: ptr<str> = "hello";
-    let shifted: ptr<void> = text + 1;
-    print((str)shifted);
-    return 0;
-}

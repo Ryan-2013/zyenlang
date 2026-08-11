@@ -109,8 +109,8 @@
       "properties": {
         "zyenlang.compilerPath": {
           "type": "string",
-          "default": "zy2",
-          "description": "Path to the zy2 compiler executable."
+          "default": "zy",
+          "description": "Path to the ZyenLang compiler executable."
         },
         "zyenlang.diagnostics.enable": {
           "type": "boolean",

@@ -7,9 +7,7 @@ design goal is to build structured programs from a small language surface:
 values, structs, and functions.
 
 Version 0.2 introduces a new lexer, parser, typed AST/IR, semantic checker,
-module loader, and C backend. The current compiler is invoked with `zy`;
-`zy2` remains an equivalent compatibility name. Legacy v0.1 source uses
-`zy1` or `zy legacy`.
+module loader, and C backend. The compiler is invoked with `zy`.
 
 ## Download
 
@@ -101,7 +99,7 @@ zy pkg list
 Packages are imported from their `src/` directory with
 `import <math-lib/math> as math`. See the
 [package manager guide](docs/package_manager.md) for manifests, cache safety,
-and current v1 limits.
+and current local-path limits.
 
 ## Standard library
 
@@ -144,14 +142,14 @@ command strings.
 git clone https://github.com/Ryan-2013/zyenlang.git
 cd zyenlang
 python -m pip install -e .
-zy2 --version
+zy --version
 python -m pytest -q
 ```
 
 ## Security boundary
 
-`zy2 check` parses and type-checks code but does not compile or execute native
-C. `zy2 build` and `zy2 run` intentionally compile `native source` declarations,
+`zy check` parses and type-checks code but does not compile or execute native
+C. `zy build` and `zy run` intentionally compile `native source` declarations,
 so treat an unfamiliar ZyenLang project like an unfamiliar C project and
 review it before building. Module depth, module count, source size, archive
 extraction, native symbol names, and linker library names are validated.
@@ -160,15 +158,7 @@ ZyenLang remains an experimental language. ARC does not make borrowed native
 resources or external C libraries memory-safe, and the project does not claim
 Rust-equivalent safety.
 
-## Compatibility
-
-Existing v0.1 programs use `zy1` or `zy legacy`. Their syntax reference and ZEPs
-remain in [docs/current_syntax_zh_TW.md](docs/current_syntax_zh_TW.md) and the
-[ZyenLang ZEP repository](https://github.com/Ryan-2013/zyenlang-zeps).
-
-Compiler sources are separated by generation: `zyenlang/v1` contains the
-preserved v0.1 transpiler and standard library, while `zyenlang/v2` contains the
-current typed compiler and its standard library. Root modules such as
-`zyenlang.transpiler` are compatibility aliases for existing Python tooling.
+The compiler implementation and standard library live in `zyenlang/v2`. The
+repository and release packages contain only the ZyenLang 0.2 language line.
 
 License: MIT.

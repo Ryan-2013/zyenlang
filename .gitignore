@@ -9,17 +9,8 @@
 *.pdb
 *.ilk
 
-# Native sources that are part of the runtime and c_module fixtures.
-!std/tk_native.c
-!zyenlang/std/tk_native.c
-!std/request_native.c
-!zyenlang/std/request_native.c
+# Native sources that are part of the v0.2 runtime.
 !zyenlang/v2/std/*.c
-!tests/native_abi.c
-!tests/native_callback.c
-!tests/native_math.c
-!tests/c_module_a/shared.c
-!tests/c_module_b/shared.c
 
 # Python package artefacts
 __pycache__/

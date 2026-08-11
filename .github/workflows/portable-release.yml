@@ -79,7 +79,7 @@ jobs:
         shell: bash
         run: |
           zy_bin=$(find dist/portable-work -type f -path '*/zyv*/zy' | head -n 1)
-          xvfb-run -a "$zy_bin" run "$GITHUB_WORKSPACE/examples/tk_portable_smoke.zy"
+          xvfb-run -a "$zy_bin" run "$GITHUB_WORKSPACE/examples/v2_gui_basic.zy" --release
       - name: Attest portable artifacts
         uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2
         with:

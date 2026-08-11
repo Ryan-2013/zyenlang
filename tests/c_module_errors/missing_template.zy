@@ -1,6 +1,0 @@
-import <std/c_module> as c_module;
-
-fn main() -> int {
-    let math: c_module.Module = c_module.load("does_not_exist.zlcm.h");
-    return 0;
-}

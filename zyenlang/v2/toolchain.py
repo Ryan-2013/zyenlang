@@ -11,7 +11,7 @@ from .ir import IRNativeLink
 
 
 def find_c_compiler() -> list[str]:
-    override = os.environ.get("ZY2_CC", "").strip() or os.environ.get("ZY_CC", "").strip()
+    override = os.environ.get("ZY_CC", "").strip()
     if override:
         return shlex.split(override, posix=not sys.platform.startswith("win"))
 
@@ -28,7 +28,7 @@ def find_c_compiler() -> list[str]:
         found = shutil.which(name)
         if found:
             return [found]
-    raise FileNotFoundError("no C compiler found; use a portable release or set ZY2_CC")
+    raise FileNotFoundError("no C compiler found; use a portable release or set ZY_CC")
 
 
 def compile_c(

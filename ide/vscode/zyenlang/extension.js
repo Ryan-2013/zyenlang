@@ -431,12 +431,12 @@ class DiagnosticsController {
         `Live check skipped: file exceeds the ${Math.floor(maxFileBytes / 1024)} KiB safety limit.`,
         vscode.DiagnosticSeverity.Warning
       );
-      warning.source = 'zy2';
+      warning.source = 'zy';
       this.collection.set(document.uri, [warning]);
       this.status.text = '$(warning) ZyenLang';
       return;
     }
-    const executable = config.get('compilerPath', 'zy2');
+    const executable = config.get('compilerPath', 'zy');
     const cwd = vscode.workspace.getWorkspaceFolder(document.uri)?.uri.fsPath || path.dirname(document.uri.fsPath);
     const child = spawn(executable, ['check', document.uri.fsPath, '--library', '--stdin'], {
       cwd,
@@ -470,7 +470,7 @@ class DiagnosticsController {
       const range = new vscode.Range(0, 0, 0, Math.max(1, document.lineAt(0).text.length));
       this.collection.set(document.uri, [new vscode.Diagnostic(range, `Cannot start ${executable}: ${error.message}`, vscode.DiagnosticSeverity.Error)]);
       this.status.text = '$(error) ZyenLang compiler';
-      this.status.tooltip = `Set zyenlang.compilerPath to the zy2 executable.\n${error.message}`;
+      this.status.tooltip = `Set zyenlang.compilerPath to the zy executable.\n${error.message}`;
     });
     child.on('close', async (code) => {
       clearTimeout(timer);
@@ -479,7 +479,7 @@ class DiagnosticsController {
       if (spawnFailed) return;
       if (failureReason) {
         const diagnostic = new vscode.Diagnostic(new vscode.Range(0, 0, 0, 1), failureReason, vscode.DiagnosticSeverity.Error);
-        diagnostic.source = 'zy2';
+        diagnostic.source = 'zy';
         this.collection.set(document.uri, [diagnostic]);
         this.status.text = '$(error) ZyenLang';
         this.status.tooltip = failureReason;
@@ -529,14 +529,14 @@ class DiagnosticsController {
       if (seen.has(signature)) continue;
       seen.add(signature);
       const diagnostic = new vscode.Diagnostic(new vscode.Range(line, column, line, end), match[4], vscode.DiagnosticSeverity.Error);
-      diagnostic.source = 'zy2';
+      diagnostic.source = 'zy';
       const uriString = uri.toString();
       if (!groups.has(uriString)) groups.set(uriString, []);
       groups.get(uriString).push(diagnostic);
     }
     if (!groups.size && output.trim() && !/^OK:/m.test(output)) {
       const diagnostic = new vscode.Diagnostic(new vscode.Range(0, 0, 0, Math.max(1, document.lineAt(0).text.length)), output.trim(), vscode.DiagnosticSeverity.Error);
-      diagnostic.source = 'zy2';
+      diagnostic.source = 'zy';
       groups.set(document.uri.toString(), [diagnostic]);
     }
     if (!groups.size) groups.set(document.uri.toString(), []);
@@ -576,7 +576,7 @@ async function requireTrustedWorkspace() {
 
 async function processTask(document, args, label) {
   const config = vscode.workspace.getConfiguration('zyenlang', document.uri);
-  const executable = config.get('compilerPath', 'zy2');
+  const executable = config.get('compilerPath', 'zy');
   const cwd = vscode.workspace.getWorkspaceFolder(document.uri)?.uri.fsPath || path.dirname(document.uri.fsPath);
   const task = new vscode.Task(
     { type: 'zyenlang', command: args[0] },

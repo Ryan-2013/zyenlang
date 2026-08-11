@@ -1,9 +1,0 @@
-import <std/c_module> as c_module;
-
-fn use_native(module: c_module.Module) -> int {
-    return 0;
-}
-
-fn main() -> int {
-    return 0;
-}

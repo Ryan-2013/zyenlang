@@ -81,7 +81,7 @@ jobs:
           zy_bin=$(find dist/portable-work -type f -path '*/zyv*/zy' | head -n 1)
           xvfb-run -a "$zy_bin" run "$GITHUB_WORKSPACE/examples/tk_portable_smoke.zy"
       - name: Attest portable artifacts
-        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2
+        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
         with:
           subject-path: dist/release/*
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -102,7 +102,7 @@ jobs:
           python-version: "3.12"
       - run: python -m pip install --disable-pip-version-check build==1.4.0
       - run: python -m build
-      - uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2
+      - uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
         with:
           subject-path: dist/*
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -140,7 +140,7 @@ jobs:
       - name: Package extension
         working-directory: ide/vscode/zyenlang
         run: npx --no-install vsce package --no-dependencies --out ../../../dist/zyenlang-vscode-${{ steps.extension.outputs.version }}.vsix
-      - uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2
+      - uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
         with:
           subject-path: dist/*.vsix
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

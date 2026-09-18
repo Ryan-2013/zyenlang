@@ -14,10 +14,10 @@
     "body": ["${1:public }fn ${2:name}(${3}) ${4:void} throws Error {", "    $0", "}"],
     "description": "Declare a function that can stop with Error"
   },
-  "Receiver method": {
-    "prefix": "method",
-    "body": ["${1:public }fn (${2:self}: ${3:Type}) ${4:name}(${5}) ${6:void} {", "    $0", "}"],
-    "description": "Declare a method with an explicit receiver"
+  "Class": {
+    "prefix": "class",
+    "body": ["${1:public }class ${2:Name}<${3:T}> {", "    private ${4:value}: ${3:T}", "", "    public init(${4:value}: ${3:T}) {", "        this.${4:value} = ${4:value}", "    }", "", "    public fn get() ${3:T} {", "        return CLONE__(this.${4:value})", "    }", "", "    public mut fn set(${4:value}: ${3:T}) void {", "        this.${4:value} = ${4:value}", "    }", "}"] ,
+    "description": "Declare an ARC-managed generic class"
   },
   "Struct": {
     "prefix": "struct",
@@ -33,6 +33,21 @@
     "prefix": "leti",
     "body": "let ${1:name} = ${2:value}",
     "description": "Declare an inferred variable"
+  },
+  "Readonly reference": {
+    "prefix": "ref",
+    "body": "let ${1:reference}: &${2:i32} = &${3:value}",
+    "description": "Borrow a local through a readonly reference"
+  },
+  "Mutable reference": {
+    "prefix": "refmut",
+    "body": "let ${1:reference}: &mut ${2:i32} = &mut ${3:value}",
+    "description": "Uniquely borrow a mutable local"
+  },
+  "Defer call": {
+    "prefix": "defer",
+    "body": "defer ${1:resource}.${2:close}()",
+    "description": "Register a non-throwing call for LIFO scope cleanup"
   },
   "Tuple result": {
     "prefix": "lettuple",
@@ -56,12 +71,12 @@
   },
   "Catch and recover": {
     "prefix": "catch",
-    "body": ["${1:call}() catch ${2:err} {", "    ${3:io.print(${2:err}.message)}", "    recover ${4:value}", "}"],
+    "body": ["${1:call}() catch ${2:err} {", "    ${3:io::print(${2:err}.message)}", "    recover ${4:value}", "}"],
     "description": "Handle Error and recover a value"
   },
   "Import standard module": {
     "prefix": "importstd",
-    "body": "import <std/${1:io}> as ${2:${1}}",
+    "body": "import std::${1:io} as ${2:${1}}",
     "description": "Import a standard library module"
   },
   "Spawn task": {
@@ -109,24 +124,19 @@
     "body": "let ${1:chars}: List<str> = STR_TO_LIST__(${2:text})",
     "description": "Split UTF-8 text into a List of characters"
   },
-  "End local lifetime": {
-    "prefix": "FREE__",
-    "body": "FREE__(${1:local})",
-    "description": "End a local binding and release managed storage"
-  },
-  "Promote local one block": {
-    "prefix": "SKIP__",
-    "body": "SKIP__(${1:local})",
-    "description": "Keep a local visible after its current block"
+  "Drop local early": {
+    "prefix": "DROP__",
+    "body": "DROP__(${1:local})",
+    "description": "Run normal cleanup and uninitialize a managed local"
   },
   "HTTP GET": {
     "prefix": "requestget",
-    "body": ["import <std/request> as request", "", "let response: request.Response = request.get(\"${1:https://example.com}\")", "if response.ok() {", "    ${0}", "}"],
+    "body": ["import std::request as request", "", "let response: request::Response = request::get(\"${1:https://example.com}\")", "if request::response_ok(response) {", "    ${0}", "}"],
     "description": "Make an HTTP GET request"
   },
   "GUI frame loop": {
     "prefix": "gui",
-    "body": ["import <std/gui> as gui", "", "let app = gui.application_colored(\"${1:ZyenLang}\", ${2:960}, ${3:640}, \"#20201F\")", "app.open()", "while true {", "    app.begin_frame()", "    ${0}", "    app.present()", "    if app.next_event(16) == \"quit\" {", "        break", "    }", "}", "app.close()"],
+    "body": ["import std::gui as gui", "", "let app = gui::application_colored(\"${1:ZyenLang}\", ${2:960}, ${3:640}, \"#20201F\")", "app.open()", "while true {", "    app.begin_frame()", "    ${0}", "    app.present()", "    if app.next_event(16) == \"quit\" {", "        break", "    }", "}", "return app.close()"],
     "description": "Create a cross-platform GUI application loop"
   }
 }

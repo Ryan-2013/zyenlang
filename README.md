@@ -1,165 +1,191 @@
-# ZyenLang 0.2.1
+# ZyenLang 0.3.0
 
 [繁體中文](README.zh-TW.md) | **English**
 
-ZyenLang is a compact, statically checked language that compiles to C. Its
-design goal is to build structured programs from a small language surface:
-values, structs, and functions.
+ZyenLang is a small, statically typed language with a C11 backend. Version
+0.3 is a deliberate hard break: modules and static members use `::`, structs
+are pure data, classes provide ARC-managed identity and methods, and safe
+references replace source-level raw pointers.
 
-Version 0.2 introduces a new lexer, parser, typed AST/IR, semantic checker,
-module loader, and C backend. The compiler is invoked with `zy`.
+The compiler, project manager, package resolver, runtime, standard library,
+and VS Code support all ship through the `zy` command.
 
-## Download
+## Status
 
-The [GitHub Releases](https://github.com/Ryan-2013/zyenlang/releases) page
-provides:
+The `v0.3.0` tag is a source release. This delivery does not publish a GitHub
+Release, MSI, or portable archives; binary packaging follows only after those
+artifacts are independently verified on each platform.
 
-- `zyv201-windows-x64.msi`: per-user Windows installer with PATH setup;
-- `zyv201-windows-x64.zip`: portable Windows package;
-- `zyv201-linux-x64.tar.gz` and `zyv201-linux-arm64.tar.gz`;
-- `zyv201-macos-x64.tar.gz` and `zyv201-macos-arm64.tar.gz`;
-- `zyenlang-vscode-0.2.1.vsix`: VS Code completion, navigation, diagnostics,
-  Run, Build, and the optional ZyenLang Ember theme;
-- Python wheel and source archive.
+ZyenLang remains experimental. It is ready for testing the design and building
+small native programs, but compatibility and Rust-equivalent safety are not
+promised yet.
 
-Portable packages and the MSI include the compiler runtime and a pinned Zig
-0.16.0 C toolchain. Python, `pip`, GCC, and MSYS2 are not required.
-
-The MSI installs for the current user under
-`%LOCALAPPDATA%\Programs\ZyenLang`, updates only the user PATH, and removes its
-PATH entry on uninstall. Release assets include SHA-256 checksums and GitHub
-artifact provenance. The v0.2.1 MSI is not yet Authenticode-signed.
-
-## Hello world
-
-```zy
-import <std/io> as io
-
-struct Counter {
-    public value: i32 = 0
-}
-
-public fn (counter: Counter) add(amount: i32) i32 {
-    return counter.value + amount
-}
-
-fn main() i32 {
-    let counter: Counter = Counter{value: 40}
-    let answer: i32 = counter.add(2)
-    if answer == 42 {
-        io.print("hello from ZyenLang 0.2")
-    }
-    return 0
-}
-```
-
-```powershell
-zy check main.zy
-zy run main.zy
-zy run main.zy -- first-argument second-argument
-zy build main.zy -o main.exe --release
-zy build main.zy -o main.c
-```
-
-## Language
-
-ZyenLang 0.2 currently provides:
-
-- fixed-width integers, floats, `bool`, `str`, and explicit types;
-- typed f-strings such as `f"answer={value}"` with once-only interpolation;
-- inferred or typed `let` declarations with newline-terminated statements;
-- structs with defaults, public/private fields, and receiver methods;
-- ARC-managed `List<T>` struct fields with recursive copy and cleanup;
-- named top-level function values, checked indirect calls, and struct callback fields;
-- tuple returns and typed destructuring;
-- generic functions and strongly typed `List<T>` values;
-- `T | null` optionals and `if let` unwrapping;
-- `throws Error`, `stop`, `catch`, and `recover`;
-- `while`, assignment, `break`, and `continue`;
-- linear `Task<T>` values with `spawn` and exactly-once `await`;
-- decimal `f64`/contextual `f32` literals, generic-aware `TYPEOF__`, `FILE__`,
-  terminal `PRINT_CMD__`, UTF-8 `STR_TO_LIST__`, and scoped `SKIP__`/`FREE__`;
-- standard, package, and relative modules plus checked native C declarations.
-
-See [the v0.2 architecture](docs/v2_architecture.md),
-[standard library guide](docs/v2_stdlib.md), and
-[language tour](examples/v2_language_tour.zy).
-
-## Package manager
-
-The first ZEP-0017 package workflow supports local path dependencies with a
-deterministic lockfile and SHA-256 content cache:
-
-```powershell
-zy pkg init --name my-app
-zy pkg add ../math-lib
-zy pkg install --locked
-zy pkg list
-```
-
-Packages are imported from their `src/` directory with
-`import <math-lib/math> as math`. See the
-[package manager guide](docs/package_manager.md) for manifests, cache safety,
-and current local-path limits.
-
-## Standard library
-
-The v0.2 standard library includes typed list/error/option helpers, process
-arguments, portable filesystem and path operations, OS threads, HTTP client and
-server modules, and a cross-platform GUI backend with retained `Application`,
-`Panel`, `Label`, `Button`, and `Column` widgets. Every module uses the same
-import mechanism as third-party modules.
-
-```zy
-import <std/request> as request
-import <std/io> as io
-
-fn main() i32 {
-    let response: request.Response = request.get("https://example.com")
-    if response.ok() {
-        io.print(response.body)
-    }
-    return 0
-}
-```
-
-A complete filesystem CLI is included as `examples/v2_file_tree.zy`:
-
-```powershell
-zy run examples/v2_file_tree.zy -- . tree.txt
-```
-
-## VS Code
-
-Install `zyenlang-vscode-0.2.1.vsix` with **Extensions: Install from
-VSIX...**. The extension does not execute compiler commands in untrusted
-workspaces. Live checks are debounced, cancellable, size-limited, output-limited,
-and time-limited; Run and Build use VS Code process tasks instead of shell
-command strings.
-
-## Source install
+## Install from source
 
 ```powershell
 git clone https://github.com/Ryan-2013/zyenlang.git
 cd zyenlang
 python -m pip install -e .
 zy --version
-python -m pytest -q
+zy doctor
+```
+
+Native builds need a C11 compiler. `zy` discovers a bundled Zig toolchain
+first, then GCC, Clang, or `cc`; `ZY_CC` can override the command.
+
+## First project
+
+```powershell
+zy new hello
+cd hello
+zy run
+```
+
+`src/main.zy`:
+
+```zy
+import std::io as io
+
+public struct Point {
+    public x: i32
+    public y: i32
+}
+
+public class Counter {
+    private value: i32
+
+    public init(value: i32) {
+        this.value = value
+    }
+
+    public mut fn add(amount: i32) void {
+        this.value += amount
+    }
+
+    public fn get() i32 {
+        return this.value
+    }
+}
+
+fn main() i32 {
+    let point = Point{x: 3, y: 4}
+    let counter = Counter(point.x * point.x + point.y * point.y)
+    counter.add(17)
+    io::print(f"answer={counter.get()}")
+    return 0
+}
+```
+
+The separators are fixed:
+
+- `io::print()` calls a module function.
+- `Cache<i32>::create()` calls a class static function.
+- `counter.get()` calls an instance method.
+- `point.x` reads an instance field.
+
+## Language overview
+
+- Fixed-width numbers, `bool`, and ARC UTF-8 `str`.
+- Pure-data value `struct`; ARC identity `class` with `init`, `deinit`, readonly
+  `fn`, mutable `mut fn`, and `static fn`.
+- Generic functions and classes using reachable monomorphization.
+- Strong `List<T>` with an ARC backing buffer and copy-on-write mutation.
+- Tuples, multiple returns, destructuring, and narrowed `T | null` values.
+- Named functions, closures, callbacks, returned functions, and chained calls.
+- Local `&T` and unique `&mut T` references with `CLONE_REF__()` and
+  `REF_SET__()`.
+- Automatic cleanup, `CLONE__()`, early `DROP__()`, and LIFO `defer`.
+- `throws Error`, `stop`, `catch`, and typed `recover`, including source
+  locations and runtime stack frames for uncaught errors.
+- `spawn`/`await`, portable standard modules, native declarations, and
+  compiler-native `.zlcm.h` compatibility templates.
+
+Every intrinsic uses parentheses: `TYPEOF__()`, `FILE__()`, `GET_ARGS__()`,
+`LIST_LEN__()`, `STR_SLICE__()`, `CLONE__()`, and `DROP__()` are examples.
+
+See the [language guide](docs/v3_language_guide_zh_TW.md),
+[architecture](docs/v3_architecture.md), [standard library](docs/v3_stdlib.md),
+and [0.2 migration guide](docs/migration_v0_3.md).
+
+## Project manager
+
+```toml
+[package]
+name = "hello"
+version = "0.3.0"
+zyen = ">=0.3.0"
+
+[build]
+default-target = "app"
+target-dir = "target"
+
+[targets.app]
+kind = "bin"
+entry = "src/main.zy"
+```
+
+```text
+zy new / zy init
+zy add / zy remove / zy fetch
+zy check [target]
+zy build [target] [--release] [--out-dir PATH]
+zy run [target] -- [program arguments]
+zy test
+zy clean [target]
+zy metadata
+zy emit --file source.zy --kind c --out-dir PATH
+```
+
+Dependencies can be local paths or Git repositories pinned to an exact
+revision. `zy.lock` records commits, digests, and the transitive graph. There
+is no registry or build-script hook in 0.3.
+
+Targets can be `bin`, `c-source`, `staticlib`, or `sharedlib`. A `c-source`
+target emits C11 source, a C/C++ compatible header, the runtime/native source
+bundle, and build metadata. Only `export fn` enters the public C header.
+
+## Native modules
+
+```zy
+import std::c_module as c_module
+
+fn main() i32 {
+    let math: c_module::Module = c_module::load("math.zlcm.h")
+    return math.add(20, 22) - 42
+}
+```
+
+`c_module::load()` is compile-time only. The validated template becomes a
+path-hashed hidden type, and its C sources, headers, libraries, and flags join
+the same native build. No Python subprocess or runtime dynamic loader is used.
+Fixed-width scalars, strings, `ZLC_STRUCT` values, and `ZL_Function` callbacks
+are supported. Raw pointers and `List<T>` are not stable ABI values in 0.3;
+wrap them behind an opaque native handle. See [c_module](docs/c_module.md).
+
+## VS Code
+
+`ide/vscode/zyenlang` provides v0.3 highlighting, completion, outline, hover,
+signature help, navigation, cancellable live checks, project Run/Build,
+single-file C emission, and the optional Ember theme. It does not execute the
+compiler in an untrusted workspace.
+
+```powershell
+cd ide/vscode/zyenlang
+npm test
+npm run package
 ```
 
 ## Security boundary
 
-`zy check` parses and type-checks code but does not compile or execute native
-C. `zy build` and `zy run` intentionally compile `native source` declarations,
-so treat an unfamiliar ZyenLang project like an unfamiliar C project and
-review it before building. Module depth, module count, source size, archive
-extraction, native symbol names, and linker library names are validated.
+`zy check` does not invoke the C compiler. `zy build` and `zy run` compile
+native sources, so review an unfamiliar project like unfamiliar C code. The
+compiler limits source/module-graph size, rejects import and native path
+traversal, validates native names, requires exact Git revisions, verifies
+dependency digests, and cleans only artifact files recorded in its state.
 
-ZyenLang remains an experimental language. ARC does not make borrowed native
-resources or external C libraries memory-safe, and the project does not claim
-Rust-equivalent safety.
-
-The compiler implementation and standard library live in `zyenlang/v2`. The
-repository and release packages contain only the ZyenLang 0.2 language line.
+ARC prevents ordinary dangling owned values, but does not collect cycles or
+make external resources thread safe. Safe-reference analysis is intentionally
+smaller than Rust's borrow checker. Native code can violate the language's
+memory model.
 
 License: MIT.

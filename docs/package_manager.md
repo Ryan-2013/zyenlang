@@ -1,87 +1,158 @@
-# ZyenLang 0.2 package manager
+# ZyenLang 0.3 Project and Package Manager
 
-ZyenLang 0.2.1 implements phase 1 of ZEP-0017: local path dependencies,
-deterministic lockfiles, a content-addressed package cache, and checked package
-imports. The package manager is available as `zy pkg` or `zypkg`.
+The project manager is part of `zy`; the old `zy pkg` command is removed.
 
 ## Create a project
 
 ```powershell
-mkdir my-app
-cd my-app
-zy pkg init --name my-app
+zy new my-app
+zy new my-library --lib
+zy init .
 ```
 
-This creates `zyproject.toml`, `zy.lock`, and `src/main.zy`:
+`zy new` creates a directory, `zyproject.toml`, `src/`, and an entry file.
+`--lib` creates a default `c-source` target instead of `bin`.
+
+## Manifest
 
 ```toml
 [package]
-name = "my-app"
-version = "0.1.0"
+name = "zy-math"
+version = "0.3.0"
+zyen = ">=0.3.0"
+
+[build]
+default-target = "ffi"
+target-dir = "target"
+
+[targets.app]
+kind = "bin"
 entry = "src/main.zy"
-zyen = ">=0.2.1"
+
+[targets.ffi]
+kind = "c-source"
+entry = "src/lib.zy"
+out-dir = "../consumer/generated"
+output-name = "zy_math"
 
 [dependencies]
+utils = { path = "../utils" }
+net = { git = "https://example.com/net.git", rev = "0123456789abcdef0123456789abcdef01234567" }
 ```
 
-Package names use lowercase letters, digits, `-`, and `_`. Versions use
-semantic versioning.
+Target kinds:
 
-## Add and import a package
+- `bin`: executable with `fn main() i32`.
+- `c-source`: generated C/header/runtime/native bundle and metadata.
+- `staticlib`: platform static library and public header.
+- `sharedlib`: platform shared library, public header, and Windows import
+  library where supported.
 
-The dependency must have its own `zyproject.toml` and `src/` directory:
+Default output is `target/debug/<target>/` or
+`target/release/<target>/`. Target `out-dir` is relative to the project root;
+CLI `--out-dir` has highest precedence. `output-name` defaults to the target
+key.
+
+## Dependencies
 
 ```powershell
-zy pkg add ../math-lib
-zy pkg list
+zy add ../utils
+zy add utils --path ../utils
+zy add net --git https://example.com/net.git --rev COMMIT_SHA
+zy remove net
+zy fetch
+zy fetch --locked
 ```
 
-`add` records the relative path in `zyproject.toml`, resolves transitive path
-dependencies, copies verified source into the immutable cache, and updates
-`zy.lock`. Commit both project files.
+Path dependencies are resolved to canonical package roots. Git dependencies
+require a full 40- or 64-hex commit in `rev`; branches, abbreviated hashes, and
+floating tags are rejected. `zy.lock` records source, resolved commit,
+content digest, and transitive edges.
 
-Given `math-lib/src/math.zy`, import it with:
+`zy fetch` resolves and writes the lock. `--locked` verifies without changing
+it. Build/check refuse missing, stale, or digest-mismatched locked packages.
+
+Imports use the dependency alias:
 
 ```zy
-import <math-lib/math> as math
+import utils::math as math
+let result = math::add(20, 22)
+```
 
-fn main() i32 {
-    return math.answer()
+A package can import only its own direct dependencies. Import paths are kept
+inside the locked package's `src/` root.
+
+## Build commands
+
+```powershell
+zy check
+zy check app
+zy build ffi
+zy build app --release
+zy build ffi --out-dir D:\generated
+zy run app -- first second
+zy test
+zy metadata
+```
+
+For editor/one-file checking:
+
+```powershell
+zy check --file scratch.zy
+zy check --file library.zy --library
+```
+
+For C emission outside a project target:
+
+```powershell
+zy emit --file source.zy --kind c --out-dir generated --output-name module
+```
+
+Single-file `zy build file.zy -o output` is intentionally removed. Artifact
+kind is explicit and cannot be inferred from an extension.
+
+## Tests
+
+`zy test` first runs targets named `test` or prefixed `test-`. If none exist,
+it runs every `tests/**/*.zy` file as an executable test program and stops at
+the first nonzero exit status.
+
+## Clean
+
+```powershell
+zy clean
+zy clean ffi
+```
+
+Each successful build records exact absolute artifact file paths. Clean
+removes only those files. It refuses symlinks, directories, relative state
+paths, and malformed state rather than recursively deleting an output root.
+This also protects an external `out-dir` containing unrelated files.
+
+## C and C++ consumers
+
+Only `export fn` enters generated headers:
+
+```zy
+export fn add(left: i32, right: i32) i32 {
+    return left + right
 }
 ```
 
-Hyphenated final module names require an explicit `as alias`. An import may
-only name a direct dependency of the importing project or package; transitive
-dependencies are not automatically public.
+The header is valid C11 and C++, with `extern "C"` in C++ mode. v0.3 direct
+exports support fixed-width numbers, bool, void, and `ZL_String`. Generic,
+class, List, reference, closure, and throwing functions need a non-throwing
+scalar/string facade.
 
-## Install and remove
+The C-source metadata JSON includes source/header names, include paths,
+compile flags, link flags, libraries, and exported symbols.
 
-```powershell
-zy pkg install
-zy pkg install --locked
-zy pkg remove math-lib
-```
+## Limits and trust
 
-`install` resolves the current path sources and intentionally refreshes
-`zy.lock`. `install --locked` never changes resolution: it requires the
-manifest hash and all package digests to match the existing lockfile. It can
-repopulate a missing cache entry only when the path source still has the
-locked content.
+The resolver limits dependency count, archive/repository size, source files,
+path length, and graph depth. It rejects symlink/package-root escapes, unsafe
+names, unsupported URL schemes, mutable Git specifications, and inconsistent
+lock records.
 
-The cache defaults to `~/.zyen/packages/0.2/<sha256>/`. Set `ZYEN_HOME` to move
-the ZyenLang home directory.
-
-## Security and limits
-
-- Package code and build scripts are never executed during installation.
-- Symlinks and non-regular files are rejected.
-- One package is limited to 10,000 files and 256 MiB of source.
-- Cached content is SHA-256 verified during installation and compilation.
-- Relative imports inside a package cannot escape its cached package root.
-- Native C remains source-based and uses the same public native/c_module ABI
-  as standard-library code.
-
-This first version deliberately has no registry, Git source, search, publish,
-or install-time scripts. Those are later ZEP-0017 phases; unsupported source
-forms receive an explicit diagnostic instead of silently running another
-tool.
+Dependencies and their native C files are executable build inputs. A digest
+makes a build reproducible; it does not make third-party code trustworthy.

@@ -1,4 +1,6 @@
-# ZyenLang 0.2 compiler architecture
+# ZyenLang 0.2 compiler architecture (historical)
+
+> See [v3_architecture.md](v3_architecture.md) for the active 0.3 compiler.
 
 ZyenLang 0.2 uses a typed frontend, backend-neutral IR, and C reference backend.
 The installed package has one public compiler:

@@ -1,4 +1,7 @@
-# ZyenLang 0.2 release packages
+# ZyenLang 0.2 release packages (historical)
+
+> v0.3.0 is delivered as source and a tag only. Binary packaging will be
+> released separately after platform-specific verification.
 
 Every platform archive contains:
 

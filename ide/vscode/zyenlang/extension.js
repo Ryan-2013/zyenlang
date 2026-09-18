@@ -12,6 +12,7 @@ const MAX_DIAGNOSTIC_OUTPUT_BYTES = 1024 * 1024;
 function symbolKind(kind) {
   return {
     struct: vscode.SymbolKind.Struct,
+    class: vscode.SymbolKind.Class,
     function: vscode.SymbolKind.Function,
     native: vscode.SymbolKind.Function,
     method: vscode.SymbolKind.Method,
@@ -25,6 +26,7 @@ function symbolKind(kind) {
 function completionKind(kind) {
   return {
     struct: vscode.CompletionItemKind.Struct,
+    class: vscode.CompletionItemKind.Class,
     function: vscode.CompletionItemKind.Function,
     native: vscode.CompletionItemKind.Function,
     method: vscode.CompletionItemKind.Method,
@@ -48,8 +50,11 @@ function markdownFor(symbol) {
 }
 
 function importSuffix(importPath) {
-  const normalized = importPath.replace(/\\/g, '/');
-  return `/${normalized.endsWith('.zy') ? normalized : `${normalized}.zy`}`;
+  const parts = importPath.split('::');
+  const root = parts.shift();
+  const relative = parts.join('/');
+  if (root === 'std') return `/std/${relative}.zy`;
+  return `/src/${relative}.zy`;
 }
 
 class WorkspaceIndex {
@@ -192,8 +197,8 @@ function registerLanguageFeatures(context, index) {
       const qualified = language.qualifierAt(line, position.character);
       if (qualified) {
         const imported = parsed.imports.find((item) => item.name === qualified.qualifier);
-        if (imported) {
-          const moduleName = imported.path.split('/').pop();
+        if (imported && qualified.separator === '::') {
+          const moduleName = imported.path.split('::').pop();
           const items = builtInCompletions(moduleName);
           for (const source of index.all()) {
             if (!source.parsed.uri.replace(/\\/g, '/').endsWith(importSuffix(imported.path))) continue;
@@ -201,8 +206,17 @@ function registerLanguageFeatures(context, index) {
           }
           return items;
         }
-        const variable = [...parsed.symbols].reverse().find((item) => item.name === qualified.qualifier && item.type);
-        if (variable) return index.membersOf(variable.type).map((item) => completionFromSymbol(item.symbol));
+        if (qualified.separator === '.') {
+          const variable = [...parsed.symbols].reverse().find((item) => item.name === qualified.qualifier && item.type);
+          if (variable) return index.membersOf(variable.type)
+            .filter((item) => !item.symbol.static)
+            .map((item) => completionFromSymbol(item.symbol));
+        } else {
+          const type = parsed.symbols.find((item) => ['class', 'struct'].includes(item.kind) && item.name === qualified.qualifier);
+          if (type) return index.membersOf(type.name)
+            .filter((item) => item.symbol.static)
+            .map((item) => completionFromSymbol(item.symbol));
+        }
       }
 
       const items = [];
@@ -236,7 +250,7 @@ function registerLanguageFeatures(context, index) {
       }
       return items;
     }
-  }, '.', '<', '/'));
+  }, '.', ':'));
 
   context.subscriptions.push(vscode.languages.registerHoverProvider(selector, {
     async provideHover(document, position) {
@@ -438,7 +452,7 @@ class DiagnosticsController {
     }
     const executable = config.get('compilerPath', 'zy');
     const cwd = vscode.workspace.getWorkspaceFolder(document.uri)?.uri.fsPath || path.dirname(document.uri.fsPath);
-    const child = spawn(executable, ['check', document.uri.fsPath, '--library', '--stdin'], {
+    const child = spawn(executable, ['check', '--file', document.uri.fsPath, '--library', '--stdin'], {
       cwd,
       windowsHide: true,
       shell: false
@@ -599,24 +613,26 @@ function registerCommands(context, diagnostics) {
     if (!(await requireTrustedWorkspace())) return;
     const document = await saveCurrentDocument();
     if (!document) return;
-    const args = ['run', document.uri.fsPath];
+    const args = ['run', '--project', vscode.workspace.getWorkspaceFolder(document.uri)?.uri.fsPath || path.dirname(document.uri.fsPath)];
     if (vscode.workspace.getConfiguration('zyenlang', document.uri).get('build.release', true)) args.push('--release');
-    await processTask(document, args, 'Run current file');
+    await processTask(document, args, 'Run project target');
   }));
 
   context.subscriptions.push(vscode.commands.registerCommand('zyenlang.build', async () => {
     if (!(await requireTrustedWorkspace())) return;
     const document = await saveCurrentDocument();
     if (!document) return;
-    const extension = process.platform === 'win32' ? '.exe' : '';
-    const target = await vscode.window.showSaveDialog({
-      defaultUri: vscode.Uri.file(path.join(path.dirname(document.uri.fsPath), 'build', `${path.basename(document.uri.fsPath, '.zy')}${extension}`)),
-      saveLabel: 'Build'
+    const selected = await vscode.window.showOpenDialog({
+      defaultUri: vscode.Uri.file(path.join(path.dirname(document.uri.fsPath), 'target')),
+      canSelectFiles: false,
+      canSelectFolders: true,
+      canSelectMany: false,
+      openLabel: 'Build here'
     });
-    if (!target) return;
-    const args = ['build', document.uri.fsPath, '-o', target.fsPath];
+    if (!selected?.length) return;
+    const args = ['build', '--project', vscode.workspace.getWorkspaceFolder(document.uri)?.uri.fsPath || path.dirname(document.uri.fsPath), '--out-dir', selected[0].fsPath];
     if (vscode.workspace.getConfiguration('zyenlang', document.uri).get('build.release', true)) args.push('--release');
-    await processTask(document, args, 'Build executable');
+    await processTask(document, args, 'Build project target');
   }));
 
   context.subscriptions.push(vscode.commands.registerCommand('zyenlang.emitC', async () => {
@@ -629,7 +645,10 @@ function registerCommands(context, diagnostics) {
       saveLabel: 'Emit C'
     });
     if (!target) return;
-    await processTask(document, ['build', document.uri.fsPath, '-o', target.fsPath], 'Emit C source');
+    await processTask(document, [
+      'emit', '--file', document.uri.fsPath, '--kind', 'c', '--out-dir', path.dirname(target.fsPath),
+      '--output-name', path.basename(target.fsPath, '.c')
+    ], 'Emit C source');
   }));
 }
 

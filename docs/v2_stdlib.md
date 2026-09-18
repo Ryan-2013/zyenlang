@@ -1,4 +1,6 @@
-# ZyenLang 0.2 standard library
+# ZyenLang 0.2 standard library (historical)
+
+> The active module guide is [v3_stdlib.md](v3_stdlib.md).
 
 All modules use explicit imports and the same loader as third-party code.
 

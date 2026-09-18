@@ -2,7 +2,7 @@
   "name": "zyenlang",
   "displayName": "ZyenLang",
   "description": "Language support for ZyenLang: highlighting, completion, navigation, diagnostics, run, and build.",
-  "version": "0.2.2",
+  "version": "0.3.0",
   "publisher": "zyenlang",
   "license": "MIT",
   "repository": {
@@ -77,12 +77,12 @@
       },
       {
         "command": "zyenlang.run",
-        "title": "ZyenLang: Run Current File",
+        "title": "ZyenLang: Run Project Target",
         "icon": "$(play)"
       },
       {
         "command": "zyenlang.build",
-        "title": "ZyenLang: Build Executable",
+        "title": "ZyenLang: Build Project Target",
         "icon": "$(tools)"
       },
       {

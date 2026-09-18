@@ -1,4 +1,6 @@
-# ZyenLang 0.2.1 語言完整入門
+# ZyenLang 0.2.1 語言完整入門（歷史文件）
+
+> 正式 0.3 語法請看 [v3_language_guide_zh_TW.md](v3_language_guide_zh_TW.md)。
 
 這份文件只描述目前 `zy` 編譯器已經實作並測試的 ZyenLang 0.2 語法。
 

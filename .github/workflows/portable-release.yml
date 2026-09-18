@@ -2,9 +2,6 @@ name: Release
 
 on:
   workflow_dispatch:
-  push:
-    tags:
-      - "v*"
 
 permissions:
   contents: write
@@ -78,8 +75,9 @@ jobs:
         if: runner.os == 'Linux'
         shell: bash
         run: |
-          zy_bin=$(find dist/portable-work -type f -path '*/zyv*/zy' | head -n 1)
-          xvfb-run -a "$zy_bin" run "$GITHUB_WORKSPACE/examples/v2_gui_basic.zy" --release
+          gui_demo=$(find dist/portable-work -type f -name 'zyenlang-gui-demo' | head -n 1)
+          test -n "$gui_demo"
+          xvfb-run -a "$gui_demo"
       - name: Attest portable artifacts
         uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2
         with:
@@ -126,6 +124,9 @@ jobs:
       - name: Install locked extension tools
         working-directory: ide/vscode/zyenlang
         run: npm ci --ignore-scripts
+      - name: Audit extension tooling
+        working-directory: ide/vscode/zyenlang
+        run: npm audit --audit-level=high
       - name: Test extension
         working-directory: ide/vscode/zyenlang
         run: npm test
@@ -148,40 +149,3 @@ jobs:
           name: vscode-extension
           path: dist/*.vsix
           if-no-files-found: error
-
-  release:
-    if: startsWith(github.ref, 'refs/tags/v')
-    needs: [portable, package, vscode]
-    timeout-minutes: 15
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          persist-credentials: false
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        with:
-          path: dist/release
-          merge-multiple: true
-      - name: Resolve release notes
-        id: release
-        shell: bash
-        run: |
-          version="${GITHUB_REF_NAME#v}"
-          package_version=$(python -c 'import re; from pathlib import Path; print(re.search(r"^version\s*=\s*\"([^\"]+)\"\s*$", Path("pyproject.toml").read_text(encoding="utf-8"), re.MULTILINE).group(1))')
-          test "$version" = "$package_version"
-          notes="docs/release_v${version//./_}.md"
-          test -f "$notes"
-          echo "notes=$notes" >> "$GITHUB_OUTPUT"
-      - name: Create checksums
-        shell: bash
-        run: |
-          cd dist/release
-          sha256sum * > SHA256SUMS.txt
-      - name: Publish GitHub release
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: >-
-          gh release create "${{ github.ref_name }}" dist/release/*
-          --verify-tag
-          --title "ZyenLang ${{ github.ref_name }}"
-          --notes-file "${{ steps.release.outputs.notes }}"

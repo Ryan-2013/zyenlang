@@ -1,6 +1,44 @@
 # Changelog
 
-## Unreleased
+## v0.3.0 - 2026-09-18
+
+### Added
+
+- Rooted `std::`, `crate::`, and dependency module paths with `::` namespace
+  resolution and private-by-default visibility.
+- ARC identity classes with generics, `init`, `deinit`, readonly/mutable/static
+  methods, and reachable monomorphization.
+- Safe local `&T` and unique `&mut T` references, `CLONE__`, `CLONE_REF__`,
+  `REF_SET__`, `DROP__`, and LIFO `defer` cleanup.
+- ARC UTF-8 strings with Unicode scalar length/index/slice, List copy-on-write,
+  closures, chained function calls, native callbacks, and runtime error stacks.
+- Compiler-native `std::c_module` template expansion with path-hashed dependent
+  types, `ZLC_STRUCT`, `ZL_Function` callbacks, and structured native metadata.
+- Cargo-style project commands, path/exact-revision Git dependencies,
+  deterministic lockfiles, and `bin`/`c-source`/`staticlib`/`sharedlib` targets.
+- C/C++ headers, runtime/native source bundles, metadata, safe recorded clean,
+  v0.3 VS Code support, migration docs, and cross-platform tests.
+
+### Changed
+
+- Structs are pure data values. Behavior belongs to module functions or ARC
+  classes; receiver functions are removed.
+- Module/type/static access uses `::`; `.` is reserved for instance fields and
+  class methods.
+- All intrinsics use `NAME__()` syntax. `FREE__` and `SKIP__` are removed.
+- General source-level raw pointers are replaced by safe references and native
+  handle facades.
+- The CLI no longer infers output kind from a suffix. `zy emit` handles
+  one-file C output; project targets handle native artifacts.
+- `zy pkg` is replaced by top-level `zy add/remove/fetch` commands.
+
+### Compatibility
+
+- 0.3 is a hard break and does not accept 0.2 syntax.
+- The public native header is ABI v2. Wrappers must be rebuilt from source.
+- This tag is source-only; no GitHub Release or installer assets are created.
+
+## Pre-0.3 development notes (historical)
 
 ### Added
 

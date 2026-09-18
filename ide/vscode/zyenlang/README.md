@@ -1,14 +1,14 @@
 # ZyenLang for Visual Studio Code
 
-The official editor extension for ZyenLang 0.2.
+The official editor extension for ZyenLang 0.3.
 
 ## Features
 
-- ZyenLang 0.2 syntax highlighting and bracket-aware editing
-- completion for keywords, types, special forms, import paths, symbols, struct members, and standard modules
+- ZyenLang 0.3 highlighting for `::` paths, pure structs, classes, references, intrinsics, and native declarations
+- completion for keywords, types, imports, module symbols, class methods, struct/class fields, and standard modules
 - hover signatures, parameter hints, Go to Definition, code-only Find References, document highlights, outline, and workspace symbols
 - live `zy check` diagnostics for the current unsaved buffer
-- Run, Build Executable, and Emit C Source commands
+- Run Project Target, Build Project Target, and Emit C Source commands
 - optional **ZyenLang Ember** theme using `#20201F` with `#D97757` accents
 
 The extension debounces checks while typing and cancels stale compiler processes.
@@ -29,8 +29,8 @@ compiler is elsewhere, set `zyenlang.compilerPath` to its executable path.
 Open the Command Palette with `Ctrl+Shift+P`:
 
 - `ZyenLang: Check Current File`
-- `ZyenLang: Run Current File`
-- `ZyenLang: Build Executable`
+- `ZyenLang: Run Project Target`
+- `ZyenLang: Build Project Target`
 - `ZyenLang: Emit C Source`
 
 The editor title also shows Run and Check buttons for `.zy` files.
@@ -47,8 +47,8 @@ The editor title also shows Run and Check buttons for `.zy` files.
 ## Install a VSIX
 
 In VS Code, choose **Extensions: Install from VSIX...** and select the packaged
-`zyenlang-0.2.2.vsix`, or run:
+`zyenlang-0.3.0.vsix`, or run:
 
 ```powershell
-code --install-extension zyenlang-0.2.2.vsix --force
+code --install-extension zyenlang-0.3.0.vsix --force
 ```

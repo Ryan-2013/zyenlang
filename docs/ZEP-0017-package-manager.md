@@ -1,121 +1,112 @@
-# ZEP-0017: ZyenLang package manager
+# ZEP-0017: Project, dependency, and artifact manager
 
-Status: Phase 1 implemented in ZyenLang 0.2.1
+Status: Implemented by ZyenLang 0.3.0. This revision supersedes the 0.2
+`zy pkg` design.
 
 ## Goal
 
-Add a package workflow with the convenience of `pip install`, while keeping
-ZyenLang builds reproducible and preserving the rule that native libraries use
-the same public `c_module` mechanism as standard-library code.
+One deterministic command should own project creation, exact dependency
+resolution, target selection, artifact placement, and safe cleanup. Package
+installation must never execute dependency hooks or infer an artifact kind
+from a filename extension.
 
-The command family is `zy pkg`. `zyenv` remains the version manager for the
-compiler itself; it does not install project dependencies.
-
-## User experience
+## Commands
 
 ```text
-zy pkg init
-zy pkg add httpx
-zy pkg add github:Ryan-2013/zy-raylib
-zy pkg add ../local-library
-zy pkg remove httpx
-zy pkg install
-zy pkg update httpx
-zy pkg list
-zy pkg publish
+zy new PATH [--lib]
+zy init [PATH] [--lib]
+zy add ALIAS --path PATH
+zy add ALIAS --git URL --rev COMMIT
+zy remove ALIAS
+zy fetch [--locked]
+zy check [TARGET]
+zy build [TARGET] [--release] [--out-dir PATH]
+zy run [TARGET] -- [ARGS...]
+zy test
+zy clean [TARGET]
+zy metadata
+zy emit --file SOURCE --kind c --out-dir PATH
 ```
 
-Packages are imported by package name:
-
-```zy
-import <httpx/client> as http;
-```
-
-`zy pkg add` updates both `zyproject.toml` and `zy.lock`. A fresh checkout only
-needs `zy pkg install`; `zy check`, `zy run`, and `zy build` then resolve the
-locked package graph automatically.
+The old nested `zy pkg` command and `zy build file.zy -o output` form are
+removed with migration diagnostics.
 
 ## Manifest
 
 ```toml
 [package]
-name = "my-game"
-version = "0.1.0"
+name = "zy-math"
+version = "0.3.0"
+zyen = ">=0.3.0"
+
+[build]
+default-target = "ffi"
+target-dir = "target"
+
+[targets.app]
+kind = "bin"
 entry = "src/main.zy"
-zyen = ">=0.1.84,<0.2"
+
+[targets.ffi]
+kind = "c-source"
+entry = "src/lib.zy"
+out-dir = "../consumer/generated"
+output-name = "zy_math"
 
 [dependencies]
-httpx = "^1.2.0"
-raylib = { git = "https://github.com/Ryan-2013/zy-raylib", rev = "..." }
-local-ui = { path = "../local-ui" }
+utils = { path = "../utils" }
+net = { git = "https://example.com/net.git", rev = "COMMIT_SHA" }
 ```
 
-A publishable package contains `zyproject.toml`, `src/`, an optional
-`examples/` and `tests/`, and any native `.zlcm.h`, `.h`, and `.c` files below
-its package directory. Native metadata is read from the template at build
-time; installation never executes package code or build scripts.
+Supported target kinds are `bin`, `c-source`, `staticlib`, and `sharedlib`.
+Default artifacts go to `target/debug/<target>/` or
+`target/release/<target>/`. CLI `--out-dir` overrides target `out-dir`, which
+overrides the default.
 
-## Resolver and lockfile
+## Resolution and lockfile
 
-- Registry versions use semantic versioning.
-- Resolution is global for one project: one selected version per package name.
-- `zy.lock` records exact version or Git commit, source URL, dependency edges,
-  and SHA-256 content digest.
-- `zy pkg install --locked` fails if the manifest and lockfile disagree.
-- `zy pkg update [name]` is the only command that intentionally changes locked
-  versions.
-- Path dependencies are development-only and cannot be published as-is.
+0.3 supports local path dependencies and Git dependencies pinned to an exact
+revision. It has no registry, floating version solver, build script, install
+hook, or dependency re-export.
 
-The first resolver can use deterministic backtracking with highest compatible
-versions first. Conflict diagnostics must show the shortest dependency chains
-that introduced incompatible constraints.
+`zy.lock` records:
 
-## Storage and imports
+- the root manifest digest;
+- each dependency alias and package name;
+- source kind and canonical source;
+- the resolved Git commit where applicable;
+- a SHA-256 package-content digest;
+- transitive dependency edges.
 
-Downloaded archives are immutable and content-addressed under:
+The resolver is deterministic and bounded. It rejects cycles, alias
+collisions, mutable/unsafe Git revisions, source-root escape, symlinks,
+oversized package trees, stale locks, and digest mismatches. Cached packages
+are immutable and content addressed below `~/.zyen/packages/0.3/`; Git
+checkouts are stored below `~/.zyen/git/0.3/`.
 
-```text
-~/.zyen/packages/0.2/<sha256>/
+Imports use a declared alias as their root:
+
+```zy
+import utils::math as math
+let answer = math::add(20, 22)
 ```
 
-The project stores no copied dependency source. The compiler reads `zy.lock`,
-maps `<package/path>` to the immutable cache, and keeps relative imports inside
-that package root. A package cannot escape its root through `..`.
+## Artifacts
 
-`zy pkg cache clean` removes only unreferenced digests after checking known
-lockfiles. Offline mode succeeds when every locked digest is already cached.
+`c-source` emits generated C, a C/C++ header, runtime/native source bundle,
+and JSON metadata for sources, headers, include paths, defines/flags,
+libraries, and exports. Only non-generic, non-throwing `export fn` declarations
+using the supported C ABI enter the header.
 
-## Registry and security
+`zy clean` reads an artifact manifest containing exact absolute file paths.
+It deletes files only, rejects symlinks/directories/malformed records, and
+never recursively deletes an external output directory.
 
-The initial registry API needs only package metadata and immutable archive
-downloads over HTTPS. Every archive is verified against its lockfile digest.
-Publishing requires an authenticated token, rejects an already published
-name/version pair, and records package ownership.
+## Security boundary
 
-Native packages are source distributions in the first version. Platform
-metadata uses the existing `ZLC_SOURCE_*`, `ZLC_HEADER_*`, `ZLC_LIB_*`, and
-`ZLC_CFLAG_*` rules. Prebuilt native binaries and install-time scripts are out
-of scope because they weaken portability and auditability.
+Fetching does not execute package code. Native `.c` files become trusted
+build inputs only when the user builds or runs a target. Exact commits and
+digests provide reproducibility and tamper detection, not a sandbox.
 
-## Delivery phases
-
-1. Local manifest, path dependencies, lockfile, cache, and import resolver.
-2. Git dependencies pinned by commit and `--offline` / `--locked` modes.
-3. Read-only registry with `add`, `install`, `update`, and dependency conflict
-   diagnostics.
-4. Authentication, ownership, publish/yank, and package search.
-
-Each phase must test Windows, Linux, and macOS path handling and ensure that
-the portable ZyenLang archive needs no system Python installation.
-
-## Implemented phase 1
-
-ZyenLang 0.2.1 provides `zy pkg` with
-`init`, `add`, `remove`, `install`, `install --locked`, and `list`. It supports
-local path dependencies, transitive dependency locking, SHA-256 addressed
-cache entries, compiler resolution of `<package/module>`, and package-root
-escape prevention. See [the package manager guide](package_manager.md).
-
-Git dependencies, offline registry archives, version-constraint resolution,
-cache garbage collection, authentication, and publishing remain planned for
-the later phases above.
+Registry publishing, semver range resolution, build hooks, prebuilt native
+binaries, and cache garbage collection remain out of scope for 0.3.

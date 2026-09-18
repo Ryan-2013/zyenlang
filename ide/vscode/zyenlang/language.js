@@ -1,10 +1,13 @@
 'use strict';
 
 const KEYWORDS = [
-  'as', 'await', 'break', 'catch', 'continue', 'else', 'false', 'fn', 'FREE__', 'if',
-  'import', 'let', 'mut', 'native', 'null', 'private', 'public', 'recover', 'return',
-  'SKIP__', 'source', 'spawn', 'stop', 'struct', 'throws', 'true', 'TYPEOF__',
-  'LIST_LEN__', 'LIST_PUSH__', 'LIST_SET__', 'PRINT_CMD__', 'STR_TO_LIST__', 'while'
+  'as', 'await', 'break', 'catch', 'class', 'continue', 'defer', 'deinit', 'else',
+  'export', 'false', 'fn', 'if', 'import', 'init', 'let', 'mut', 'native', 'null',
+  'private', 'public', 'recover', 'return', 'source', 'spawn', 'static', 'stop',
+  'struct', 'throws', 'true', 'while', 'TYPEOF__', 'CLONE__', 'CLONE_REF__',
+  'DROP__', 'REF_SET__', 'LIST_LEN__', 'LIST_GET__', 'LIST_PUSH__', 'LIST_SET__',
+  'LIST_POP__', 'LIST_CLEAR__', 'PRINT_CMD__', 'STR_TO_LIST__', 'STR_LEN__',
+  'STR_BYTE_LEN__', 'STR_GET__', 'STR_SLICE__', 'FILE__', 'GET_ARGS__', 'GET_EXE__'
 ];
 
 const TYPES = [
@@ -13,14 +16,32 @@ const TYPES = [
   'u64', 'usize', 'void'
 ];
 
-const SPECIAL_VALUES = ['FILE__', 'GET_ARGS__', 'GET_EXE__'];
+const SPECIAL_VALUES = [];
 
 const SPECIAL_FORMS = [
   {
-    name: 'FREE__',
-    detail: 'FREE__(local) void',
-    snippet: 'FREE__(${1:local})',
-    documentation: 'End a binding in its declaring block and immediately release managed storage.'
+    name: 'DROP__',
+    detail: 'DROP__(local) void',
+    snippet: 'DROP__(${1:local})',
+    documentation: 'Run normal cleanup early and leave the binding uninitialized until assignment.'
+  },
+  {
+    name: 'CLONE__',
+    detail: 'CLONE__(value) T',
+    snippet: 'CLONE__(${1:value})',
+    documentation: 'Explicitly clone a value. ARC classes retain identity; structs preserve value semantics.'
+  },
+  {
+    name: 'CLONE_REF__',
+    detail: 'CLONE_REF__(reference: &T) T',
+    snippet: 'CLONE_REF__(${1:reference})',
+    documentation: 'Copy the value addressed by a safe readonly or mutable reference.'
+  },
+  {
+    name: 'REF_SET__',
+    detail: 'REF_SET__(reference: &mut T, value: T) void',
+    snippet: 'REF_SET__(${1:reference}, ${2:value})',
+    documentation: 'Assign through a unique mutable reference.'
   },
   {
     name: 'LIST_LEN__',
@@ -41,16 +62,28 @@ const SPECIAL_FORMS = [
     documentation: 'Replace a List<T> element with checked bounds.'
   },
   {
+    name: 'LIST_GET__',
+    detail: 'LIST_GET__(list: List<T>, index: i32) T throws Error',
+    snippet: 'LIST_GET__(${1:list}, ${2:index})',
+    documentation: 'Read a checked List<T> element.'
+  },
+  {
     name: 'PRINT_CMD__',
     detail: 'PRINT_CMD__(text: str, color: str) void',
     snippet: 'PRINT_CMD__(${1:text}, "${2:#FFFFFF}")',
     documentation: 'Write one line using a #RRGGBB terminal color when color output is enabled.'
   },
   {
-    name: 'SKIP__',
-    detail: 'SKIP__(local) void',
-    snippet: 'SKIP__(${1:local})',
-    documentation: 'Promote a local by one lexical block; an unexecuted block leaves its zero value.'
+    name: 'LIST_POP__',
+    detail: 'LIST_POP__(list: List<T>) T throws Error',
+    snippet: 'LIST_POP__(${1:list})',
+    documentation: 'Remove and return the last List<T> element.'
+  },
+  {
+    name: 'LIST_CLEAR__',
+    detail: 'LIST_CLEAR__(list: List<T>) void',
+    snippet: 'LIST_CLEAR__(${1:list})',
+    documentation: 'Clear a List<T> after copy-on-write detachment.'
   },
   {
     name: 'STR_TO_LIST__',
@@ -63,6 +96,18 @@ const SPECIAL_FORMS = [
     detail: 'TYPEOF__(value, Type) bool',
     snippet: 'TYPEOF__(${1:value}, ${2:Type})',
     documentation: 'Compare static types at compile time without evaluating the value.'
+  },
+  {
+    name: 'FILE__', detail: 'FILE__() str', snippet: 'FILE__()',
+    documentation: 'Return the absolute source path of the module containing the call.'
+  },
+  {
+    name: 'GET_ARGS__', detail: 'GET_ARGS__() List<str>', snippet: 'GET_ARGS__()',
+    documentation: 'Return process arguments. This intrinsic is valid from main.'
+  },
+  {
+    name: 'GET_EXE__', detail: 'GET_EXE__() str', snippet: 'GET_EXE__()',
+    documentation: 'Return the running executable path. This intrinsic is valid from main.'
   }
 ];
 
@@ -232,7 +277,7 @@ function closingDelimiter(value, start, open, close) {
 }
 
 function parseFunctionHeader(line) {
-  const prefix = line.match(/^\s*(?:(public|private)\s+)?(?:(native)\s+)?fn\s+/);
+  const prefix = line.match(/^\s*(?:(public|private)\s+)?(?:(export)\s+)?(?:(native)\s+)?(?:(static|mut)\s+)?fn\s+/);
   if (!prefix) return null;
   let cursor = prefix[0].length;
   let receiverName;
@@ -270,8 +315,10 @@ function parseFunctionHeader(line) {
     .replace(/\s*=.*$/, '')
     .trim();
   return {
-    visibility: prefix[1] || 'public',
-    native: Boolean(prefix[2]),
+    visibility: prefix[1] || (prefix[2] ? 'public' : 'private'),
+    exported: Boolean(prefix[2]),
+    native: Boolean(prefix[3]),
+    modifier: prefix[4] || '',
     receiverName,
     receiverType,
     name,
@@ -294,7 +341,7 @@ function precedingDocs(lines, lineNumber) {
 
 function addSymbol(result, symbol) {
   result.symbols.push(symbol);
-  if (['struct', 'function', 'method', 'field', 'native'].includes(symbol.kind)) {
+  if (['struct', 'class', 'function', 'method', 'field', 'native'].includes(symbol.kind)) {
     result.exports.push(symbol);
   }
 }
@@ -304,7 +351,7 @@ function parseDocument(text, uri = '') {
   const maskedLines = lines.map(maskLine);
   const result = { uri, imports: [], symbols: [], exports: [], lines, maskedLines };
   let depth = 0;
-  let activeStruct = null;
+  let activeType = null;
   let activeFunction = null;
 
   for (let lineNumber = 0; lineNumber < lines.length; lineNumber += 1) {
@@ -312,16 +359,16 @@ function parseDocument(text, uri = '') {
     const line = maskedLines[lineNumber];
     const trimmed = line.trim();
 
-    const importMatch = original.match(/^\s*import\s+(<([^>]+)>|"([^"]+)")\s*(?:as\s+([A-Za-z_]\w*))?/);
+    const importMatch = original.match(/^\s*import\s+((?:std|crate|[A-Za-z_]\w*)(?:::[A-Za-z_]\w*)+)\s+as\s+([A-Za-z_]\w*)/);
     if (importMatch) {
-      const path = importMatch[2] || importMatch[3];
-      const alias = importMatch[4] || path.split('/').pop().replace(/\.zy$/, '');
+      const path = importMatch[1];
+      const alias = importMatch[2];
       const column = original.indexOf(alias);
       const symbol = {
         name: alias,
         kind: 'import',
         path,
-        detail: `import ${importMatch[1]} as ${alias}`,
+        detail: `import ${path} as ${alias}`,
         line: lineNumber,
         column: Math.max(0, column),
         endColumn: Math.max(0, column) + alias.length
@@ -330,16 +377,16 @@ function parseDocument(text, uri = '') {
       result.symbols.push(symbol);
     }
 
-    const structMatch = line.match(/^\s*(?:(public|private)\s+)?struct\s+([A-Za-z_]\w*)/);
-    if (structMatch) {
-      const name = structMatch[2];
+    const typeMatch = line.match(/^\s*(?:(public|private)\s+)?(struct|class)\s+([A-Za-z_]\w*)(?:\s*<[^>]+>)?/);
+    if (typeMatch) {
+      const name = typeMatch[3];
       const column = original.indexOf(name);
-      activeStruct = { name, depth: depth + 1 };
+      activeType = { name, kind: typeMatch[2], depth: depth + 1 };
       addSymbol(result, {
         name,
-        kind: 'struct',
-        visibility: structMatch[1] || 'public',
-        detail: `${structMatch[1] ? `${structMatch[1]} ` : ''}struct ${name}`,
+        kind: typeMatch[2],
+        visibility: typeMatch[1] || 'private',
+        detail: `${typeMatch[1] ? `${typeMatch[1]} ` : ''}${typeMatch[2]} ${name}`,
         documentation: precedingDocs(lines, lineNumber),
         line: lineNumber,
         column,
@@ -351,7 +398,8 @@ function parseDocument(text, uri = '') {
     if (functionMatch) {
       const { receiverName, receiverType, name, parameters, returnAndThrows } = functionMatch;
       const column = functionMatch.nameStart;
-      const kind = functionMatch.native ? 'native' : receiverType ? 'method' : 'function';
+      const classMethod = activeType && activeType.kind === 'class' && depth === activeType.depth;
+      const kind = functionMatch.native ? 'native' : (classMethod || receiverType) ? 'method' : 'function';
       const signature = original.trim().replace(/\s*\{\s*$/, '').replace(/\s*=\s*"[^"]*"\s*$/, '');
       const symbol = {
         name,
@@ -367,7 +415,10 @@ function parseDocument(text, uri = '') {
         line: lineNumber,
         column,
         endColumn: column + name.length,
-        container: receiverType || undefined
+        container: classMethod ? activeType.name : receiverType || undefined,
+        static: functionMatch.modifier === 'static',
+        mutable: functionMatch.modifier === 'mut',
+        exported: functionMatch.exported
       };
       addSymbol(result, symbol);
       activeFunction = trimmed.endsWith('{') ? { name, depth: depth + 1 } : null;
@@ -386,7 +437,7 @@ function parseDocument(text, uri = '') {
       result.symbols.push(...parameterSymbols(parameters, lineNumber, functionMatch.parameterStart, name));
     }
 
-    if (activeStruct && depth === activeStruct.depth && !functionMatch) {
+    if (activeType && depth === activeType.depth && !functionMatch) {
       const fieldMatch = line.match(/^\s*(?:(public|private)\s+)?(?:let\s+(?:this\.)?)?([A-Za-z_]\w*)\s*:\s*([^=\n]+?)(?:\s*=.*)?$/);
       if (fieldMatch && !/^(let|fn|struct|import)\b/.test(trimmed)) {
         const name = fieldMatch[2];
@@ -395,13 +446,13 @@ function parseDocument(text, uri = '') {
           name,
           kind: 'field',
           type: fieldMatch[3].trim(),
-          visibility: fieldMatch[1] || 'public',
+          visibility: fieldMatch[1] || 'private',
           detail: `${fieldMatch[1] ? `${fieldMatch[1]} ` : ''}${name}: ${fieldMatch[3].trim()}`,
           documentation: precedingDocs(lines, lineNumber),
           line: lineNumber,
           column,
           endColumn: column + name.length,
-          container: activeStruct.name
+          container: activeType.name
         });
       }
     }
@@ -442,7 +493,7 @@ function parseDocument(text, uri = '') {
     }
     depth += opens - closes;
     if (activeFunction && depth < activeFunction.depth) activeFunction = null;
-    if (activeStruct && depth < activeStruct.depth) activeStruct = null;
+    if (activeType && depth < activeType.depth) activeType = null;
   }
   return result;
 }
@@ -458,8 +509,8 @@ function wordAt(line, column) {
 
 function qualifierAt(line, column) {
   const before = line.slice(0, column);
-  const match = before.match(/([A-Za-z_]\w*)\.([A-Za-z_]\w*)?$/);
-  return match ? { qualifier: match[1], prefix: match[2] || '' } : null;
+  const match = before.match(/([A-Za-z_]\w*)(::|\.)([A-Za-z_]\w*)?$/);
+  return match ? { qualifier: match[1], separator: match[2], prefix: match[3] || '' } : null;
 }
 
 function callAt(line, column) {
@@ -482,7 +533,7 @@ function callAt(line, column) {
 
 function importPathAt(line, column) {
   const before = line.slice(0, column);
-  const standard = before.match(/^\s*import\s+<std\/([A-Za-z_]\w*)?$/);
+  const standard = before.match(/^\s*import\s+std::([A-Za-z_]\w*)?$/);
   if (standard) return { kind: 'std', prefix: standard[1] || '' };
   return null;
 }

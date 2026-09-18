@@ -5,17 +5,24 @@ const fs = require('fs');
 const path = require('path');
 const language = require('../language');
 
-const source = `import <std/io> as io
+const source = `import std::io as io
 
 /// A small value type.
-public struct Counter {
-    public value: i32 = 0
-    private label: str = "count"
+public struct Point {
+    public x: i32
+    public y: i32
 }
 
-public fn (counter: Counter) add(amount: i32) i32 {
-    let next: i32 = counter.value + amount
-    return next
+public class Counter {
+    private value: i32 = 0
+
+    public init(value: i32) {
+        this.value = value
+    }
+
+    public fn add(amount: i32) i32 {
+        return this.value + amount
+    }
 }
 
 fn pair() (i32, str) {
@@ -23,19 +30,19 @@ fn pair() (i32, str) {
 }
 
 fn main() i32 {
-    let counter: Counter = Counter{}
+    let counter: Counter = Counter(40)
     let (number: i32, text: str) = pair()
-    io.print(text)
+    io::print(text)
     return counter.add(number)
 }`;
 
-const parsed = language.parseDocument(source, 'sample.zy');
+const parsed = language.parseDocument(source, 'src/main.zy');
 
-assert.deepStrictEqual(parsed.imports.map((item) => [item.name, item.path]), [['io', 'std/io']]);
-assert(parsed.exports.some((item) => item.kind === 'struct' && item.name === 'Counter'));
-assert(parsed.exports.some((item) => item.kind === 'field' && item.name === 'value' && item.container === 'Counter'));
-assert(parsed.exports.some((item) => item.kind === 'field' && item.name === 'label' && item.visibility === 'private'));
-assert(parsed.exports.some((item) => item.kind === 'method' && item.name === 'add' && item.receiverType === 'Counter'));
+assert.deepStrictEqual(parsed.imports.map((item) => [item.name, item.path]), [['io', 'std::io']]);
+assert(parsed.exports.some((item) => item.kind === 'struct' && item.name === 'Point'));
+assert(parsed.exports.some((item) => item.kind === 'class' && item.name === 'Counter'));
+assert(parsed.exports.some((item) => item.kind === 'field' && item.name === 'value' && item.container === 'Counter' && item.visibility === 'private'));
+assert(parsed.exports.some((item) => item.kind === 'method' && item.name === 'add' && item.container === 'Counter'));
 assert(parsed.exports.some((item) => item.kind === 'function' && item.name === 'pair' && item.returnType === '(i32, str)'));
 assert(parsed.symbols.some((item) => item.kind === 'parameter' && item.name === 'amount' && item.type === 'i32'));
 assert(parsed.symbols.some((item) => item.kind === 'variable' && item.name === 'counter' && item.type === 'Counter'));
@@ -43,7 +50,8 @@ assert(parsed.symbols.some((item) => item.kind === 'variable' && item.name === '
 assert(parsed.symbols.some((item) => item.kind === 'variable' && item.name === 'text' && item.type === 'str'));
 
 assert.deepStrictEqual(language.wordAt('return counter.add(number)', 16), { value: 'add', start: 15, end: 18 });
-assert.deepStrictEqual(language.qualifierAt('    io.pr', 9), { qualifier: 'io', prefix: 'pr' });
+assert.deepStrictEqual(language.qualifierAt('    io::pr', 10), { qualifier: 'io', separator: '::', prefix: 'pr' });
+assert.deepStrictEqual(language.qualifierAt('    counter.ad', 14), { qualifier: 'counter', separator: '.', prefix: 'ad' });
 assert.deepStrictEqual(language.callAt('    pair(1, other(', 11), { name: 'pair', activeParameter: 1 });
 assert.deepStrictEqual(language.splitTopLevel('List<i32>, fn(i32, str), i32 | null'), ['List<i32>', 'fn(i32, str)', 'i32 | null']);
 assert(language.KEYWORDS.includes('TYPEOF__'));
@@ -52,17 +60,19 @@ assert(language.KEYWORDS.includes('LIST_PUSH__'));
 assert(language.KEYWORDS.includes('LIST_SET__'));
 assert(language.KEYWORDS.includes('PRINT_CMD__'));
 assert(language.KEYWORDS.includes('STR_TO_LIST__'));
-assert(language.KEYWORDS.includes('FREE__'));
-assert(language.KEYWORDS.includes('SKIP__'));
+assert(language.KEYWORDS.includes('DROP__'));
+assert(language.KEYWORDS.includes('class'));
+assert(language.KEYWORDS.includes('defer'));
 assert(!language.KEYWORDS.includes('typeof'));
-assert.deepStrictEqual(language.SPECIAL_VALUES, ['FILE__', 'GET_ARGS__', 'GET_EXE__']);
+assert.deepStrictEqual(language.SPECIAL_VALUES, []);
 assert(language.SPECIAL_FORMS.some((item) => item.name === 'LIST_PUSH__' && item.snippet.includes('${2:value}')));
 assert(language.SPECIAL_FORMS.some((item) => item.name === 'PRINT_CMD__' && item.documentation.includes('#RRGGBB')));
 assert(language.SPECIAL_FORMS.some((item) => item.name === 'STR_TO_LIST__' && item.detail.endsWith('List<str>')));
-assert(language.SPECIAL_FORMS.some((item) => item.name === 'FREE__' && item.detail === 'FREE__(local) void'));
-assert(language.SPECIAL_FORMS.some((item) => item.name === 'SKIP__' && item.detail === 'SKIP__(local) void'));
+assert(language.SPECIAL_FORMS.some((item) => item.name === 'DROP__' && item.detail === 'DROP__(local) void'));
+assert(language.SPECIAL_FORMS.some((item) => item.name === 'CLONE_REF__'));
+assert(language.SPECIAL_FORMS.some((item) => item.name === 'REF_SET__'));
 assert(language.SPECIAL_FORMS.some((item) => item.name === 'TYPEOF__' && item.detail === 'TYPEOF__(value, Type) bool'));
-assert.deepStrictEqual(language.importPathAt('import <std/pa', 14), { kind: 'std', prefix: 'pa' });
+assert.deepStrictEqual(language.importPathAt('import std::pa', 14), { kind: 'std', prefix: 'pa' });
 assert.strictEqual(language.importPathAt('let value = 1', 13), null);
 assert(language.BUILTINS.path.some(([name]) => name === 'join'));
 assert(language.BUILTINS.fs.some(([name]) => name === 'tree'));
@@ -100,8 +110,8 @@ assert(callbackParsed.exports.some((item) => item.kind === 'function' && item.na
 assert(callbackParsed.symbols.some((item) => item.kind === 'parameter' && item.name === 'callback' && item.type === 'fn(i32, i32) i32'));
 assert(callbackParsed.exports.some((item) => item.kind === 'function' && item.name === 'pick' && item.returnType === 'fn(i32, i32) i32'));
 
-const defaultAlias = language.parseDocument('import "tools.zy"', 'alias.zy');
-assert.strictEqual(defaultAlias.imports[0].name, 'tools');
+const crateAlias = language.parseDocument('import crate::tools as tools', 'alias.zy');
+assert.strictEqual(crateAlias.imports[0].name, 'tools');
 
 const manifest = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'package.json'), 'utf8'));
 assert.strictEqual(manifest.capabilities.untrustedWorkspaces.supported, 'limited');
@@ -117,7 +127,7 @@ assert(snippets.includes('TYPEOF__(${1:value}, ${2:i32})'));
 assert(snippets.includes('LIST_SET__(${1:list}, ${2:index}, ${3:value})'));
 assert(snippets.includes('PRINT_CMD__(${1:text}'));
 assert(snippets.includes('STR_TO_LIST__(${2:text})'));
-assert(snippets.includes('FREE__(${1:local})'));
-assert(snippets.includes('SKIP__(${1:local})'));
+assert(snippets.includes('DROP__(${1:local})'));
+assert(snippets.includes('import std::${1:io}'));
 
 console.log('language tests passed');

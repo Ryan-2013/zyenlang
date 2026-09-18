@@ -3,10 +3,10 @@
 `std/server` 是小型 blocking HTTP text server，適合本機工具、測試和原型。
 
 ```zy
-import <std/server> as server
+import std::server as server
 
 fn main() i32 throws Error {
-    return server.serve_once("127.0.0.1", 8080, "hello")
+    return server::serve_once("127.0.0.1", 8080, "hello")
 }
 ```
 

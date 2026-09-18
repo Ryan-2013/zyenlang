@@ -2,55 +2,139 @@ native source "gui_native.c"
 native link linux "dl"
 native link windows "comdlg32"
 
-private native fn session_open(title: str, width: i32, height: i32, session_dir: str) i32 = "zl_tk_session_open"
+private native fn session_open(title: str, width: i32, height: i32, session_dir: str) i32 = "zy3_tk_session_open"
 private native fn session_begin_frame() i32 = "zl_tk_session_begin_frame"
 private native fn session_redraw() i32 = "zl_tk_session_redraw"
 private native fn session_set_fps(fps: i32) i32 = "zl_tk_session_set_fps"
-private native fn session_next_event(timeout_ms: i32) str = "zl_tk_session_next_event"
+private native fn session_next_event(timeout_ms: i32) str = "zy3_tk_session_next_event"
 private native fn session_close() i32 = "zl_tk_session_close"
 private native fn session_pick_file() i32 = "zl_tk_session_pickfile"
-private native fn draw_background(color: str) i32 = "zl_tk_bg"
-private native fn draw_line_native(x1: i32, y1: i32, x2: i32, y2: i32, color: str, width: i32) i32 = "zl_tk_line"
-private native fn draw_rect_native(x: i32, y: i32, width: i32, height: i32, color: str) i32 = "zl_tk_rect"
-private native fn draw_circle_native(x: i32, y: i32, radius: i32, color: str) i32 = "zl_tk_circle"
-private native fn draw_text_native(x: i32, y: i32, value: str, color: str, size: i32) i32 = "zl_tk_text"
-private native fn draw_code_view_native(x: i32, y: i32, width: i32, height: i32, first_line: i32, line_height: i32, char_width: i32, size: i32, stamp: i32, lines: str) i32 = "zl_tk_codeview_text"
-private native fn draw_code_editor_native(x: i32, y: i32, width: i32, height: i32, first_line: i32, line_height: i32, char_width: i32, size: i32, stamp: i32, lines: str, selection_start_line: i32, selection_start_column: i32, selection_end_line: i32, selection_end_column: i32) i32 = "zl_tk_codeview_editor_text"
-private native fn draw_completion_native(x: i32, y: i32, width: i32, row_height: i32, size: i32, selected: i32, items: str) i32 = "zl_tk_completion"
-private native fn event_kind_native(event: str) i32 = "zl_tk_event_kind"
-private native fn event_x_native(event: str) i32 = "zl_tk_event_x"
-private native fn event_y_native(event: str) i32 = "zl_tk_event_y"
+private native fn draw_background(color: str) i32 = "zy3_tk_bg"
+private native fn draw_line_native(x1: i32, y1: i32, x2: i32, y2: i32, color: str, width: i32) i32 = "zy3_tk_line"
+private native fn draw_rect_native(x: i32, y: i32, width: i32, height: i32, color: str) i32 = "zy3_tk_rect"
+private native fn draw_circle_native(x: i32, y: i32, radius: i32, color: str) i32 = "zy3_tk_circle"
+private native fn draw_text_native(x: i32, y: i32, value: str, color: str, size: i32) i32 = "zy3_tk_text"
+private native fn draw_code_view_native(x: i32, y: i32, width: i32, height: i32, first_line: i32, line_height: i32, char_width: i32, size: i32, stamp: i32, lines: str) i32 = "zy3_tk_codeview_text"
+private native fn draw_code_editor_native(x: i32, y: i32, width: i32, height: i32, first_line: i32, line_height: i32, char_width: i32, size: i32, stamp: i32, lines: str, selection_start_line: i32, selection_start_column: i32, selection_end_line: i32, selection_end_column: i32) i32 = "zy3_tk_codeview_editor_text"
+private native fn draw_completion_native(x: i32, y: i32, width: i32, row_height: i32, size: i32, selected: i32, items: str) i32 = "zy3_tk_completion"
+private native fn event_kind_native(event: str) i32 = "zy3_tk_event_kind"
+private native fn event_x_native(event: str) i32 = "zy3_tk_event_x"
+private native fn event_y_native(event: str) i32 = "zy3_tk_event_y"
 
-public struct Window {
+public class Window {
     public title: str = "ZyenLang"
     public width: i32 = 800
     public height: i32 = 600
     public background: str = "#20201F"
     public fps: i32 = 60
+
+    public init(title: str, width: i32, height: i32, background: str = "#20201F") {
+        this.title = title
+        this.width = width
+        this.height = height
+        this.background = background
+    }
+
+    public fn open() i32 {
+        let result = session_open(this.title, this.width, this.height, "")
+        if result == 0 {
+            session_set_fps(this.fps)
+        }
+        return result
+    }
+
+    public fn begin_frame() i32 {
+        let result = session_begin_frame()
+        if result == 0 {
+            draw_background(this.background)
+        }
+        return result
+    }
+
+    public fn present() i32 {
+        return session_redraw()
+    }
+
+    public fn next_event(timeout_ms: i32) str {
+        return session_next_event(timeout_ms)
+    }
+
+    public fn close() i32 {
+        return session_close()
+    }
 }
 
-public struct Application {
+public class Application {
     public window: Window
+
+    public init(window: Window) {
+        this.window = window
+    }
+
+    public fn open() i32 {
+        return this.window.open()
+    }
+
+    public fn begin_frame() i32 {
+        return this.window.begin_frame()
+    }
+
+    public fn present() i32 {
+        return this.window.present()
+    }
+
+    public fn next_event(timeout_ms: i32) str {
+        return this.window.next_event(timeout_ms)
+    }
+
+    public fn close() i32 {
+        return this.window.close()
+    }
 }
 
-public struct Panel {
+public class Panel {
     public x: i32 = 0
     public y: i32 = 0
     public width: i32 = 320
     public height: i32 = 240
     public background: str = "#292827"
     public border: str = "#494744"
+
+    public init(x: i32, y: i32, width: i32, height: i32) {
+        this.x = x
+        this.y = y
+        this.width = width
+        this.height = height
+    }
+
+    public fn draw() i32 {
+        let border_result = rect(this.x, this.y, this.width, this.height, this.border)
+        if border_result != 0 {
+            return border_result
+        }
+        return rect(this.x + 1, this.y + 1, this.width - 2, this.height - 2, this.background)
+    }
 }
 
-public struct Label {
+public class Label {
     public x: i32 = 0
     public y: i32 = 0
     public value: str = ""
     public color: str = "#F4F1EA"
     public size: i32 = 18
+
+    public init(x: i32, y: i32, value: str) {
+        this.x = x
+        this.y = y
+        this.value = value
+    }
+
+    public fn draw() i32 {
+        return text(this.x, this.y, this.value, this.color, this.size)
+    }
 }
 
-public struct Button {
+public class Button {
     public x: i32 = 0
     public y: i32 = 0
     public width: i32 = 180
@@ -63,102 +147,144 @@ public struct Button {
     public font_size: i32 = 18
     public enabled: bool = true
     public on_click: fn() void
+
+    public init(x: i32, y: i32, width: i32, height: i32, label: str, on_click: fn() void) {
+        this.x = x
+        this.y = y
+        this.width = width
+        this.height = height
+        this.label = label
+        this.on_click = on_click
+    }
+
+    public fn contains(x: i32, y: i32) bool {
+        return x >= this.x && x < this.x + this.width && y >= this.y && y < this.y + this.height
+    }
+
+    public fn draw() i32 {
+        let fill = this.background
+        if !this.enabled {
+            fill = this.disabled_background
+        }
+        let border_result = rect(this.x, this.y, this.width, this.height, this.border)
+        if border_result != 0 {
+            return border_result
+        }
+        let fill_result = rect(this.x + 1, this.y + 1, this.width - 2, this.height - 2, fill)
+        if fill_result != 0 {
+            return fill_result
+        }
+        return text(this.x + 14, this.y + (this.height - this.font_size) / 2, this.label, this.text_color, this.font_size)
+    }
+
+    public fn handle(event: str) bool {
+        if this.enabled && event_kind(event) == 2 && this.contains(event_x(event), event_y(event)) {
+            this.on_click()
+            return true
+        }
+        return false
+    }
 }
 
-public struct ButtonGroup {
+public class ButtonGroup {
     public buttons: List<Button> = []
+
+    public init() {
+    }
+
+    public mut fn add(button_value: Button) void {
+        LIST_PUSH__(this.buttons, button_value)
+    }
+
+    public fn draw() i32 throws Error {
+        let index: i32 = 0
+        while index < (i32)LIST_LEN__(this.buttons) {
+            let button_value = LIST_GET__(this.buttons, index)
+            let result = button_value.draw()
+            if result != 0 {
+                return result
+            }
+            index += 1
+        }
+        return 0
+    }
+
+    public fn handle(event: str) bool throws Error {
+        let index: i32 = 0
+        let handled = false
+        while index < (i32)LIST_LEN__(this.buttons) {
+            let button_value = LIST_GET__(this.buttons, index)
+            if button_value.handle(event) {
+                handled = true
+            }
+            index += 1
+        }
+        return handled
+    }
 }
 
-public struct Column {
+public class Column {
     public x: i32 = 0
     public y: i32 = 0
     public width: i32 = 240
     public row_height: i32 = 44
     public gap: i32 = 10
+
+    public init(x: i32, y: i32, width: i32, row_height: i32, gap: i32) {
+        this.x = x
+        this.y = y
+        this.width = width
+        this.row_height = row_height
+        this.gap = gap
+    }
+
+    public fn item_y(index: i32) i32 {
+        return this.y + index * (this.row_height + this.gap)
+    }
+
+    public fn button_at(index: i32, label_value: str, on_click: fn() void) Button {
+        return button(this.x, this.item_y(index), this.width, this.row_height, label_value, on_click)
+    }
+
+    public fn label_at(index: i32, value: str) Label {
+        return label(this.x, this.item_y(index) + (this.row_height - 18) / 2, value)
+    }
 }
 
 public fn window(title: str, width: i32, height: i32) Window {
-    return Window{title: title, width: width, height: height}
+    return Window(title, width, height)
 }
 
 public fn window_colored(title: str, width: i32, height: i32, background: str) Window {
-    return Window{title: title, width: width, height: height, background: background}
+    return Window(title, width, height, background)
 }
 
 public fn application(title: str, width: i32, height: i32) Application {
-    return Application{window: window(title, width, height)}
+    return Application(window(title, width, height))
 }
 
 public fn application_colored(title: str, width: i32, height: i32, background: str) Application {
-    return Application{window: window_colored(title, width, height, background)}
+    return Application(window_colored(title, width, height, background))
 }
 
 public fn panel(x: i32, y: i32, width: i32, height: i32) Panel {
-    return Panel{x: x, y: y, width: width, height: height}
+    return Panel(x, y, width, height)
 }
 
 public fn label(x: i32, y: i32, value: str) Label {
-    return Label{x: x, y: y, value: value}
+    return Label(x, y, value)
 }
 
 public fn button(x: i32, y: i32, width: i32, height: i32, label: str, on_click: fn() void) Button {
-    return Button{x: x, y: y, width: width, height: height, label: label, on_click: on_click}
+    return Button(x, y, width, height, label, on_click)
 }
 
 public fn button_group() ButtonGroup {
-    return ButtonGroup{}
+    return ButtonGroup()
 }
 
 public fn column(x: i32, y: i32, width: i32, row_height: i32, gap: i32) Column {
-    return Column{x: x, y: y, width: width, row_height: row_height, gap: gap}
-}
-
-public fn (window: Window) open() i32 {
-    let result: i32 = session_open(window.title, window.width, window.height, "")
-    if result == 0 {
-        session_set_fps(window.fps)
-    }
-    return result
-}
-
-public fn (window: Window) begin_frame() i32 {
-    let result: i32 = session_begin_frame()
-    if result == 0 {
-        draw_background(window.background)
-    }
-    return result
-}
-
-public fn (window: Window) present() i32 {
-    return session_redraw()
-}
-
-public fn (window: Window) next_event(timeout_ms: i32) str {
-    return session_next_event(timeout_ms)
-}
-
-public fn (window: Window) close() i32 {
-    return session_close()
-}
-
-public fn (app: Application) open() i32 {
-    return app.window.open()
-}
-
-public fn (app: Application) begin_frame() i32 {
-    return app.window.begin_frame()
-}
-
-public fn (app: Application) present() i32 {
-    return app.window.present()
-}
-
-public fn (app: Application) next_event(timeout_ms: i32) str {
-    return app.window.next_event(timeout_ms)
-}
-
-public fn (app: Application) close() i32 {
-    return app.window.close()
+    return Column(x, y, width, row_height, gap)
 }
 
 public fn pick_file() i32 {
@@ -203,86 +329,4 @@ public fn event_x(event: str) i32 {
 
 public fn event_y(event: str) i32 {
     return event_y_native(event)
-}
-
-public fn (panel_value: Panel) draw() i32 {
-    let border_result = rect(panel_value.x, panel_value.y, panel_value.width, panel_value.height, panel_value.border)
-    if border_result != 0 {
-        return border_result
-    }
-    return rect(panel_value.x + 1, panel_value.y + 1, panel_value.width - 2, panel_value.height - 2, panel_value.background)
-}
-
-public fn (label_value: Label) draw() i32 {
-    return text(label_value.x, label_value.y, label_value.value, label_value.color, label_value.size)
-}
-
-public fn (button_value: Button) contains(x: i32, y: i32) bool {
-    return x >= button_value.x && x < button_value.x + button_value.width && y >= button_value.y && y < button_value.y + button_value.height
-}
-
-public fn (button_value: Button) draw() i32 {
-    let fill = button_value.background
-    if !button_value.enabled {
-        fill = button_value.disabled_background
-    }
-    let border_result = rect(button_value.x, button_value.y, button_value.width, button_value.height, button_value.border)
-    if border_result != 0 {
-        return border_result
-    }
-    let fill_result = rect(button_value.x + 1, button_value.y + 1, button_value.width - 2, button_value.height - 2, fill)
-    if fill_result != 0 {
-        return fill_result
-    }
-    return text(button_value.x + 14, button_value.y + (button_value.height - button_value.font_size) / 2, button_value.label, button_value.text_color, button_value.font_size)
-}
-
-public fn (button_value: Button) handle(event: str) bool {
-    if button_value.enabled && event_kind(event) == 2 && button_value.contains(event_x(event), event_y(event)) {
-        button_value.on_click()
-        return true
-    }
-    return false
-}
-
-public fn (group: ButtonGroup) add(button_value: Button) void {
-    group.buttons.push(button_value)
-}
-
-public fn (group: ButtonGroup) draw() i32 throws Error {
-    let index: i32 = 0
-    while index < (i32)group.buttons.len() {
-        let button_value = group.buttons[index]
-        let result = button_value.draw()
-        if result != 0 {
-            return result
-        }
-        index += 1
-    }
-    return 0
-}
-
-public fn (group: ButtonGroup) handle(event: str) bool throws Error {
-    let index: i32 = 0
-    let handled = false
-    while index < (i32)group.buttons.len() {
-        let button_value = group.buttons[index]
-        if button_value.handle(event) {
-            handled = true
-        }
-        index += 1
-    }
-    return handled
-}
-
-public fn (layout: Column) item_y(index: i32) i32 {
-    return layout.y + index * (layout.row_height + layout.gap)
-}
-
-public fn (layout: Column) button_at(index: i32, label_value: str, on_click: fn() void) Button {
-    return button(layout.x, layout.item_y(index), layout.width, layout.row_height, label_value, on_click)
-}
-
-public fn (layout: Column) label_at(index: i32, value: str) Label {
-    return label(layout.x, layout.item_y(index) + (layout.row_height - 18) / 2, value)
 }

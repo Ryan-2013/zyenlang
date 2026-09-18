@@ -7,6 +7,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <sys/stat.h>
+#include "zyenlang_c_abi.h"
 
 #ifdef _WIN32
 #include <ctype.h>
@@ -42,17 +43,17 @@ static const char* zy2_path_copy_range(const char* value, size_t start, size_t l
     return result;
 }
 
-const char* zy2_path_separator(void) {
+static const char* zy2_path_separator_raw(void) {
     return "/";
 }
 
-bool zy2_path_is_absolute(const char* value) {
+static bool zy2_path_is_absolute_raw(const char* value) {
     if (!value || !value[0]) return false;
     if (zy2_path_is_separator(value[0])) return true;
     return isalpha((unsigned char)value[0]) && value[1] == ':' && zy2_path_is_separator(value[2]);
 }
 
-const char* zy2_path_normalize(const char* value) {
+static const char* zy2_path_normalize_raw(const char* value) {
     char* result = zy2_path_next_buffer();
     size_t input = 0;
     size_t output = 0;
@@ -89,15 +90,15 @@ const char* zy2_path_normalize(const char* value) {
     return result;
 }
 
-const char* zy2_path_join(const char* left, const char* right) {
+static const char* zy2_path_join_raw(const char* left, const char* right) {
     char* joined;
     size_t left_length;
     size_t right_length;
     bool needs_separator;
 
-    if (!left || !left[0]) return zy2_path_normalize(right);
-    if (!right || !right[0]) return zy2_path_normalize(left);
-    if (zy2_path_is_absolute(right)) return zy2_path_normalize(right);
+    if (!left || !left[0]) return zy2_path_normalize_raw(right);
+    if (!right || !right[0]) return zy2_path_normalize_raw(left);
+    if (zy2_path_is_absolute_raw(right)) return zy2_path_normalize_raw(right);
 
     joined = zy2_path_next_buffer();
     left_length = strlen(left);
@@ -107,10 +108,10 @@ const char* zy2_path_join(const char* left, const char* right) {
     memcpy(joined, left, left_length);
     if (needs_separator) joined[left_length++] = '/';
     memcpy(joined + left_length, right, right_length + 1);
-    return zy2_path_normalize(joined);
+    return zy2_path_normalize_raw(joined);
 }
 
-const char* zy2_path_basename(const char* value) {
+static const char* zy2_path_basename_raw(const char* value) {
     size_t end;
     size_t start;
     if (!value || !value[0]) return zy2_path_copy_range("", 0, 0);
@@ -121,7 +122,7 @@ const char* zy2_path_basename(const char* value) {
     return zy2_path_copy_range(value, start, end - start);
 }
 
-const char* zy2_path_dirname(const char* value) {
+static const char* zy2_path_dirname_raw(const char* value) {
     size_t end;
     size_t start;
     size_t separator;
@@ -138,7 +139,7 @@ const char* zy2_path_dirname(const char* value) {
     return zy2_path_copy_range(value, 0, separator);
 }
 
-const char* zy2_path_extension(const char* value) {
+static const char* zy2_path_extension_raw(const char* value) {
     size_t end;
     size_t base;
     size_t cursor;
@@ -153,8 +154,8 @@ const char* zy2_path_extension(const char* value) {
     return zy2_path_copy_range(value, cursor - 1, end - cursor + 1);
 }
 
-const char* zy2_path_stem(const char* value) {
-    const char* base = zy2_path_basename(value);
+static const char* zy2_path_stem_raw(const char* value) {
+    const char* base = zy2_path_basename_raw(value);
     size_t length = strlen(base);
     size_t cursor = length;
     while (cursor > 0 && base[cursor - 1] != '.') cursor -= 1;
@@ -162,7 +163,7 @@ const char* zy2_path_stem(const char* value) {
     return zy2_path_copy_range(base, 0, cursor - 1);
 }
 
-const char* zy2_path_with_extension(const char* value, const char* next_extension) {
+static const char* zy2_path_with_extension_raw(const char* value, const char* next_extension) {
     char* result = zy2_path_next_buffer();
     size_t length;
     size_t base;
@@ -200,15 +201,65 @@ static bool zy2_path_stat_mode(const char* value, bool expect_directory) {
 #endif
 }
 
-bool zy2_path_exists(const char* value) {
+static bool zy2_path_exists_raw(const char* value) {
     zy2_stat_info info;
     return value && zy2_stat(value, &info) == 0;
 }
 
-bool zy2_path_is_file(const char* value) {
+static bool zy2_path_is_file_raw(const char* value) {
     return zy2_path_stat_mode(value, false);
 }
 
-bool zy2_path_is_dir(const char* value) {
+static bool zy2_path_is_dir_raw(const char* value) {
     return zy2_path_stat_mode(value, true);
+}
+
+ZL_String zy2_path_separator(void) {
+    return zl_string_borrow(zy2_path_separator_raw());
+}
+
+bool zy2_path_is_absolute(ZL_String value) {
+    return zy2_path_is_absolute_raw(zl_string_data(value));
+}
+
+ZL_String zy2_path_normalize(ZL_String value) {
+    return zl_string_copy(zy2_path_normalize_raw(zl_string_data(value)));
+}
+
+ZL_String zy2_path_join(ZL_String left, ZL_String right) {
+    return zl_string_copy(zy2_path_join_raw(zl_string_data(left), zl_string_data(right)));
+}
+
+ZL_String zy2_path_basename(ZL_String value) {
+    return zl_string_copy(zy2_path_basename_raw(zl_string_data(value)));
+}
+
+ZL_String zy2_path_dirname(ZL_String value) {
+    return zl_string_copy(zy2_path_dirname_raw(zl_string_data(value)));
+}
+
+ZL_String zy2_path_extension(ZL_String value) {
+    return zl_string_copy(zy2_path_extension_raw(zl_string_data(value)));
+}
+
+ZL_String zy2_path_stem(ZL_String value) {
+    return zl_string_copy(zy2_path_stem_raw(zl_string_data(value)));
+}
+
+ZL_String zy2_path_with_extension(ZL_String value, ZL_String next_extension) {
+    return zl_string_copy(
+        zy2_path_with_extension_raw(zl_string_data(value), zl_string_data(next_extension))
+    );
+}
+
+bool zy2_path_exists(ZL_String value) {
+    return zy2_path_exists_raw(zl_string_data(value));
+}
+
+bool zy2_path_is_file(ZL_String value) {
+    return zy2_path_is_file_raw(zl_string_data(value));
+}
+
+bool zy2_path_is_dir(ZL_String value) {
+    return zy2_path_is_dir_raw(zl_string_data(value));
 }

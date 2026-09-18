@@ -1,60 +1,40 @@
-# std/list and built-in List<T>
+# Built-in `List<T>` and `std::list`
 
-`List<T>` is a built-in generic container type, not a struct declared by the
-standard library and not an `Any` container. `List` is a type constructor and
-`T` is its element type. The compiler specializes a distinct native ARC storage
-type for every concrete `T`.
+`List<T>` is a compiler/runtime generic container, not a user-declared struct.
+Every concrete element type is checked and specialized; `List<i32>` cannot be
+assigned to `List<f64>` without an explicit element-by-element conversion.
 
 ```zy
-let values: List<i32> = []
-LIST_PUSH__(values, 10)
-LIST_PUSH__(values, 20)
+let values: List<i32> = [10, 20]
+LIST_PUSH__(values, 30)
 LIST_SET__(values, 0, 11) catch err { recover }
-let first = values[0] catch err { recover 0 }
+let first: i32 = LIST_GET__(values, 0) catch err { recover 0 }
+let last: i32 = LIST_POP__(values) catch err { recover 0 }
 let size: usize = LIST_LEN__(values)
-let last = values.pop() catch err { recover 0 }
+LIST_CLEAR__(values)
 ```
 
-`LIST_LEN__(values)` and `values[index]` are compiler operations rather than struct
-methods. Indexing performs a bounds check and has type `T throws Error`.
-The canonical mutation intrinsics are `LIST_PUSH__(list, value)` and
-`LIST_SET__(list, index, value)`; `pop`, `remove`, and `clear` remain intrinsic
-operations on the built-in container. `capacity` and `is_empty` expose storage
-state. Copies share ARC storage and
-therefore observe each other's mutations. Nested Lists and Box elements are
-retained and released recursively.
+All checked element access can throw `Error`. `values[index]` is syntax sugar
+for `LIST_GET__(values, index)`. The canonical mutation surface is:
 
-Lists may be stored directly in struct fields. A struct containing a List is
-itself managed: copies retain every managed field, replacement releases the old
-fields, and parameters, returns, `stop`, `break`, `continue`, and scope exit all
-run recursive cleanup.
+```text
+LIST_LEN__  LIST_GET__  LIST_SET__  LIST_PUSH__
+LIST_POP__  LIST_CLEAR__
+```
+
+List storage uses atomic ARC plus copy-on-write. Copying or `CLONE__()` initially
+shares a backing buffer; the first mutation of either value detaches it. Popped
+managed elements transfer ownership to the caller, while replacement and clear
+release removed elements. Nested Lists and List fields in structs/classes are
+cleaned recursively.
+
+`std::list` adds two generic module helpers:
 
 ```zy
-struct Inventory {
-    public items: List<i32> = []
-}
+import std::list as list
 
-let inventory = Inventory{}
-LIST_PUSH__(inventory.items, 10)
-let alias = inventory
-// Both values share the same ARC List storage.
+let count = list::length(values)
+let empty = list::is_empty(values)
 ```
 
-Nested structs and `List<StructWithList>` are also supported. A recursive type
-such as `Node { children: List<Node> }` is still rejected during `zy check` until
-recursive managed type helpers are emitted in separate declaration/body phases.
-Lists inside tuples or optionals remain disabled for the same reason.
-
-The old `.len()`, `.get(index)`, `.push(value)`, and `.set(index, value)`
-spellings remain compatibility aliases for existing source code. New source
-should use the uppercase compiler forms and index syntax.
-
-The `<std/list>` module contains generic helpers such as `length` and
-`is_empty`; it does not define the `List<T>` type itself.
-
-`STR_TO_LIST__(text)` splits valid UTF-8 by Unicode code point and returns
-`List<str>`. Chinese characters and emoji each occupy one element. The List ARC
-owner also owns the generated character backing storage, which is released
-when the last List alias leaves scope. Character strings borrowed from the List
-must not outlive that List. Bind the returned List to a local before indexing;
-direct `STR_TO_LIST__(text)[index]` access is rejected by the compiler.
+`STR_TO_LIST__(text)` returns one `str` per Unicode scalar value.

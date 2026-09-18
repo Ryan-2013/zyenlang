@@ -1,7 +1,7 @@
-import <std/thread> as thread
+import std::thread as thread
 
 fn calculate() i32 {
-    thread.sleep_ms(10)
+    thread::sleep_ms(10)
     return 42
 }
 

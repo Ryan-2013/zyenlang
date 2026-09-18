@@ -5,15 +5,15 @@ an ordinary native module and uses the same `native source` mechanism available
 to application and package authors.
 
 ```zy
-import <std/fs> as fs
-import <std/io> as io
+import std::fs as fs
+import std::io as io
 
 fn main() i32 {
-    let listing: str = fs.tree(".") catch err {
-        io.eprint(err.message)
+    let listing: str = fs::tree(".") catch err {
+        io::eprint(err.message)
         recover ""
     }
-    io.print(listing)
+    io::print(listing)
     return 0
 }
 ```
@@ -29,7 +29,5 @@ fn main() i32 {
 a link cycle cannot recursively trap the process. It limits traversal to 256
 levels and output to 16 MiB. File paths use Unicode APIs on Windows.
 
-The current v2 `str` type is borrowed. A `read_text` result remains valid until
-the next `read_text` call on the same thread; a `tree` result remains valid until
-the next `tree` call. Writing does not invalidate either result. Owned strings
-will remove this bootstrap lifetime rule later.
+Returned text is copied into an immutable ARC `str`; later filesystem calls do
+not invalidate it.

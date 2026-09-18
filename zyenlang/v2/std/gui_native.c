@@ -8,6 +8,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include "zyenlang_c_abi.h"
 
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
@@ -1542,4 +1543,107 @@ int zl_tk_event_y(const char* event) {
     int y = 0;
     zltk_event_coordinates(event, &x, &y);
     return y;
+}
+
+int zy3_tk_session_open(ZL_String title, int width, int height, ZL_String session_dir) {
+    return zl_tk_session_open(zl_string_data(title), width, height, zl_string_data(session_dir));
+}
+
+ZL_String zy3_tk_session_next_event(int timeout_ms) {
+    return zl_string_copy(zl_tk_session_next_event(timeout_ms));
+}
+
+int zy3_tk_bg(ZL_String color) {
+    return zl_tk_bg(zl_string_data(color));
+}
+
+int zy3_tk_line(int x1, int y1, int x2, int y2, ZL_String color, int width) {
+    return zl_tk_line(x1, y1, x2, y2, zl_string_data(color), width);
+}
+
+int zy3_tk_rect(int x, int y, int width, int height, ZL_String color) {
+    return zl_tk_rect(x, y, width, height, zl_string_data(color));
+}
+
+int zy3_tk_circle(int x, int y, int radius, ZL_String color) {
+    return zl_tk_circle(x, y, radius, zl_string_data(color));
+}
+
+int zy3_tk_text(int x, int y, ZL_String text, ZL_String color, int size) {
+    return zl_tk_text(x, y, zl_string_data(text), zl_string_data(color), size);
+}
+
+int zy3_tk_codeview_text(
+    int x,
+    int y,
+    int width,
+    int height,
+    int first_line,
+    int line_height,
+    int char_width,
+    int size,
+    int stamp,
+    ZL_String lines
+) {
+    return zl_tk_codeview_text(
+        x, y, width, height, first_line, line_height, char_width, size, stamp, zl_string_data(lines)
+    );
+}
+
+int zy3_tk_codeview_editor_text(
+    int x,
+    int y,
+    int width,
+    int height,
+    int first_line,
+    int line_height,
+    int char_width,
+    int size,
+    int stamp,
+    ZL_String lines,
+    int selection_start_line,
+    int selection_start_column,
+    int selection_end_line,
+    int selection_end_column
+) {
+    return zl_tk_codeview_editor_text(
+        x,
+        y,
+        width,
+        height,
+        first_line,
+        line_height,
+        char_width,
+        size,
+        stamp,
+        zl_string_data(lines),
+        selection_start_line,
+        selection_start_column,
+        selection_end_line,
+        selection_end_column
+    );
+}
+
+int zy3_tk_completion(
+    int x,
+    int y,
+    int width,
+    int row_height,
+    int size,
+    int selected,
+    ZL_String items
+) {
+    return zl_tk_completion(x, y, width, row_height, size, selected, zl_string_data(items));
+}
+
+int zy3_tk_event_kind(ZL_String event) {
+    return zl_tk_event_kind(zl_string_data(event));
+}
+
+int zy3_tk_event_x(ZL_String event) {
+    return zl_tk_event_x(zl_string_data(event));
+}
+
+int zy3_tk_event_y(ZL_String event) {
+    return zl_tk_event_y(zl_string_data(event));
 }

@@ -9,6 +9,18 @@
 #include <stdlib.h>
 #include <string.h>
 
+#ifndef ZYENLANG_API
+#if defined(_WIN32) && defined(ZYENLANG_BUILD_SHARED)
+#define ZYENLANG_API __declspec(dllexport)
+#elif defined(_WIN32) && defined(ZYENLANG_USE_SHARED)
+#define ZYENLANG_API __declspec(dllimport)
+#elif defined(__GNUC__) || defined(__clang__)
+#define ZYENLANG_API __attribute__((visibility("default")))
+#else
+#define ZYENLANG_API
+#endif
+#endif
+
 #ifdef _WIN32
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
@@ -138,7 +150,11 @@ typedef struct zy2_ArcControl {
     zy2_ArcDrop drop;
 } zy2_ArcControl;
 
-static atomic_size_t zy2_arc_live_controls = 0;
+#ifdef ZY2_RUNTIME_IMPLEMENTATION
+atomic_size_t zy2_arc_live_controls = 0;
+#else
+extern atomic_size_t zy2_arc_live_controls;
+#endif
 
 static inline void zy2_arc_panic(const char* message) {
     zy2_error_begin();
@@ -196,6 +212,223 @@ static inline size_t zy2_arc_strong_count(zy2_ArcControl* owner) {
     return owner ? atomic_load_explicit(&owner->refs, memory_order_relaxed) : 0u;
 }
 
+typedef zy2_ArcControl ZL_ArcControl;
+typedef void (*ZL_GenericCall)(void);
+
+typedef struct ZL_Function {
+    ZL_GenericCall call;
+    void* env;
+    ZL_ArcControl* owner;
+    const char* signature;
+} ZL_Function;
+
+static inline ZL_Function zl_fn_retain(ZL_Function value) {
+    zy2_arc_retain(value.owner);
+    return value;
+}
+
+static inline void zl_fn_release(ZL_Function value) {
+    zy2_arc_release(value.owner);
+}
+
+static inline void zl_fn_assign(ZL_Function* target, ZL_Function value) {
+    ZL_Function retained;
+    if (!target) return;
+    retained = zl_fn_retain(value);
+    zl_fn_release(*target);
+    *target = retained;
+}
+
+static inline void zl_fn_clear(ZL_Function* target) {
+    if (!target) return;
+    zl_fn_release(*target);
+    *target = (ZL_Function){0};
+}
+
+static inline bool zl_fn_is_none(ZL_Function value) {
+    return value.call == NULL;
+}
+
+static inline bool zl_fn_matches(ZL_Function value, const char* signature) {
+    return value.call != NULL && value.signature != NULL && signature != NULL
+        && strcmp(value.signature, signature) == 0;
+}
+
+static inline bool zl_fn_equal(ZL_Function left, ZL_Function right) {
+    return left.call == right.call && left.env == right.env && left.owner == right.owner;
+}
+
+#define ZL_FN_CALL_AS(TYPE, VALUE) ((TYPE)((VALUE).call))
+
+typedef struct ZL_String {
+    const char* data;
+    size_t byte_len;
+    ZL_ArcControl* owner;
+} ZL_String;
+
+static inline ZL_String zl_string_borrow_n(const char* data, size_t byte_len) {
+    return (ZL_String){ .data = data ? data : "", .byte_len = data ? byte_len : 0u, .owner = NULL };
+}
+
+static inline ZL_String zl_string_borrow(const char* data) {
+    return zl_string_borrow_n(data, data ? strlen(data) : 0u);
+}
+
+static inline ZL_String zl_string_copy_n(const char* data, size_t byte_len) {
+    char* owned = (char*)malloc(byte_len + 1u);
+    if (!owned) zy2_arc_panic("cannot allocate str data");
+    if (byte_len > 0u && data) memcpy(owned, data, byte_len);
+    owned[byte_len] = '\0';
+    return (ZL_String){ .data = owned, .byte_len = byte_len, .owner = zy2_arc_new(owned, free) };
+}
+
+static inline ZL_String zl_string_copy(const char* data) {
+    return zl_string_copy_n(data, data ? strlen(data) : 0u);
+}
+
+static inline ZL_String zl_string_retain(ZL_String value) {
+    zy2_arc_retain(value.owner);
+    return value;
+}
+
+static inline void zl_string_release(ZL_String value) {
+    zy2_arc_release(value.owner);
+}
+
+static inline const char* zl_string_data(ZL_String value) {
+    return value.data ? value.data : "";
+}
+
+static inline size_t zl_string_byte_len(ZL_String value) {
+    return value.byte_len;
+}
+
+static inline bool zl_string_equal(ZL_String left, ZL_String right) {
+    if (left.byte_len != right.byte_len) return false;
+    if (left.byte_len == 0u) return true;
+    return memcmp(zl_string_data(left), zl_string_data(right), left.byte_len) == 0;
+}
+
+static inline size_t zl_string_scalar_len(ZL_String value) {
+    const unsigned char* bytes = (const unsigned char*)zl_string_data(value);
+    size_t offset = 0u;
+    size_t count = 0u;
+    while (offset < value.byte_len) {
+        size_t width = zy2_utf8_character_size(bytes + offset, value.byte_len - offset);
+        if (width == 0u) zy2_arc_panic("str contains invalid UTF-8");
+        offset += width;
+        count += 1u;
+    }
+    return count;
+}
+
+static inline bool zl_string_scalar_get(ZL_String value, size_t index, ZL_String* result) {
+    const unsigned char* bytes = (const unsigned char*)zl_string_data(value);
+    size_t offset = 0u;
+    size_t scalar = 0u;
+    if (!result) return false;
+    while (offset < value.byte_len) {
+        size_t width = zy2_utf8_character_size(bytes + offset, value.byte_len - offset);
+        if (width == 0u) return false;
+        if (scalar == index) {
+            *result = zl_string_copy_n((const char*)bytes + offset, width);
+            return true;
+        }
+        offset += width;
+        scalar += 1u;
+    }
+    return false;
+}
+
+static inline bool zl_string_scalar_slice(
+    ZL_String value,
+    size_t start,
+    size_t end,
+    ZL_String* result
+) {
+    const unsigned char* bytes = (const unsigned char*)zl_string_data(value);
+    size_t offset = 0u;
+    size_t scalar = 0u;
+    size_t byte_start = 0u;
+    size_t byte_end = 0u;
+    bool found_start = start == 0u;
+    bool found_end = end == 0u;
+    if (!result || start > end) return false;
+    while (offset < value.byte_len) {
+        size_t width;
+        if (scalar == start) {
+            byte_start = offset;
+            found_start = true;
+        }
+        if (scalar == end) {
+            byte_end = offset;
+            found_end = true;
+            break;
+        }
+        width = zy2_utf8_character_size(bytes + offset, value.byte_len - offset);
+        if (width == 0u) return false;
+        offset += width;
+        scalar += 1u;
+    }
+    if (scalar == start) {
+        byte_start = offset;
+        found_start = true;
+    }
+    if (scalar == end) {
+        byte_end = offset;
+        found_end = true;
+    }
+    if (!found_start || !found_end) return false;
+    *result = zl_string_copy_n((const char*)bytes + byte_start, byte_end - byte_start);
+    return true;
+}
+
+#ifdef ZY2_RUNTIME_IMPLEMENTATION
+ZYENLANG_API ZL_String zl_abi_string_copy_n(const char* data, size_t byte_len) {
+    return zl_string_copy_n(data, byte_len);
+}
+
+ZYENLANG_API ZL_String zl_abi_string_retain(ZL_String value) {
+    return zl_string_retain(value);
+}
+
+ZYENLANG_API void zl_abi_string_release(ZL_String value) {
+    zl_string_release(value);
+}
+
+ZYENLANG_API const char* zl_abi_string_data(ZL_String value) {
+    return zl_string_data(value);
+}
+
+ZYENLANG_API size_t zl_abi_string_byte_len(ZL_String value) {
+    return zl_string_byte_len(value);
+}
+
+ZYENLANG_API ZL_Function zl_abi_fn_retain(ZL_Function value) {
+    return zl_fn_retain(value);
+}
+
+ZYENLANG_API void zl_abi_fn_release(ZL_Function value) {
+    zl_fn_release(value);
+}
+
+ZYENLANG_API void zl_abi_fn_assign(ZL_Function* target, ZL_Function value) {
+    zl_fn_assign(target, value);
+}
+
+ZYENLANG_API void zl_abi_fn_clear(ZL_Function* target) {
+    zl_fn_clear(target);
+}
+
+ZYENLANG_API bool zl_abi_fn_is_none(ZL_Function value) {
+    return zl_fn_is_none(value);
+}
+
+ZYENLANG_API bool zl_abi_fn_matches(ZL_Function value, const char* signature) {
+    return zl_fn_matches(value, signature);
+}
+#endif
+
 static inline int zy2_arc_assert_clean(void) {
     size_t live = atomic_load_explicit(&zy2_arc_live_controls, memory_order_relaxed);
     if (live == 0u) return 1;
@@ -205,12 +438,95 @@ static inline int zy2_arc_assert_clean(void) {
     return 0;
 }
 
-typedef struct zy2_Error {
-    const char* message;
-    const char* source_file;
+#define ZY2_ERROR_MAX_FRAMES 32u
+
+typedef struct zy2_ErrorFrame {
+    ZL_String function_name;
+    ZL_String source_file;
     uint32_t line;
     uint32_t column;
+} zy2_ErrorFrame;
+
+typedef struct zy2_Error {
+    ZL_String message;
+    ZL_String source_file;
+    uint32_t line;
+    uint32_t column;
+    uint32_t frame_count;
+    bool stack_truncated;
+    zy2_ErrorFrame frames[ZY2_ERROR_MAX_FRAMES];
 } zy2_Error;
+
+static inline zy2_Error zy2_error_retain(zy2_Error value) {
+    value.message = zl_string_retain(value.message);
+    value.source_file = zl_string_retain(value.source_file);
+    for (uint32_t index = 0u; index < value.frame_count; ++index) {
+        value.frames[index].function_name = zl_string_retain(value.frames[index].function_name);
+        value.frames[index].source_file = zl_string_retain(value.frames[index].source_file);
+    }
+    return value;
+}
+
+static inline void zy2_error_release(zy2_Error value) {
+    zl_string_release(value.message);
+    zl_string_release(value.source_file);
+    for (uint32_t index = 0u; index < value.frame_count; ++index) {
+        zl_string_release(value.frames[index].function_name);
+        zl_string_release(value.frames[index].source_file);
+    }
+}
+
+static inline void zy2_error_push_frame(
+    zy2_Error* error,
+    ZL_String function_name,
+    ZL_String source_file,
+    uint32_t line,
+    uint32_t column
+) {
+    zy2_ErrorFrame* frame;
+    if (!error) return;
+    if (error->frame_count >= ZY2_ERROR_MAX_FRAMES) {
+        error->stack_truncated = true;
+        return;
+    }
+    frame = &error->frames[error->frame_count++];
+    frame->function_name = zl_string_retain(function_name);
+    frame->source_file = zl_string_retain(source_file);
+    frame->line = line;
+    frame->column = column;
+}
+
+static inline ZL_String zy2_error_frame_format(zy2_ErrorFrame frame) {
+    const char* function_name = zl_string_data(frame.function_name);
+    const char* source_file = zl_string_data(frame.source_file);
+    int required = snprintf(
+        NULL,
+        0,
+        "%s (%s:%u:%u)",
+        function_name,
+        source_file,
+        frame.line,
+        frame.column
+    );
+    char* buffer;
+    if (required < 0) return zl_string_copy("<invalid error frame>");
+    buffer = (char*)malloc((size_t)required + 1u);
+    if (!buffer) zy2_arc_panic("cannot allocate Error stack frame");
+    (void)snprintf(
+        buffer,
+        (size_t)required + 1u,
+        "%s (%s:%u:%u)",
+        function_name,
+        source_file,
+        frame.line,
+        frame.column
+    );
+    return (ZL_String){
+        .data = buffer,
+        .byte_len = (size_t)required,
+        .owner = zy2_arc_new(buffer, free),
+    };
+}
 
 static int zy2_process_argc = 0;
 static char** zy2_process_argv = NULL;
@@ -240,13 +556,13 @@ static inline bool zy2_parse_hex_color(const char* color, unsigned int* red, uns
     return true;
 }
 
-static inline void zy2_print_cmd(const char* value, const char* color) {
+static inline void zy2_print_cmd(ZL_String value, ZL_String color) {
     unsigned int red = 0u;
     unsigned int green = 0u;
     unsigned int blue = 0u;
-    bool colored = zy2_parse_hex_color(color, &red, &green, &blue) && zy2_stream_color_enabled(stdout);
+    bool colored = zy2_parse_hex_color(zl_string_data(color), &red, &green, &blue) && zy2_stream_color_enabled(stdout);
     if (colored) fprintf(stdout, "\x1b[38;2;%u;%u;%um", red, green, blue);
-    fprintf(stdout, "%s\n", value ? value : "null");
+    fprintf(stdout, "%s\n", zl_string_data(value));
     if (colored) fputs("\x1b[0m", stdout);
 }
 
@@ -255,11 +571,23 @@ static inline void zy2_unhandled_error(zy2_Error error) {
     fprintf(
         stderr,
         "%s:%u:%u: %s\n",
-        error.source_file ? error.source_file : "<runtime>",
+        error.source_file.data ? error.source_file.data : "<runtime>",
         error.line,
         error.column,
-        error.message ? error.message : "unhandled Error"
+        error.message.data ? error.message.data : "unhandled Error"
     );
+    for (uint32_t index = 0u; index < error.frame_count; ++index) {
+        const zy2_ErrorFrame* frame = &error.frames[index];
+        fprintf(
+            stderr,
+            "  at %s (%s:%u:%u)\n",
+            zl_string_data(frame->function_name),
+            zl_string_data(frame->source_file),
+            frame->line,
+            frame->column
+        );
+    }
+    if (error.stack_truncated) fputs("  ... stack truncated\n", stderr);
     zy2_error_end();
     exit(1);
 }

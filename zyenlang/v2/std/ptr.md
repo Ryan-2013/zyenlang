@@ -1,32 +1,33 @@
-# `std/ptr` v2 contract
+# Safe references and owned heap values
 
-ZyenLang 0.2 has no `*` or `&` expression operators. The first ownership
-milestone exposes `Box<T>` directly as a compiler-managed type:
+Normal ZyenLang 0.3 code does not expose source-level raw pointers. Use local
+borrows when a function should observe or mutate an existing binding:
 
 ```zy
-let value: Box<i32> = Box(12)
-let alias = value
-alias.value = 20
-let current: i32 = value.value
-let references: usize = value.__strong_count__
+let value: i32 = 10
+let read: &i32 = &value
+let copy: i32 = CLONE_REF__(read)
+
+let write: &mut i32 = &mut value
+REF_SET__(write, 20)
 ```
 
-The public types are:
+`&T` permits multiple readers. `&mut T` is unique and excludes all other uses
+of its owner for the borrow lifetime. References cannot be null, nested,
+returned, captured, stored in List/struct/class fields, or sent to another
+thread. They do not own or release the referred value.
 
-- `Box<T>` is implemented. It owns one heap cell and releases it when its
-  final atomic ARC owner leaves.
-- `Ref<T>` is a checked, non-owning borrow whose lifetime cannot escape the
-  operation that created it. It is not implemented yet.
-- `Raw<T>` is an unsafe C address available only to native compatibility code.
-  It is not implemented yet.
+`Box<T>` remains an ARC-owned heap cell for explicit shared identity:
 
-Box construction, retain, release, payload access, and scope cleanup are
-compiler/runtime intrinsics and compile to inline C operations. They do not
-make an external C call per access.
+```zy
+let box = Box(12)
+let alias = CLONE__(box)
+alias.value = 20
+let count: usize = box.__strong_count__
+DROP__(alias)
+```
 
-Box payloads are currently limited to primitives, borrowed `str`, and concrete
-structs without managed fields. Structs containing List fields now have managed
-destructors, but Box still needs a Box-specific recursive payload destructor
-before it can own those structs or appear in a struct field, tuple, optional,
-or another Box. `List<Box<T>>` is supported for valid unmanaged `T` payloads.
-`std/ptr` remains pending as the future facade for `Ref<T>` and `Raw<T>`.
+Classes, closures, and Box values increment atomic ARC on clone. `DROP__()`
+releases one local owner early and makes that binding uninitialized until it is
+assigned again. Raw addresses exist only inside native/C compatibility code;
+they are not a safe-language type.

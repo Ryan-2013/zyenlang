@@ -250,7 +250,7 @@ static FILE* zy2_fs_open_write(const char* path, bool append) {
 #endif
 }
 
-const char* zy2_fs_read_text(const char* path) {
+static const char* zy2_fs_read_text_raw(const char* path) {
     FILE* file;
     long length;
     size_t read_length;
@@ -325,11 +325,11 @@ static int32_t zy2_fs_write_mode(const char* path, const char* value, bool appen
     return 0;
 }
 
-int32_t zy2_fs_write_text(const char* path, const char* value) {
+static int32_t zy2_fs_write_text_raw(const char* path, const char* value) {
     return zy2_fs_write_mode(path, value, false);
 }
 
-int32_t zy2_fs_append_text(const char* path, const char* value) {
+static int32_t zy2_fs_append_text_raw(const char* path, const char* value) {
     return zy2_fs_write_mode(path, value, true);
 }
 
@@ -559,7 +559,7 @@ static bool zy2_fs_tree_walk(const char* path, const char* prefix, size_t depth)
     return true;
 }
 
-const char* zy2_fs_tree(const char* path) {
+static const char* zy2_fs_tree_raw(const char* path) {
     bool is_directory;
     bool recurse;
     zy2_fs_clear_error();
@@ -580,6 +580,26 @@ const char* zy2_fs_tree(const char* path) {
     return zy2_fs_tree_buffer.data;
 }
 
-const char* zy2_fs_error(void) {
+static const char* zy2_fs_error_raw(void) {
     return zy2_fs_message;
+}
+
+ZL_String zy2_fs_read_text(ZL_String path) {
+    return zl_string_copy(zy2_fs_read_text_raw(zl_string_data(path)));
+}
+
+int32_t zy2_fs_write_text(ZL_String path, ZL_String value) {
+    return zy2_fs_write_text_raw(zl_string_data(path), zl_string_data(value));
+}
+
+int32_t zy2_fs_append_text(ZL_String path, ZL_String value) {
+    return zy2_fs_append_text_raw(zl_string_data(path), zl_string_data(value));
+}
+
+ZL_String zy2_fs_tree(ZL_String path) {
+    return zl_string_copy(zy2_fs_tree_raw(zl_string_data(path)));
+}
+
+ZL_String zy2_fs_error(void) {
+    return zl_string_copy(zy2_fs_error_raw());
 }

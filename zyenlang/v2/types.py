@@ -26,6 +26,16 @@ class NamedType(Type):
     args: tuple[Type, ...] = ()
 
     def display(self) -> str:
+        if self.name.startswith("__zlcm_struct_"):
+            payload = self.name[len("__zlcm_struct_") :]
+            _, separator, native_name = payload.partition("__")
+            return native_name if separator else "c_module native struct"
+        if self.name.startswith("__zlcm_"):
+            payload = self.name[len("__zlcm_") :]
+            _, separator, template = payload.partition("__")
+            if not separator:
+                return "c_module::Module"
+            return f'c_module::Module("{template}")'
         if not self.args:
             return self.name
         return f"{self.name}<{', '.join(item.display() for item in self.args)}>"
@@ -54,6 +64,16 @@ class FunctionType(Type):
 
     def display(self) -> str:
         return f"fn({', '.join(item.display() for item in self.params)}) {self.return_type.display()}"
+
+
+@dataclass(frozen=True)
+class ReferenceType(Type):
+    inner: Type
+    mutable: bool = False
+
+    def display(self) -> str:
+        prefix = "&mut " if self.mutable else "&"
+        return prefix + self.inner.display()
 
 
 @dataclass(frozen=True)
@@ -141,6 +161,10 @@ def is_box(typ: Type) -> bool:
     return isinstance(typ, NamedType) and typ.name == "Box" and len(typ.args) == 1
 
 
+def is_reference(typ: Type) -> bool:
+    return isinstance(typ, ReferenceType)
+
+
 def resolve_type_node(
     node: ast.TypeNode,
     known_structs: set[str],
@@ -148,6 +172,15 @@ def resolve_type_node(
     source_name: str = "<source>",
 ) -> Type:
     type_vars = type_vars or set()
+    if isinstance(node, ast.ReferenceTypeNode):
+        if node.inner is None:
+            raise CompileError("reference type is missing its value type", node.span, source_name)
+        inner = resolve_type_node(node.inner, known_structs, type_vars, source_name)
+        if isinstance(inner, ReferenceType):
+            raise CompileError("references cannot point to references", node.span, source_name)
+        if inner in {VOID, NULL}:
+            raise CompileError(f"invalid reference target `{inner.display()}`", node.span, source_name)
+        return ReferenceType(inner, node.mutable)
     if isinstance(node, ast.OptionalTypeNode):
         if node.inner is None:
             raise CompileError("optional type is missing its value type", node.span, source_name)
@@ -220,4 +253,6 @@ def substitute(typ: Type, mapping: dict[str, Type]) -> Type:
             tuple(substitute(item, mapping) for item in typ.params),
             substitute(typ.return_type, mapping),
         )
+    if isinstance(typ, ReferenceType):
+        return ReferenceType(substitute(typ.inner, mapping), typ.mutable)
     return typ

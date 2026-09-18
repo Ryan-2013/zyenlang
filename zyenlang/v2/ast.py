@@ -37,6 +37,12 @@ class FunctionTypeNode(TypeNode):
 
 
 @dataclass(frozen=True)
+class ReferenceTypeNode(TypeNode):
+    inner: TypeNode | None = None
+    mutable: bool = False
+
+
+@dataclass(frozen=True)
 class Expr:
     span: SourceSpan
 
@@ -73,6 +79,23 @@ class NullExpr(Expr):
 
 @dataclass(frozen=True)
 class NameExpr(Expr):
+    name: str
+
+
+@dataclass(frozen=True)
+class PathExpr(Expr):
+    parts: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class TypeApplyExpr(Expr):
+    callee: Expr
+    type_args: tuple[TypeNode, ...]
+
+
+@dataclass(frozen=True)
+class AssociatedExpr(Expr):
+    receiver: Expr
     name: str
 
 
@@ -160,6 +183,19 @@ class CastExpr(Expr):
 
 
 @dataclass(frozen=True)
+class BorrowExpr(Expr):
+    value: Expr
+    mutable: bool = False
+
+
+@dataclass(frozen=True)
+class ClosureExpr(Expr):
+    params: tuple["Param", ...]
+    return_type: TypeNode
+    body: "Block"
+
+
+@dataclass(frozen=True)
 class Binding:
     name: str
     type_node: TypeNode | None
@@ -230,13 +266,13 @@ class ContinueStmt(Stmt):
 
 
 @dataclass(frozen=True)
-class FreeStmt(Stmt):
+class DropStmt(Stmt):
     name: str
 
 
 @dataclass(frozen=True)
-class SkipStmt(Stmt):
-    name: str
+class DeferStmt(Stmt):
+    call: CallExpr
 
 
 @dataclass(frozen=True)
@@ -266,6 +302,7 @@ class StructDef:
     visibility: Visibility
     type_params: tuple[str, ...]
     span: SourceSpan
+    native_name: str | None = None
 
 
 @dataclass(frozen=True)
@@ -275,6 +312,46 @@ class Param:
     span: SourceSpan
     mutable: bool = False
     default: Expr | None = None
+
+
+@dataclass(frozen=True)
+class ClassMethodDef:
+    name: str
+    params: tuple["Param", ...]
+    return_type: TypeNode
+    body: Block
+    visibility: Visibility
+    span: SourceSpan
+    mutable: bool = False
+    static: bool = False
+    throws: TypeNode | None = None
+
+
+@dataclass(frozen=True)
+class ClassInitDef:
+    params: tuple["Param", ...]
+    body: Block
+    visibility: Visibility
+    span: SourceSpan
+    throws: TypeNode | None = None
+
+
+@dataclass(frozen=True)
+class ClassDeinitDef:
+    body: Block
+    span: SourceSpan
+
+
+@dataclass(frozen=True)
+class ClassDef:
+    name: str
+    fields: tuple[FieldDef, ...]
+    methods: tuple[ClassMethodDef, ...]
+    initializer: ClassInitDef | None
+    deinitializer: ClassDeinitDef | None
+    visibility: Visibility
+    type_params: tuple[str, ...]
+    span: SourceSpan
 
 
 @dataclass(frozen=True)
@@ -288,6 +365,7 @@ class FunctionDef:
     receiver: Param | None = None
     type_params: tuple[str, ...] = ()
     throws: TypeNode | None = None
+    exported: bool = False
 
 
 @dataclass(frozen=True)
@@ -304,6 +382,25 @@ class NativeLinkDef:
 
 
 @dataclass(frozen=True)
+class NativeBuildDef:
+    """Compiler-generated native build metadata.
+
+    Source programs cannot spell this declaration directly.  c_module uses it
+    after validating a .zlcm.h template so no command line text is reparsed by
+    the backend or shell.
+    """
+
+    headers: tuple[str, ...]
+    sources: tuple[str, ...]
+    include_dirs: tuple[str, ...]
+    lib_dirs: tuple[str, ...]
+    libraries: tuple[str, ...]
+    cflags: tuple[str, ...]
+    ldflags: tuple[str, ...]
+    span: SourceSpan
+
+
+@dataclass(frozen=True)
 class NativeFunctionDef:
     name: str
     params: tuple[Param, ...]
@@ -314,7 +411,15 @@ class NativeFunctionDef:
     throws: TypeNode | None = None
 
 
-Definition = StructDef | FunctionDef | NativeSourceDef | NativeLinkDef | NativeFunctionDef
+Definition = (
+    ClassDef
+    | StructDef
+    | FunctionDef
+    | NativeSourceDef
+    | NativeLinkDef
+    | NativeBuildDef
+    | NativeFunctionDef
+)
 
 
 @dataclass(frozen=True)

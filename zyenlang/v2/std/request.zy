@@ -14,7 +14,7 @@ public struct Response {
     public error: str
 }
 
-public fn (response: Response) ok() bool {
+public fn response_ok(response: Response) bool {
     return response.error == "" && response.status >= 200 && response.status < 300
 }
 
@@ -63,7 +63,7 @@ public fn delete(url: str) Response {
 
 public fn download(url: str, path: str) Response {
     let response: Response = get(url)
-    if !response.ok() {
+    if !response_ok(response) {
         return response
     }
     let saved: i32 = save_body(path)
@@ -75,7 +75,7 @@ public fn download(url: str, path: str) Response {
 
 public fn download_with_timeout(url: str, path: str, timeout_ms: i32) Response {
     let response: Response = get_with_timeout(url, timeout_ms)
-    if !response.ok() {
+    if !response_ok(response) {
         return response
     }
     let saved: i32 = save_body(path)

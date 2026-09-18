@@ -1,10 +1,10 @@
 # std/io 使用說明
 
 ```zy
-import <std/io> as io
+import std::io as io
 
-io.print("normal output")
-io.eprint("error output")
+io::print("normal output")
+io::eprint("error output")
 ```
 
 - `print(value: str)` 以白色寫入終端並換行。
@@ -21,7 +21,7 @@ PRINT_CMD__("ember", "#D97757")
 
 ```zy
 let count: i32 = 42
-io.print(f"count={count}")
+io::print(f"count={count}")
 ```
 
 重新導向或被測試工具捕捉時不輸出 ANSI 色碼。`NO_COLOR` 關閉顏色；

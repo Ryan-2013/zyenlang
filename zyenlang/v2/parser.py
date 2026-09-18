@@ -34,15 +34,26 @@ CAST_OPERAND_STARTS = {
     "NULL",
     "IDENT",
     "LIST_LEN__",
+    "LIST_GET__",
+    "LIST_POP__",
+    "LIST_CLEAR__",
     "LIST_PUSH__",
     "LIST_SET__",
+    "CLONE__",
+    "CLONE_REF__",
+    "REF_SET__",
     "PRINT_CMD__",
     "STR_TO_LIST__",
+    "STR_LEN__",
+    "STR_BYTE_LEN__",
+    "STR_GET__",
+    "STR_SLICE__",
     "(",
     "[",
     "SPAWN",
     "AWAIT",
     "TYPEOF__",
+    "&",
 }
 
 
@@ -109,24 +120,35 @@ class Parser:
         return ast.Program(tuple(imports), tuple(definitions))
 
     def parse_import(self, start: SourceSpan) -> ast.ImportDef:
-        if self.match("<"):
-            parts = [self.parse_import_path_part("expected a package or standard-library module path")]
-            while self.match("/"):
-                parts.append(self.parse_import_path_part("expected a module name after `/`"))
-            self.expect(">", "expected `>` after package import")
-            path = "/".join(parts)
-            is_angle = True
-        elif token := self.match("STRING"):
-            path = token.value
-            is_angle = False
-        else:
-            raise CompileError("import expects `<package/module>` or a quoted relative path", self.current.span, self.source_name)
-        alias = path.rsplit("/", 1)[-1].rsplit(".", 1)[0]
-        if self.match("AS"):
-            alias = self.expect("IDENT", "expected an import alias").value
-        elif "-" in alias:
-            raise CompileError("imports ending in a hyphenated name require `as alias`", start, self.source_name)
-        return ast.ImportDef(path, alias, is_angle, start)
+        if self.at("<") or self.at("STRING"):
+            raise CompileError(
+                "ZyenLang 0.3 imports use `import std::module as alias` or `import crate::module as alias`",
+                self.current.span,
+                self.source_name,
+            )
+        if (
+            self.at("IDENT")
+            and self.current.value == "c_module"
+            and self.index + 2 < len(self.tokens)
+            and self.tokens[self.index + 1].kind == "."
+            and self.tokens[self.index + 2].kind == "IDENT"
+            and self.tokens[self.index + 2].value == "load"
+        ):
+            raise CompileError(
+                "`import c_module.load(\"...\") as name` was removed; write "
+                "`import std::c_module as c_module` and initialize "
+                "`let name: c_module::Module = c_module::load(\"...\")`",
+                self.current.span,
+                self.source_name,
+            )
+        parts = [self.expect("IDENT", "import expects a module path such as `std::io`").value]
+        while self.match("::"):
+            parts.append(self.expect("IDENT", "expected a module name after `::`").value)
+        if len(parts) < 2:
+            raise CompileError("import paths require a root and module name", start, self.source_name)
+        self.expect("AS", "ZyenLang 0.3 imports require `as alias`")
+        alias = self.expect("IDENT", "expected an import alias").value
+        return ast.ImportDef("::".join(parts), alias, False, start)
 
     def parse_import_path_part(self, message: str) -> str:
         values = [self.expect("IDENT", message).value]
@@ -139,18 +161,29 @@ class Parser:
             return "public"
         if self.match("PRIVATE"):
             return "private"
-        return "public"
+        return "private"
 
     def parse_definition(self) -> ast.Definition:
+        exported = self.match("EXPORT") is not None
         visibility = self.parse_visibility()
+        if exported:
+            visibility = "public"
         if self.match("STRUCT"):
+            if exported:
+                raise CompileError("only functions can be exported through the C ABI", self.previous().span, self.source_name)
             return self.parse_struct(visibility, self.previous().span)
+        if self.match("CLASS"):
+            if exported:
+                raise CompileError("classes cannot be exported directly through the C ABI", self.previous().span, self.source_name)
+            return self.parse_class(visibility, self.previous().span)
         if self.match("FN"):
-            return self.parse_function(visibility, self.previous().span)
+            return self.parse_function(visibility, self.previous().span, exported=exported)
         if self.match("NATIVE"):
+            if exported:
+                raise CompileError("native declarations cannot be re-exported", self.previous().span, self.source_name)
             return self.parse_native(visibility, self.previous().span)
         raise CompileError(
-            "top-level declarations must be `struct`, `fn`, or `native`",
+            "top-level declarations must be `struct`, `class`, `fn`, or `native`",
             self.current.span,
             self.source_name,
         )
@@ -225,6 +258,12 @@ class Parser:
         self.skip_newlines()
         while not self.at("}"):
             field_visibility = self.parse_visibility()
+            if self.at("FN") or self.at("MUT") or self.at("STATIC") or self.at("INIT") or self.at("DEINIT"):
+                raise CompileError(
+                    "struct is pure data in ZyenLang 0.3; move behavior to a module function or class",
+                    self.current.span,
+                    self.source_name,
+                )
             self.match("LET")
             if self.at("IDENT") and self.current.value == "this":
                 self.advance()
@@ -240,14 +279,138 @@ class Parser:
         self.expect("}")
         return ast.StructDef(name, tuple(fields), visibility, type_params, start)
 
-    def parse_function(self, visibility: ast.Visibility, start: SourceSpan) -> ast.FunctionDef:
+    def parse_class(self, visibility: ast.Visibility, start: SourceSpan) -> ast.ClassDef:
+        name = self.expect("IDENT", "expected a class name").value
+        type_params = self.parse_type_params()
+        self.skip_newlines()
+        self.expect("{", "expected `{` after class name")
+        fields: list[ast.FieldDef] = []
+        methods: list[ast.ClassMethodDef] = []
+        initializer: ast.ClassInitDef | None = None
+        deinitializer: ast.ClassDeinitDef | None = None
+        self.skip_newlines()
+        while not self.at("}"):
+            member_visibility = self.parse_visibility()
+            if token := self.match("INIT"):
+                if initializer is not None:
+                    raise CompileError("class can define only one init block", token.span, self.source_name)
+                params, throws, body = self.parse_callable_tail("init")
+                initializer = ast.ClassInitDef(tuple(params), body, member_visibility, token.span, throws)
+                self.skip_newlines()
+                continue
+            if token := self.match("DEINIT"):
+                if member_visibility == "public":
+                    raise CompileError("deinit is always private", token.span, self.source_name)
+                if deinitializer is not None:
+                    raise CompileError("class can define only one deinit block", token.span, self.source_name)
+                self.skip_newlines()
+                deinitializer = ast.ClassDeinitDef(self.parse_block(), token.span)
+                self.skip_newlines()
+                continue
+
+            mutable = self.match("MUT") is not None
+            static = self.match("STATIC") is not None
+            if mutable and static:
+                raise CompileError("static functions cannot be marked mut", self.previous().span, self.source_name)
+            if token := self.match("FN"):
+                method_name = self.expect("IDENT", "expected a class method name")
+                if self.at("<"):
+                    raise CompileError("class methods cannot declare additional generic parameters", method_name.span, self.source_name)
+                params, return_type, throws, body = self.parse_named_callable_tail(method_name)
+                methods.append(
+                    ast.ClassMethodDef(
+                        method_name.value,
+                        tuple(params),
+                        return_type,
+                        body,
+                        member_visibility,
+                        token.span,
+                        mutable,
+                        static,
+                        throws,
+                    )
+                )
+                self.skip_newlines()
+                continue
+            if mutable or static:
+                raise CompileError("mut/static in a class must be followed by fn", self.current.span, self.source_name)
+
+            self.match("LET")
+            field_token = self.expect("IDENT", "expected a class field or method")
+            self.expect(":", "expected `:` after class field name")
+            type_node = self.parse_type()
+            default = None
+            if self.match("="):
+                default = self.parse_expression()
+            fields.append(ast.FieldDef(field_token.value, type_node, member_visibility, field_token.span, default))
+            self.require_statement_end()
+        self.expect("}")
+        return ast.ClassDef(
+            name,
+            tuple(fields),
+            tuple(methods),
+            initializer,
+            deinitializer,
+            visibility,
+            type_params,
+            start,
+        )
+
+    def parse_callable_tail(self, label: str) -> tuple[list[ast.Param], ast.TypeNode | None, ast.Block]:
+        self.expect("(", f"expected `(` after {label}")
+        params: list[ast.Param] = []
+        self.skip_newlines()
+        while not self.at(")"):
+            params.append(self.parse_param(allow_default=True))
+            self.skip_newlines()
+            if not self.match(","):
+                break
+            self.skip_newlines()
+        self.expect(")", f"expected `)` after {label} parameters")
+        self.skip_newlines()
+        throws = None
+        if self.match("THROWS"):
+            self.skip_newlines()
+            throws = self.parse_type()
+            self.skip_newlines()
+        return params, throws, self.parse_block()
+
+    def parse_named_callable_tail(
+        self,
+        name: Token,
+    ) -> tuple[list[ast.Param], ast.TypeNode, ast.TypeNode | None, ast.Block]:
+        self.expect("(", "expected `(` after method name")
+        params: list[ast.Param] = []
+        self.skip_newlines()
+        while not self.at(")"):
+            params.append(self.parse_param(allow_default=True))
+            self.skip_newlines()
+            if not self.match(","):
+                break
+            self.skip_newlines()
+        self.expect(")", "expected `)` after method parameters")
+        self.skip_newlines()
+        return_type: ast.TypeNode
+        if self.at("{") or self.at("THROWS"):
+            return_type = ast.NamedTypeNode(name.span, "void")
+        else:
+            return_type = self.parse_type()
+            self.skip_newlines()
+        throws = None
+        if self.match("THROWS"):
+            self.skip_newlines()
+            throws = self.parse_type()
+            self.skip_newlines()
+        return params, return_type, throws, self.parse_block()
+
+    def parse_function(self, visibility: ast.Visibility, start: SourceSpan, *, exported: bool = False) -> ast.FunctionDef:
         receiver: ast.Param | None = None
         if self.match("("):
-            self.skip_newlines()
-            receiver = self.parse_param()
-            self.skip_newlines()
-            self.expect(")", "receiver must contain exactly one typed binding")
-            self.skip_newlines()
+            raise CompileError(
+                "receiver functions were removed in ZyenLang 0.3; place methods inside a class",
+                start,
+                self.source_name,
+            )
 
         name_token = self.expect("IDENT", "expected a function name")
         type_params = self.parse_type_params()
@@ -287,6 +450,7 @@ class Parser:
             receiver=receiver,
             type_params=type_params,
             throws=throws,
+            exported=exported,
         )
 
     def parse_param(self, *, allow_default: bool = False) -> ast.Param:
@@ -304,7 +468,17 @@ class Parser:
     def parse_type(self) -> ast.TypeNode:
         self.skip_newlines()
         start = self.current.span
-        if self.match("FN"):
+        if self.match("&&"):
+            raise CompileError(
+                "references cannot point to references; nested `&&T` is not allowed",
+                start,
+                self.source_name,
+            )
+        if self.match("&"):
+            mutable = self.match("MUT") is not None
+            self.skip_newlines()
+            node = ast.ReferenceTypeNode(start, self.parse_type(), mutable)
+        elif self.match("FN"):
             self.expect("(", "expected `(` after `fn` in function type")
             self.skip_newlines()
             params: list[ast.TypeNode] = []
@@ -318,7 +492,7 @@ class Parser:
             self.skip_newlines()
             if self.match("->"):
                 raise CompileError(
-                    "ZyenLang 0.2 function types use `fn(P...) R` without `->`",
+                    "ZyenLang 0.3 function types use `fn(P...) R` without `->`",
                     self.previous().span,
                     self.source_name,
                 )
@@ -340,8 +514,14 @@ class Parser:
         else:
             first = self.expect("IDENT", "expected a type")
             name_parts = [first.value]
-            while self.match("."):
-                name_parts.append(self.expect("IDENT", "expected a type name after `.`").value)
+            while self.match("::"):
+                name_parts.append(self.expect("IDENT", "expected a type name after `::`").value)
+            if self.at("."):
+                raise CompileError(
+                    "ZyenLang 0.3 type paths use `::`, not `.`",
+                    self.current.span,
+                    self.source_name,
+                )
             args: list[ast.TypeNode] = []
             if self.match("<"):
                 self.skip_newlines()
@@ -352,13 +532,13 @@ class Parser:
                         break
                     self.skip_newlines()
                 self.expect(">", "expected `>` after generic type arguments")
-            node = ast.NamedTypeNode(start, ".".join(name_parts), tuple(args))
+            node = ast.NamedTypeNode(start, "::".join(name_parts), tuple(args))
 
         if self.match("|"):
             self.skip_newlines()
             if not self.match("NULL"):
                 raise CompileError(
-                    "ZyenLang 0.2 currently permits only optional unions written `T | null`",
+                    "ZyenLang 0.3 permits only optional unions written `T | null`",
                     self.current.span,
                     self.source_name,
                 )
@@ -428,13 +608,24 @@ class Parser:
             self.require_statement_end()
             return ast.ContinueStmt(token.span)
         if token := self.match("FREE__", "SKIP__"):
+            replacement = "DROP__" if token.kind == "FREE__" else "lexical scope"
+            raise CompileError(
+                f"`{token.value}` was removed in ZyenLang 0.3; use {replacement}",
+                token.span,
+                self.source_name,
+            )
+        if token := self.match("DROP__"):
             self.expect("(", f"{token.value} requires `(`")
             name = self.expect("IDENT", f"{token.value} expects one local variable")
             self.expect(")", f"expected `)` after {token.value} local")
             self.require_statement_end()
-            if token.kind == "FREE__":
-                return ast.FreeStmt(token.span, name.value)
-            return ast.SkipStmt(token.span, name.value)
+            return ast.DropStmt(token.span, name.value)
+        if token := self.match("DEFER"):
+            value = self.parse_expression()
+            if not isinstance(value, ast.CallExpr):
+                raise CompileError("defer requires a function or class method call", value.span, self.source_name)
+            self.require_statement_end()
+            return ast.DeferStmt(token.span, value)
 
         start = self.current.span
         value = self.parse_expression()
@@ -524,6 +715,14 @@ class Parser:
             return cast
         if token := self.match("!", "-"):
             return ast.UnaryExpr(token.span, token.kind, self.parse_unary(allow_struct_literal=allow_struct_literal))
+        if token := self.match("&"):
+            mutable = self.match("MUT") is not None
+            self.skip_newlines()
+            return ast.BorrowExpr(
+                token.span,
+                self.parse_unary(allow_struct_literal=allow_struct_literal),
+                mutable,
+            )
         if token := self.match("SPAWN"):
             value = self.parse_postfix(allow_struct_literal=allow_struct_literal)
             if not isinstance(value, ast.CallExpr):
@@ -573,10 +772,24 @@ class Parser:
     def parse_postfix(self, *, allow_struct_literal: bool) -> ast.Expr:
         expression = self.parse_primary(allow_struct_literal=allow_struct_literal)
         while True:
+            type_apply = self.try_parse_type_apply(expression)
+            if type_apply is not None:
+                expression = type_apply
+                continue
             if self.match("."):
                 name = self.expect("IDENT", "expected a field or method name after `.`")
                 expression = ast.FieldExpr(expression.span, expression, name.value)
                 continue
+            if token := self.match("::"):
+                if isinstance(expression, ast.TypeApplyExpr):
+                    name = self.expect("IDENT", "expected a static function name after `::`")
+                    expression = ast.AssociatedExpr(token.span, expression, name.value)
+                    continue
+                raise CompileError(
+                    "associated paths must be written as one path before applying type arguments",
+                    token.span,
+                    self.source_name,
+                )
             if token := self.match("["):
                 self.skip_newlines()
                 index = self.parse_expression()
@@ -606,7 +819,54 @@ class Parser:
             break
         return expression
 
+    def try_parse_type_apply(self, expression: ast.Expr) -> ast.TypeApplyExpr | None:
+        if not self.at("<") or not isinstance(expression, (ast.NameExpr, ast.PathExpr)):
+            return None
+        checkpoint = self.index
+        self.advance()
+        args: list[ast.TypeNode] = []
+        try:
+            self.skip_newlines()
+            while not self.at(">"):
+                args.append(self.parse_type())
+                self.skip_newlines()
+                if not self.match(","):
+                    break
+                self.skip_newlines()
+            self.expect(">", "expected `>` after type arguments")
+            if self.at("{"):
+                raise CompileError(
+                    "generic struct literals are not supported in ZyenLang 0.3; use a generic class constructor",
+                    expression.span,
+                    self.source_name,
+                )
+            if not self.at("(") and not self.at("::"):
+                self.index = checkpoint
+                return None
+        except CompileError as exc:
+            if exc.message.startswith("generic struct literals"):
+                raise
+            self.index = checkpoint
+            return None
+        return ast.TypeApplyExpr(expression.span, expression, tuple(args))
+
     def parse_primary(self, *, allow_struct_literal: bool) -> ast.Expr:
+        if token := self.match("FN"):
+            self.expect("(", "closure requires `(` after `fn`")
+            self.skip_newlines()
+            params: list[ast.Param] = []
+            while not self.at(")"):
+                params.append(self.parse_param())
+                self.skip_newlines()
+                if not self.match(","):
+                    break
+                self.skip_newlines()
+            self.expect(")", "expected `)` after closure parameters")
+            self.skip_newlines()
+            return_type = self.parse_type()
+            self.skip_newlines()
+            body = self.parse_block()
+            return ast.ClosureExpr(token.span, tuple(params), return_type, body)
         if token := self.match("INT"):
             return ast.IntExpr(token.span, int(token.value))
         if token := self.match("FLOAT"):
@@ -619,7 +879,23 @@ class Parser:
             return ast.BoolExpr(token.span, token.kind == "TRUE")
         if token := self.match("NULL"):
             return ast.NullExpr(token.span)
-        if token := self.match("LIST_LEN__", "LIST_PUSH__", "LIST_SET__", "PRINT_CMD__", "STR_TO_LIST__"):
+        if token := self.match(
+            "LIST_LEN__",
+            "LIST_GET__",
+            "LIST_PUSH__",
+            "LIST_SET__",
+            "LIST_POP__",
+            "LIST_CLEAR__",
+            "PRINT_CMD__",
+            "STR_TO_LIST__",
+            "STR_LEN__",
+            "STR_BYTE_LEN__",
+            "STR_GET__",
+            "STR_SLICE__",
+            "CLONE__",
+            "CLONE_REF__",
+            "REF_SET__",
+        ):
             self.expect("(", f"{token.value} requires `(`")
             args: list[ast.Expr] = []
             self.skip_newlines()
@@ -632,21 +908,15 @@ class Parser:
             self.expect(")", f"expected `)` after {token.value} arguments")
             return ast.CallExpr(token.span, ast.NameExpr(token.span, token.value), tuple(args))
         if token := self.match("IDENT"):
-            if allow_struct_literal and self.looks_like_generic_struct_literal():
-                raise CompileError(
-                    "generic struct construction is scheduled after the bootstrap milestone",
-                    token.span,
-                    self.source_name,
-                )
-            if allow_struct_literal and self.looks_like_qualified_struct_literal():
-                parts = [token.value]
-                while self.match("."):
-                    parts.append(self.expect("IDENT", "expected a struct name after `.`").value)
-                qualified = Token("IDENT", ".".join(parts), token.span)
-                return self.parse_struct_literal(qualified)
+            parts = [token.value]
+            while self.match("::"):
+                parts.append(self.expect("IDENT", "expected a path segment after `::`").value)
             if allow_struct_literal and self.at("{"):
-                return self.parse_struct_literal(token)
-            return ast.NameExpr(token.span, token.value)
+                qualified = Token("IDENT", "::".join(parts), token.span)
+                return self.parse_struct_literal(qualified)
+            if len(parts) == 1:
+                return ast.NameExpr(token.span, token.value)
+            return ast.PathExpr(token.span, tuple(parts))
         if token := self.match("("):
             self.skip_newlines()
             first = self.parse_expression()

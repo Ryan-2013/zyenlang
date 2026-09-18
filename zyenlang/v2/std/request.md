@@ -1,27 +1,25 @@
-# std/request 使用說明
+# `std::request`
 
-`std/request` 是同步 HTTP client。Windows 使用 WinHTTP；Linux/macOS 動態載入
-系統 libcurl，API 不分平台。
+`std::request` is a synchronous HTTP client. It uses WinHTTP on Windows and a
+dynamically resolved system libcurl on Linux/macOS, with one ZyenLang API.
 
 ```zy
-import <std/request> as request
-import <std/io> as io
+import std::io as io
+import std::request as request
 
-let response = request.get("https://example.com")
-if response.ok() {
-    io.print(response.body)
+let response: request::Response = request::get("https://example.com")
+if request::response_ok(response) {
+    io::print(response.body)
 } else {
-    io.eprint(response.error)
+    io::eprint(response.error)
 }
 ```
 
-`Response` 有 `status: i32`、`body: str`、`error: str`，`ok()` 表示沒有 transport
-error 且狀態碼為 2xx。
+`Response` is a pure-data struct with public `status: i32`, `body: str`, and
+`error: str` fields. As required by the v0.3 struct model, success testing is
+the module function `response_ok(response)`, not a struct method.
 
-公開函式包含 `get`、`get_with_timeout`、`post`、`post_with_timeout`、`post_json`、
-`put`、`put_with_timeout`、`delete`、`download`、`download_with_timeout` 和低階
-`send(method, url, body, content_type, timeout_ms)`。
-
-所有 timeout 單位是毫秒。`body` 與 `error` 是 thread-local borrowed string，
-只保證到同一 thread 的下一次 request；需要長期保存時，owned string runtime 完成前
-應立即處理或寫入檔案。
+Functions include `get`, `get_with_timeout`, `post`, `post_with_timeout`,
+`post_json`, `put`, `put_with_timeout`, `delete`, `download`,
+`download_with_timeout`, and `send`. Timeout values are milliseconds. Response
+text is returned as immutable ARC `str` data.

@@ -63,6 +63,22 @@ class IRName(IRExpr):
 
 
 @dataclass(frozen=True)
+class IRBorrow(IRExpr):
+    value: IRExpr
+    mutable: bool = False
+
+
+@dataclass(frozen=True)
+class IRReferenceValue(IRExpr):
+    reference: IRExpr
+
+
+@dataclass(frozen=True)
+class IRCapture(IRExpr):
+    name: str
+
+
+@dataclass(frozen=True)
 class IRUnary(IRExpr):
     operator: str
     operand: IRExpr
@@ -89,6 +105,12 @@ class IRField(IRExpr):
 @dataclass(frozen=True)
 class IRFunctionRef(IRExpr):
     target: str
+
+
+@dataclass(frozen=True)
+class IRClosure(IRExpr):
+    target: str
+    captures: tuple[tuple[str, IRExpr], ...]
 
 
 @dataclass(frozen=True)
@@ -121,10 +143,22 @@ class IRStruct(IRExpr):
 
 
 @dataclass(frozen=True)
+class IRClassNew(IRExpr):
+    initializer: str | None
+    args: tuple[IRExpr, ...]
+    defaults: tuple[tuple[str, IRExpr], ...] = ()
+
+
+@dataclass(frozen=True)
 class IRStructMetadata(IRExpr):
     receiver: IRExpr
     struct_name: str
     category: str
+
+
+@dataclass(frozen=True)
+class IRErrorStack(IRExpr):
+    error: IRExpr
 
 
 @dataclass(frozen=True)
@@ -226,16 +260,14 @@ class IRContinue(IRStmt):
 
 
 @dataclass(frozen=True)
-class IRFree(IRStmt):
+class IRDrop(IRStmt):
     name: str
     typ: Type
 
 
 @dataclass(frozen=True)
-class IRSkip(IRStmt):
-    source_name: str
-    destination_name: str
-    typ: Type
+class IRDefer(IRStmt):
+    call: IRExpr
 
 
 @dataclass(frozen=True)
@@ -269,6 +301,24 @@ class IRStructDef:
     name: str
     fields: tuple[IRFieldDef, ...]
     visibility: str
+    native_name: str | None = None
+
+
+@dataclass(frozen=True)
+class IRClassDef:
+    typ: Type
+    fields: tuple[IRFieldDef, ...]
+    visibility: str
+    deinitializer: str | None = None
+
+
+@dataclass(frozen=True)
+class IRClosureDef:
+    name: str
+    typ: Type
+    params: tuple["IRParam", ...]
+    body: IRBlock
+    captures: tuple[tuple[str, Type], ...]
 
 
 @dataclass(frozen=True)
@@ -287,7 +337,9 @@ class IRFunction:
     body: IRBlock
     visibility: str
     receiver_type: Type | None = None
+    receiver_mutable: bool = False
     throws: Type | None = None
+    exported: bool = False
 
 
 @dataclass(frozen=True)
@@ -309,8 +361,15 @@ class IRNativeLink:
 @dataclass(frozen=True)
 class IRProgram:
     structs: tuple[IRStructDef, ...] = field(default_factory=tuple)
+    classes: tuple[IRClassDef, ...] = field(default_factory=tuple)
+    closures: tuple[IRClosureDef, ...] = field(default_factory=tuple)
     functions: tuple[IRFunction, ...] = field(default_factory=tuple)
     extern_functions: tuple[IRExternFunction, ...] = field(default_factory=tuple)
     native_sources: tuple[str, ...] = field(default_factory=tuple)
     native_links: tuple[IRNativeLink, ...] = field(default_factory=tuple)
+    native_headers: tuple[str, ...] = field(default_factory=tuple)
+    native_include_dirs: tuple[str, ...] = field(default_factory=tuple)
+    native_lib_dirs: tuple[str, ...] = field(default_factory=tuple)
+    native_cflags: tuple[str, ...] = field(default_factory=tuple)
+    native_ldflags: tuple[str, ...] = field(default_factory=tuple)
     features: frozenset[str] = field(default_factory=frozenset)

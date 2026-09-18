@@ -24,25 +24,27 @@ def test_v2_language_tour_checks_and_emits_typed_c() -> None:
     program = compiler.check_file(source)
     generated = compiler.emit_file(source)
 
-    assert any(function.name == "return_value" for function in program.functions)
+    assert any(function.name == "Car::return_value" for function in program.functions)
     assert "zy2_result_i32" in generated
     assert "zy2_optional_i32" in generated
     assert "zy2_list_List_i16" in generated
-    assert "zy2_method_Car_return_value" in generated
+    assert "zy3_class_Car_return_value" in generated
     assert "zy2_list_List_i16_len(matrix)" in generated
     assert "if ((actual == 7))" not in generated
     assert "if (actual == 7)" in generated
 
 
 def test_v2_language_tour_runs() -> None:
-    command = [sys.executable, "-m", "zyenlang.v2", "run", "examples/v2_language_tour.zy"]
-    result = subprocess.run(command, cwd=ROOT, capture_output=True, text=True, check=False)
+    source = ROOT / "examples" / "v2_language_tour.zy"
+    executable = ROOT / "build" / ("v3-language-tour.exe" if sys.platform.startswith("win") else "v3-language-tour")
+    Compiler().build_executable(source, executable)
+    result = subprocess.run([str(executable)], cwd=ROOT, capture_output=True, text=True, check=False)
 
     assert result.returncode == 0, result.stdout + result.stderr
     assert result.stdout.splitlines() == ["car", "value must be positive", "tuple", "null", "some", "list"]
 
 
-def test_v2_private_method_is_rejected_outside_its_struct() -> None:
+def test_v3_receiver_method_migration_is_reported() -> None:
     source = """
 struct Secret {
     public value: i32
@@ -57,7 +59,7 @@ fn main() i32 {
     return secret.hidden()
 }
 """
-    with pytest.raises(CompileError, match="method `Secret.hidden` is private"):
+    with pytest.raises(CompileError, match="receiver functions were removed"):
         Compiler().check_source(source)
 
 
@@ -75,7 +77,7 @@ fn main() i32 {
 def test_v2_explicit_casts_emit_and_run(tmp_path: Path) -> None:
     source = tmp_path / "casts.zy"
     source.write_text(
-        """import <std/io> as io
+        """import std::io as io
 
 fn fail() void throws Error {
     stop "cast error"
@@ -90,12 +92,12 @@ fn main() i32 {
     let one: i32 = (i32)truth
     let values: List<i32> = [1, 2]
     let same_values: List<i32> = (List<i32>)values
-    io.print((str)truth)
-    io.print((str)negative)
-    io.print((str)wide)
-    io.print((str)floating)
+    io::print((str)truth)
+    io::print((str)negative)
+    io::print((str)wide)
+    io::print((str)floating)
     fail() catch err {
-        io.print((str)err.message)
+        io::print((str)err.message)
         recover
     }
     if narrowed == 42 && negative == -1 && one == 1 && same_values.len() == 2 && (narrowed) - 40 == 2 {
@@ -115,7 +117,7 @@ fn main() i32 {
     assert result.returncode == 0, result.stdout + result.stderr
     assert result.stdout.splitlines() == ["true", "-1", "42", "42", "cast error"]
     assert "snprintf" in generated
-    assert ' ? "true" : "false"' in generated
+    assert 'zl_string_borrow("true")' in generated
     assert "!= 0" in generated
 
 
@@ -148,21 +150,21 @@ def test_v2_optional_str_cast_is_safe_and_evaluates_once(tmp_path: Path) -> None
 def test_v2_null_comparison_narrows_optional_local_in_matching_branch(tmp_path: Path) -> None:
     source = tmp_path / "optional_narrowing.zy"
     source.write_text(
-        """import <std/io> as io
+        """import std::io as io
 
 fn main() i32 {
     let num: i32 | null = null
     num = 10
     if (num != null) {
         num = 12
-        io.print((str)num)
+        io::print((str)num)
     }
 
     let second: i32 | null = 4
     if second == null {
         return 2
     } else {
-        io.print((str)second)
+        io::print((str)second)
     }
     return 0
 }
@@ -236,20 +238,13 @@ def test_v2_blocks_use_lexical_scope_without_erasing_outer_variables(tmp_path: P
         Compiler().check_source(invalid)
 
 
-def test_v2_free_ends_a_binding_and_allows_same_scope_reuse(tmp_path: Path) -> None:
-    source = tmp_path / "free_local.zy"
+def test_v3_drop_releases_and_allows_assignment_reinitialization(tmp_path: Path) -> None:
+    source = tmp_path / "drop_local.zy"
     source.write_text(
         """fn main() i32 {
-    let run = true
     let value = Box(1)
-    FREE__(run)
-    FREE__(value)
-
-    let run = false
-    let value = Box(42)
-    if run {
-        return 1
-    }
+    DROP__(value)
+    value = Box(42)
     return value.value - 42
 }
 """,
@@ -257,66 +252,32 @@ def test_v2_free_ends_a_binding_and_allows_same_scope_reuse(tmp_path: Path) -> N
     )
     compiler = Compiler()
     generated = compiler.emit_file(source)
-    executable = tmp_path / ("free-local.exe" if sys.platform.startswith("win") else "free-local")
+    executable = tmp_path / ("drop-local.exe" if sys.platform.startswith("win") else "drop-local")
     compiler.build_file(source, executable)
     result = subprocess.run([str(executable)], capture_output=True, text=True, check=False)
 
     assert result.returncode == 0, result.stdout + result.stderr
-    assert "__zy_run_2" in generated
     assert generated.count("zy2_box_i32_release") >= 2
 
 
-def test_v2_skip_promotes_unmanaged_and_managed_locals_one_scope(tmp_path: Path) -> None:
-    source = tmp_path / "skip_local.zy"
-    source.write_text(
-        """fn main() i32 {
-    if false {
-        let missing = 9
-        SKIP__(missing)
-    }
-    if missing != 0 {
-        return 1
-    }
-
-    let iteration = 0
-    while iteration < 2 {
-        let carried = Box(iteration + 40)
-        SKIP__(carried)
-        iteration = iteration + 1
-    }
-    if carried.value != 41 || carried.__strong_count__ != 1 {
-        return 2
-    }
-    return 0
-}
-""",
-        encoding="utf-8",
-    )
-    compiler = Compiler()
-    generated = compiler.emit_file(source)
-    executable = tmp_path / ("skip-local.exe" if sys.platform.startswith("win") else "skip-local")
-    compiler.build_file(source, executable)
-    result = subprocess.run([str(executable)], capture_output=True, text=True, check=False)
-
-    assert result.returncode == 0, result.stdout + result.stderr
-    assert "__zy_skip_missing" in generated
-    assert "__zy_skip_carried" in generated
+@pytest.mark.parametrize(("name", "replacement"), [("FREE__", "DROP__"), ("SKIP__", "lexical scope")])
+def test_v3_removed_lifetime_forms_have_migration_diagnostics(name: str, replacement: str) -> None:
+    source = f"fn main() i32 {{\n    {name}(value)\n    return 0\n}}\n"
+    with pytest.raises(CompileError, match=replacement):
+        Compiler().check_source(source)
 
 
 @pytest.mark.parametrize(
     ("source", "message"),
     [
-        ("fn main() i32 {\n    FREE__(missing)\n    return 0\n}\n", "unknown name `missing`"),
-        ("fn main() i32 {\n    let value = 1\n    if true {\n        FREE__(value)\n    }\n    return 0\n}\n", "FREE__ can only end `value` in its declaring block"),
-        ("fn main() i32 {\n    let value = 1\n    SKIP__(value)\n    return 0\n}\n", "SKIP__ cannot move a local outside its function"),
-        ("fn main() i32 {\n    let value = 1\n    if true {\n        SKIP__(value)\n    }\n    return 0\n}\n", "already outlives the current block"),
+        ("fn main() i32 {\n    DROP__(missing)\n    return 0\n}\n", "unknown name `missing`"),
+        ("fn main() i32 {\n    let value = Box(1)\n    if true {\n        DROP__(value)\n    }\n    return 0\n}\n", "DROP__ can only consume `value` in its declaring block"),
+        ("fn main() i32 {\n    let value = 1\n    DROP__(value)\n    return 0\n}\n", "has no managed resource to drop"),
+        ("fn main() i32 {\n    let value = Box(1)\n    DROP__(value)\n    return value.value\n}\n", "was dropped and has not been reinitialized"),
+        ("fn main() i32 {\n    let value = Box(1)\n    DROP__(value)\n    DROP__(value)\n    return 0\n}\n", "was already dropped"),
         (
-            "fn work() i32 {\n    return 1\n}\nfn main() i32 {\n    let task = spawn work()\n    FREE__(task)\n    return 0\n}\n",
-            "FREE__ cannot discard Task<T>",
-        ),
-        (
-            "fn work() i32 {\n    return 1\n}\nfn main() i32 {\n    if true {\n        let task = spawn work()\n        SKIP__(task)\n    }\n    return 0\n}\n",
-            "SKIP__ cannot move Task<T>",
+            "fn work() i32 {\n    return 1\n}\nfn main() i32 {\n    let task = spawn work()\n    DROP__(task)\n    return 0\n}\n",
+            "DROP__ cannot discard Task<T>",
         ),
     ],
 )
@@ -699,7 +660,7 @@ fn main() i32 {
 def test_v2_generic_struct_equality_is_structural_and_runs(tmp_path: Path) -> None:
     source = tmp_path / "generic_struct_equality.zy"
     source.write_text(
-        """import <std/io>
+        """import std::io as io
 
 fn is_same<T>(a: T, b: T) bool {
     return a == b
@@ -720,8 +681,8 @@ fn main() i32 {
     let first = Car{value: 12, name: "ember", engine: Engine{serial: "A-1", cylinders: 4}}
     let different = Car{value: 10, name: "ember", engine: Engine{serial: "A-1", cylinders: 4}}
     let copy = Car{value: 12, name: "ember", engine: Engine{serial: "A-1", cylinders: 4}}
-    io.print((str)is_same(first, different))
-    io.print((str)is_same(first, copy))
+    io::print((str)is_same(first, different))
+    io::print((str)is_same(first, copy))
     if is_same(first, different) || !is_same(first, copy) {
         return 1
     }
@@ -740,7 +701,7 @@ fn main() i32 {
 
     assert result.returncode == 0, result.stdout + result.stderr
     assert result.stdout.splitlines() == ["false", "true"]
-    assert "strcmp" in generated
+    assert "zl_string_equal" in generated
     assert "zy2_fn_is_same__Car" in generated
 
 
@@ -836,10 +797,10 @@ def test_v2_imported_function_defaults_are_namespaced_and_run(tmp_path: Path) ->
     )
     source = tmp_path / "main.zy"
     source.write_text(
-        """import "math_defaults.zy" as math
+        """import crate::math_defaults as math
 
 fn main() i32 {
-    return math.add() - 42
+    return math::add() - 42
 }
 """,
         encoding="utf-8",
@@ -935,7 +896,7 @@ def test_v2_string_to_list_splits_utf8_characters_and_releases_storage(tmp_path:
     assert result.returncode == 0, result.stdout + result.stderr
     assert result.stdout == "ember\n"
     assert "zy2_list_str_from_utf8" in generated
-    assert "owned_text" in generated
+    assert "zl_string_copy" in generated
 
 
 def test_v2_print_cmd_emits_truecolor_when_forced(tmp_path: Path) -> None:
@@ -1035,11 +996,12 @@ def test_v2_optional_integer_literal_respects_inner_range() -> None:
 
 @pytest.mark.parametrize(
     "construction",
-    ["Box{value: 5}", "Box<i32>{value: 5}"],
+    ["Pair{value: 5}", "Pair<i32>{value: 5}"],
 )
-def test_v2_generic_struct_construction_has_milestone_diagnostic(construction: str) -> None:
-    source = f"struct Box<T> {{\n    value: T\n}}\nfn main() i32 {{\n    let box: Box<i32> = {construction}\n    return 0\n}}\n"
-    with pytest.raises(CompileError, match="generic struct construction is scheduled after the bootstrap milestone"):
+def test_v2_generic_struct_construction_reports_v3_class_migration(construction: str) -> None:
+    source = f"struct Pair<T> {{\n    value: T\n}}\nfn main() i32 {{\n    let pair: Pair<i32> = {construction}\n    return 0\n}}\n"
+    message = "generic struct literals are not supported" if "<" in construction else "generic structs are not supported"
+    with pytest.raises(CompileError, match=message):
         Compiler().check_source(source)
 
 
@@ -1075,14 +1037,6 @@ def test_v2_struct_metadata_lists_attributes_and_methods(tmp_path: Path) -> None
     private name: str = "player"
 }
 
-public fn (player: Player) update() i32 {
-    return player.hp
-}
-
-private fn (player: Player) reset() i32 {
-    return 0
-}
-
 fn main() i32 {
     let player = Player{hp: 100}
     let attributes: List<str> = player.__attributes__
@@ -1093,13 +1047,7 @@ fn main() i32 {
     let second_attribute: str = attributes.get(1) catch err {
         return 2
     }
-    let first_method: str = methods.get(0) catch err {
-        return 3
-    }
-    let second_method: str = methods.get(1) catch err {
-        return 4
-    }
-    if attributes.len() == 2 && methods.len() == 2 && first_attribute == "hp" && second_attribute == "name" && first_method == "update" && second_method == "reset" {
+    if attributes.len() == 2 && methods.len() == 0 && first_attribute == "hp" && second_attribute == "name" {
         return 0
     }
     return 5
@@ -1114,8 +1062,9 @@ fn main() i32 {
     result = subprocess.run([str(executable)], capture_output=True, text=True, check=False)
 
     assert result.returncode == 0, result.stdout + result.stderr
-    assert 'zy2_meta_Player_attributes[] = { "hp", "name" }' in generated
-    assert 'zy2_meta_Player_methods[] = { "update", "reset" }' in generated
+    assert "zy2_meta_Player_attributes[]" in generated
+    assert '.data = "hp"' in generated and '.data = "name"' in generated
+    assert "zy2_list_str_borrow(NULL, 0)" in generated
 
 
 @pytest.mark.parametrize("reserved", ["__attributes__", "__methods__"])
@@ -1232,25 +1181,15 @@ fn main() i32 {
 
 
 @pytest.mark.parametrize(
-    ("source", "message"),
+    "source",
     [
-        (
-            "struct Bad {\n    value: Box<i32>\n}\nfn main() i32 {\n    return 0\n}\n",
-            "Box<T> fields require managed aggregate destructors",
-        ),
-        (
-            "fn main() i32 {\n    let nested = Box(Box(1))\n    return 0\n}\n",
-            "needs a managed destructor that is not implemented",
-        ),
-        (
-            "fn pair<T>(value: T) (T, T) {\n    return value, value\n}\nfn main() i32 {\n    let pair_value = pair(Box(1))\n    return 0\n}\n",
-            "Box<T> cannot be nested in a generic return type yet",
-        ),
+        "struct Bad {\n    value: Box<i32>\n}\nfn main() i32 {\n    return 0\n}\n",
+        "fn main() i32 {\n    let nested = Box(Box(1))\n    return 0\n}\n",
+        "fn pair<T>(value: T) (T, T) {\n    return value, value\n}\nfn main() i32 {\n    let pair_value = pair(Box(1))\n    return 0\n}\n",
     ],
 )
-def test_v2_box_rejects_unmanaged_aggregate_positions(source: str, message: str) -> None:
-    with pytest.raises(CompileError, match=message):
-        Compiler().check_source(source)
+def test_v3_box_supports_managed_aggregate_positions(source: str) -> None:
+    Compiler().check_source(source)
 
 
 def test_v2_dynamic_list_mutation_aliases_nested_values_and_arc(tmp_path: Path) -> None:
@@ -1275,7 +1214,7 @@ fn main() i32 {
     let alias = values
     LIST_PUSH__(alias, 30)
     let returned = identity(values)
-    if returned.len() != 3 || returned.capacity() < returned.len() || returned.is_empty() {
+    if returned.len() != 2 || alias.len() != 3 || returned.capacity() < returned.len() || returned.is_empty() {
         return 1
     }
 
@@ -1288,7 +1227,7 @@ fn main() i32 {
     let remaining: i32 = values.get(0) catch err {
         recover -1
     }
-    if removed != 10 || popped != 30 || remaining != 22 {
+    if removed != 10 || popped != 22 || remaining != -1 {
         return 2
     }
 
@@ -1298,7 +1237,7 @@ fn main() i32 {
         recover []
     }
     LIST_PUSH__(fetched, 2)
-    if inner.len() != 2 {
+    if inner.len() != 1 || fetched.len() != 2 {
         return 3
     }
 
@@ -1319,7 +1258,7 @@ fn main() i32 {
         return 5
     }
 
-    let arguments = GET_ARGS__
+    let arguments = GET_ARGS__()
     LIST_PUSH__(arguments, "local")
     if arguments.len() != 2 {
         return 6
@@ -1364,7 +1303,7 @@ def test_v2_list_uses_builtin_len_and_checked_index_syntax(tmp_path: Path) -> No
     let last: i32 = inner[2] catch err {
         recover -1
     }
-    if LIST_LEN__(values) != 3 || LIST_LEN__(nested) != 1 || first != 10 || last != 30 {
+    if LIST_LEN__(values) != 2 || LIST_LEN__(inner) != 3 || LIST_LEN__(nested) != 1 || first != 10 || last != 30 {
         return 1
     }
     return 0
@@ -1682,17 +1621,17 @@ public fn make() Playlist {
     )
     source = tmp_path / "main.zy"
     source.write_text(
-        """import "model.zy" as model
+        """import crate::model as model
 
 fn main() i32 {
-    let first = model.make()
+    let first = model::make()
     let second = first
     first.tracks.clear()
-    if second.tracks.len() != 0 {
+    if second.tracks.len() != 3 || first.tracks.len() != 0 {
         return 1
     }
     second.tracks.push(13)
-    if first.tracks.len() != 1 {
+    if first.tracks.len() != 0 || second.tracks.len() != 4 {
         return 2
     }
     return 0
@@ -1743,7 +1682,9 @@ fn main() i32 {
     result = subprocess.run([str(executable)], capture_output=True, text=True, check=False)
 
     assert result.returncode != 0
-    assert result.stderr.strip() == f"{source.resolve()}:3:5: unhandled test"
+    assert result.stderr.splitlines()[0] == f"{source.resolve()}:3:5: unhandled test"
+    assert "at fail" in result.stderr
+    assert "at main" in result.stderr
 
 
 def test_v2_unhandled_error_is_red_when_color_is_forced(tmp_path: Path) -> None:
@@ -1778,7 +1719,7 @@ def test_v2_cli_compile_error_is_red_when_color_is_forced(tmp_path: Path) -> Non
     environment.pop("NO_COLOR", None)
     environment["ZYEN_COLOR"] = "always"
     result = subprocess.run(
-        [sys.executable, "-m", "zyenlang.v2", "check", str(source)],
+        [sys.executable, "-m", "zyenlang.v2", "check", "--file", str(source)],
         cwd=ROOT,
         capture_output=True,
         text=True,
@@ -1795,7 +1736,7 @@ def test_v2_cli_compile_error_is_red_when_color_is_forced(tmp_path: Path) -> Non
 def test_v2_eprint_uses_red_print_command_when_color_is_forced(tmp_path: Path) -> None:
     source = tmp_path / "red_eprint.zy"
     source.write_text(
-        'import <std/io> as io\n\nfn main() i32 {\n    io.eprint("warning")\n    return 0\n}\n',
+        'import std::io as io\n\nfn main() i32 {\n    io::eprint("warning")\n    return 0\n}\n',
         encoding="utf-8",
     )
     executable = tmp_path / ("red-eprint.exe" if sys.platform.startswith("win") else "red-eprint")
@@ -1832,7 +1773,7 @@ def test_v2_imported_module_error_reports_imported_file(tmp_path: Path) -> None:
     broken.write_text("public fn bad() i32 {\n    return missing\n}\n", encoding="utf-8")
     main = tmp_path / "main.zy"
     main.write_text(
-        'import "broken.zy" as broken\n\nfn main() i32 {\n    return broken.bad()\n}\n',
+        'import crate::broken as broken\n\nfn main() i32 {\n    return broken::bad()\n}\n',
         encoding="utf-8",
     )
 
@@ -1851,9 +1792,9 @@ def test_v2_module_qualified_struct_literal_builds_and_runs(tmp_path: Path) -> N
     )
     main = tmp_path / "main.zy"
     main.write_text(
-        'import "model.zy" as model\n\nfn main() i32 {\n'
-        "    let value = model.Dict{}\n"
-        "    if TYPEOF__(value, model.Dict) {\n"
+        'import crate::model as model\n\nfn main() i32 {\n'
+        "    let value = model::Dict{}\n"
+        "    if TYPEOF__(value, model::Dict) {\n"
         "        return value.size\n"
         "    }\n"
         "    return 1\n"
@@ -1873,22 +1814,22 @@ def test_v2_private_imported_struct_cannot_be_constructed(tmp_path: Path) -> Non
     model.write_text("private struct Secret {\n}\n", encoding="utf-8")
     main = tmp_path / "main.zy"
     main.write_text(
-        'import "model.zy" as model\n\nfn main() i32 {\n'
-        "    let value = model.Secret{}\n"
+        'import crate::model as model\n\nfn main() i32 {\n'
+        "    let value = model::Secret{}\n"
         "    return 0\n"
         "}\n",
         encoding="utf-8",
     )
 
-    with pytest.raises(CompileError, match="struct `model.Secret` is private"):
+    with pytest.raises(CompileError, match="struct `model::Secret` is private"):
         Compiler().check_file(main)
 
 
 def test_v2_circular_import_reports_the_import_site(tmp_path: Path) -> None:
     first = tmp_path / "first.zy"
     second = tmp_path / "second.zy"
-    first.write_text('import "second.zy" as second\n', encoding="utf-8")
-    second.write_text('import "first.zy" as first\n', encoding="utf-8")
+    first.write_text('import crate::second as second\n', encoding="utf-8")
+    second.write_text('import crate::first as first\n', encoding="utf-8")
 
     with pytest.raises(CompileError, match="circular import") as caught:
         Compiler(CompilerOptions(require_main=False)).check_file(first)
@@ -1935,12 +1876,12 @@ def test_v2_nested_module_references_keep_the_full_namespace(tmp_path: Path) -> 
     leaf.write_text("public fn answer() i32 {\n    return 42\n}\n", encoding="utf-8")
     middle = tmp_path / "middle.zy"
     middle.write_text(
-        'import "leaf.zy" as leaf\n\npublic fn answer() i32 {\n    return leaf.answer()\n}\n',
+        'import crate::leaf as leaf\n\npublic fn answer() i32 {\n    return leaf::answer()\n}\n',
         encoding="utf-8",
     )
     main = tmp_path / "main.zy"
     main.write_text(
-        'import "middle.zy" as middle\n\nfn main() i32 {\n    return middle.answer() - 42\n}\n',
+        'import crate::middle as middle\n\nfn main() i32 {\n    return middle::answer() - 42\n}\n',
         encoding="utf-8",
     )
 
@@ -1982,13 +1923,13 @@ fn main() i32 {
 def test_v2_get_args_and_get_exe_use_process_arguments(tmp_path: Path) -> None:
     source = tmp_path / "args.zy"
     source.write_text(
-        """import <std/list> as list
-import <std/process> as process
+        """import std::list as list
+import std::process as process
 
 fn main() i32 {
-    let args = process.args(GET_ARGS__)
-    let executable = process.executable(GET_EXE__)
-    if list.length(args) == 2 && executable != "" {
+    let args = process::args(GET_ARGS__())
+    let executable = process::executable(GET_EXE__())
+    if list::length(args) == 2 && executable != "" {
         return 0
     }
     return 1
@@ -2013,7 +1954,7 @@ def test_v2_list_get_is_typed_and_reads_process_arguments(tmp_path: Path) -> Non
     source = tmp_path / "list_get.zy"
     source.write_text(
         """fn main() i32 {
-    let args: List<str> = GET_ARGS__
+    let args: List<str> = GET_ARGS__()
     let first: str = args.get(0) catch err {
         recover "missing"
     }
@@ -2076,7 +2017,7 @@ def test_v2_editor_buffer_edits_utf8_text_and_saves(tmp_path: Path) -> None:
 
 
 def test_v2_process_special_values_are_typed_and_reserved() -> None:
-    wrong_type = "fn main() i32 {\n    let args: i32 = GET_ARGS__\n    return 0\n}\n"
+    wrong_type = "fn main() i32 {\n    let args: i32 = GET_ARGS__()\n    return 0\n}\n"
     shadowed = "fn main() i32 {\n    let GET_ARGS__: i32 = 1\n    return 0\n}\n"
 
     with pytest.raises(CompileError, match="expected `i32`, got `List<str>`"):
@@ -2088,7 +2029,7 @@ def test_v2_process_special_values_are_typed_and_reserved() -> None:
 @pytest.mark.parametrize("name", ["GET_ARGS__", "GET_EXE__"])
 def test_v2_process_special_values_are_restricted_to_main(name: str) -> None:
     return_type = "List<str>" if name == "GET_ARGS__" else "str"
-    source = f"fn helper() {return_type} {{\n    return {name}\n}}\n\nfn main() i32 {{\n    return 0\n}}\n"
+    source = f"fn helper() {return_type} {{\n    return {name}()\n}}\n\nfn main() i32 {{\n    return 0\n}}\n"
 
     with pytest.raises(CompileError, match=r"only available inside `fn main\(\)`"):
         Compiler().check_source(source)
@@ -2142,12 +2083,12 @@ def test_v2_check_file_source_uses_unsaved_root_text_and_disk_imports(tmp_path: 
     module.write_text("public fn answer() i32 {\n    return 42\n}\n", encoding="utf-8")
     root = tmp_path / "main.zy"
     root.write_text("fn main() i32 {\n    return 1\n}\n", encoding="utf-8")
-    unsaved = 'import "math.zy" as math\n\nfn main() i32 {\n    return math.answer()\n}\n'
+    unsaved = 'import crate::math as math\n\nfn main() i32 {\n    return math::answer()\n}\n'
 
     program = Compiler().check_file_source(root, unsaved)
 
     assert any(function.name == "main" for function in program.functions)
-    assert any(function.name == "math.answer" for function in program.functions)
+    assert any(function.name == "math::answer" for function in program.functions)
 
 
 def test_v2_check_cli_accepts_unsaved_source_from_stdin(tmp_path: Path) -> None:
@@ -2156,7 +2097,7 @@ def test_v2_check_cli_accepts_unsaved_source_from_stdin(tmp_path: Path) -> None:
     unsaved = "fn helper() i32 {\n    return 7\n}\n"
 
     result = subprocess.run(
-        [sys.executable, "-m", "zyenlang.v2", "check", str(source), "--library", "--stdin"],
+        [sys.executable, "-m", "zyenlang.v2", "check", "--file", str(source), "--library", "--stdin"],
         cwd=ROOT,
         input=unsaved,
         capture_output=True,
@@ -2278,12 +2219,12 @@ def test_v2_server_module_serves_one_http_request(tmp_path: Path) -> None:
 
     source = tmp_path / "server.zy"
     source.write_text(
-        f"""import <std/server> as server
-import <std/io> as io
+        f"""import std::server as server
+import std::io as io
 
 fn main() i32 {{
-    let handled: i32 = server.serve_once("127.0.0.1", {port}, "hello from zy2 server") catch err {{
-        io.eprint(err.message)
+    let handled: i32 = server::serve_once("127.0.0.1", {port}, "hello from zy2 server") catch err {{
+        io::eprint(err.message)
         recover -1
     }}
     if handled == 1 {{
@@ -2321,11 +2262,11 @@ fn main() i32 {{
 def test_v2_gui_module_links_without_opening_a_window(tmp_path: Path) -> None:
     source = tmp_path / "gui.zy"
     source.write_text(
-        """import <std/gui> as gui
+        """import std::gui as gui
 
 fn main() i32 {
     let event: str = "mouse\\t12\\t34"
-    if gui.event_kind(event) == 1 && gui.event_x(event) == 12 && gui.event_y(event) == 34 {
+    if gui::event_kind(event) == 1 && gui::event_x(event) == 12 && gui::event_y(event) == 34 {
         return 0
     }
     return 1
@@ -2343,21 +2284,21 @@ fn main() i32 {
 def test_v2_gui_retained_button_layout_and_callback(tmp_path: Path) -> None:
     source = tmp_path / "gui_widgets.zy"
     source.write_text(
-        """import <std/gui> as gui
-import <std/io> as io
+        """import std::gui as gui
+import std::io as io
 
 fn clicked() void {
-    io.print("clicked")
+    io::print("clicked")
 }
 
 fn main() i32 {
-    let layout = gui.column(20, 30, 180, 44, 8)
+    let layout = gui::column(20, 30, 180, 44, 8)
     let button = layout.button_at(2, "Save", clicked)
     let label = layout.label_at(0, "Settings")
     if button.y != 134 || label.y != 43 || !button.contains(30, 140) || button.contains(300, 140) {
         return 1
     }
-    let group = gui.button_group()
+    let group = gui::button_group()
     group.add(button)
     if group.buttons.len() != 1 {
         return 2
@@ -2390,10 +2331,10 @@ fn main() i32 {
 def test_v2_fstrings_format_typed_values_and_evaluate_once(tmp_path: Path) -> None:
     source = tmp_path / "fstrings.zy"
     source.write_text(
-        """import <std/io> as io
+        """import std::io as io
 
 fn measured() i32 {
-    io.print("measured once")
+    io::print("measured once")
     return 42
 }
 
@@ -2404,8 +2345,8 @@ fn echo(value: str) str {
 fn main() i32 {
     let maybe: str | null = null
     let value: f64 = (f64)15 / (f64)10
-    io.print(f"answer={measured()}, float={value}, ready={true}, optional={maybe}")
-    io.print(f"literal braces: {{ok}}, nested={echo(\"yes\")}")
+    io::print(f"answer={measured()}, float={value}, ready={true}, optional={maybe}")
+    io::print(f"literal braces: {{ok}}, nested={echo(\"yes\")}")
     return 0
 }
 """,
@@ -2445,18 +2386,18 @@ def test_v2_file_special_value_tracks_each_source_module(tmp_path: Path) -> None
     module = tmp_path / "location.zy"
     module.write_text(
         """public fn file() str {
-    return FILE__
+    return FILE__()
 }
 """,
         encoding="utf-8",
     )
     source = tmp_path / "main.zy"
     source.write_text(
-        """import "location.zy" as location
-import <std/io> as io
+        """import crate::location as location
+import std::io as io
 
 fn main() i32 {
-    io.print(f"{FILE__}|{location.file()}")
+    io::print(f"{FILE__()}|{location::file()}")
     return 0
 }
 """,
@@ -2487,10 +2428,10 @@ def test_v2_file_special_value_cannot_be_shadowed() -> None:
 def test_v2_named_function_values_struct_callbacks_and_call_chains_run(tmp_path: Path) -> None:
     source = tmp_path / "function_values.zy"
     source.write_text(
-        """import <std/io> as io
+        """import std::io as io
 
 fn clicked() void {
-    io.print("clicked")
+    io::print("clicked")
 }
 
 fn add(a: i32, b: i32) i32 {
@@ -2507,7 +2448,7 @@ struct Button {
     public let when_click_func: fn() void
 }
 
-fn (button: Button) click() void {
+fn click(button: Button) void {
     button.when_click_func()
 }
 
@@ -2517,7 +2458,7 @@ fn main() i32 {
     if button != same_button {
         return 3
     }
-    button.click()
+    click(button)
     let operation: fn(i32, i32) i32 = add
     if operation(20, 22) != 42 {
         return 1
@@ -2538,7 +2479,7 @@ fn main() i32 {
 
     assert result.returncode == 0, result.stdout + result.stderr
     assert result.stdout.splitlines() == ["clicked"]
-    assert "typedef void (*zy2_fn_void_to_void)(void);" in generated
+    assert "typedef void (*zy2_fn_void_to_void_call)(void*);" in generated
     assert "attempted to call an empty function value" in generated
 
 
@@ -2567,13 +2508,13 @@ public fn before_local_shadow() i32 {
     )
     source = tmp_path / "main.zy"
     source.write_text(
-        """import "callbacks.zy" as callbacks
+        """import crate::callbacks as callbacks
 
 fn main() i32 {
-    let direct: fn(i32) i32 = callbacks.increment
-    let provided: fn(i32) i32 = callbacks.provide()
-    let applied: i32 = callbacks.apply(direct, 20)
-    return direct(20) + provided(20) + applied + callbacks.before_local_shadow() - 104
+    let direct: fn(i32) i32 = callbacks::increment
+    let provided: fn(i32) i32 = callbacks::provide()
+    let applied: i32 = callbacks::apply(direct, 20)
+    return direct(20) + provided(20) + applied + callbacks::before_local_shadow() - 104
 }
 """,
         encoding="utf-8",
@@ -2781,7 +2722,7 @@ def test_v2_rejects_oversized_source_overlays(tmp_path: Path, monkeypatch: pytes
 def test_v2_rejects_excessive_import_depth(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(v2_modules, "MAX_MODULE_DEPTH", 2)
     for index in range(4):
-        body = f'import "module{index + 1}.zy" as next\n' if index < 3 else "public fn value() i32 { return 1 }\n"
+        body = f"import crate::module{index + 1} as next\n" if index < 3 else "public fn value() i32 { return 1 }\n"
         (tmp_path / f"module{index}.zy").write_text(body, encoding="utf-8")
 
     with pytest.raises(CompileError, match="import depth exceeds the safety limit"):

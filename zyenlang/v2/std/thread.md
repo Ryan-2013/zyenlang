@@ -1,11 +1,11 @@
 # std/thread 使用說明
 
 ```zy
-import <std/thread> as thread
+import std::thread as thread
 
-thread.sleep_ms(16)
-thread.yield_now()
-let cores: i32 = thread.cpu_count()
+thread::sleep_ms(16)
+thread::yield_now()
+let cores: i32 = thread::cpu_count()
 ```
 
 - `sleep_ms(milliseconds)` 暫停目前 OS thread。

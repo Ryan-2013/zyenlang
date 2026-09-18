@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include "zyenlang_c_abi.h"
 
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
@@ -238,11 +239,11 @@ static void editor_add_completion(const char* value, size_t length, const char* 
 
 static void editor_refresh_completion(void) {
     static const char* language_words[] = {
-        "as", "await", "bool", "break", "catch", "continue", "else", "Error", "f32", "f64",
-        "false", "FILE__", "fn", "FREE__", "GET_ARGS__", "GET_EXE__", "i8", "i16", "i32", "i64", "if", "import", "isize", "let", "List",
-        "LIST_LEN__", "LIST_PUSH__", "LIST_SET__",
-        "native", "null", "PRINT_CMD__", "private", "public", "recover", "return", "spawn", "stop", "str",
-        "SKIP__", "struct", "STR_TO_LIST__", "throws", "true", "TYPEOF__", "u8", "u16", "u32", "u64", "usize", "void", "while",
+        "as", "await", "bool", "break", "catch", "class", "continue", "defer", "deinit", "else", "Error", "export", "f32", "f64",
+        "false", "FILE__", "fn", "GET_ARGS__", "GET_EXE__", "i8", "i16", "i32", "i64", "if", "import", "init", "isize", "let", "List",
+        "CLONE__", "CLONE_REF__", "DROP__", "LIST_CLEAR__", "LIST_GET__", "LIST_LEN__", "LIST_POP__", "LIST_PUSH__", "LIST_SET__",
+        "mut", "native", "null", "PRINT_CMD__", "private", "public", "recover", "REF_SET__", "return", "spawn", "static", "stop", "str",
+        "struct", "STR_BYTE_LEN__", "STR_GET__", "STR_LEN__", "STR_SLICE__", "STR_TO_LIST__", "throws", "true", "TYPEOF__", "u8", "u16", "u32", "u64", "usize", "void", "while",
         "application", "begin_frame", "button", "close", "column", "eprint", "get", "label", "next_event", "open", "panel", "present", "print", "save", "window"
     };
     editor_clear_completion();
@@ -421,7 +422,7 @@ void zy2_editor_dispose(void) {
     memset(&g_editor, 0, sizeof(g_editor));
 }
 
-int32_t zy2_editor_open(const char* path) {
+static int32_t zy2_editor_open_raw(const char* path) {
     zy2_editor_dispose();
     g_editor.path = editor_copy_string(path && path[0] ? path : "main.zy");
     if (!g_editor.path || editor_reserve(256) != 0) {
@@ -473,10 +474,10 @@ int32_t zy2_editor_save(void) {
     return 0;
 }
 
-const char* zy2_editor_text(void) { return g_editor.data ? g_editor.data : ""; }
-const char* zy2_editor_path(void) { return g_editor.path ? g_editor.path : ""; }
+ZL_String zy2_editor_text(void) { return zl_string_copy(g_editor.data ? g_editor.data : ""); }
+ZL_String zy2_editor_path(void) { return zl_string_copy(g_editor.path ? g_editor.path : ""); }
 
-const char* zy2_editor_status(void) {
+ZL_String zy2_editor_status(void) {
     static char status[512];
     snprintf(
         status,
@@ -487,7 +488,7 @@ const char* zy2_editor_status(void) {
         editor_line_at(g_editor.cursor) + 1,
         editor_visual_column(g_editor.cursor) + 1
     );
-    return status;
+    return zl_string_copy(status);
 }
 
 int32_t zy2_editor_first_line(void) { return g_editor.first_line; }
@@ -530,7 +531,7 @@ int32_t zy2_editor_selection_end_column(void) {
     return editor_visual_column(end);
 }
 
-const char* zy2_editor_completion_text(void) { return g_editor.completion_text; }
+ZL_String zy2_editor_completion_text(void) { return zl_string_copy(g_editor.completion_text); }
 int32_t zy2_editor_completion_count(void) { return g_editor.completion_count; }
 int32_t zy2_editor_completion_selected(void) { return g_editor.completion_selected; }
 int32_t zy2_editor_completion_x(void) {
@@ -545,7 +546,7 @@ int32_t zy2_editor_completion_y(void) {
     return y;
 }
 
-int32_t zy2_editor_handle(const char* event) {
+static int32_t zy2_editor_handle_raw(const char* event) {
     if (!event || !event[0]) return 0;
     if (strcmp(event, "ctrl\ts") == 0) return zy2_editor_save() == 0 ? 1 : -1;
     if (strcmp(event, "ctrl\tq") == 0) return 2;
@@ -557,7 +558,7 @@ int32_t zy2_editor_handle(const char* event) {
         editor_clear_completion();
         return 1;
     }
-    if (strncmp(event, "pickfile\t", 9) == 0) return zy2_editor_open(event + 9) == 0 ? 1 : -1;
+    if (strncmp(event, "pickfile\t", 9) == 0) return zy2_editor_open_raw(event + 9) == 0 ? 1 : -1;
     if (strncmp(event, "keychar\t", 8) == 0) {
         const char* value = event + 8;
         int result = editor_insert(value, strlen(value));
@@ -574,4 +575,12 @@ int32_t zy2_editor_handle(const char* event) {
     }
     if (strncmp(event, "wheel\t", 6) == 0) return editor_handle_wheel(event);
     return 0;
+}
+
+int32_t zy2_editor_open(ZL_String path) {
+    return zy2_editor_open_raw(zl_string_data(path));
+}
+
+int32_t zy2_editor_handle(ZL_String event) {
+    return zy2_editor_handle_raw(zl_string_data(event));
 }

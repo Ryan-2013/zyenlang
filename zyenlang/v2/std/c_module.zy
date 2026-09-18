@@ -1,0 +1,3 @@
+// c_module::Module and c_module::load are compile-time dependent intrinsics.
+// The compiler replaces a direct declaration initializer with a typed native
+// wrapper and forwards validated .zlcm.h build metadata to the C toolchain.

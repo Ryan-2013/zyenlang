@@ -5,6 +5,7 @@ import sys
 from pathlib import Path
 
 from zyenlang.v2.compiler import Compiler
+from zyenlang.v2.package_manager import init_project
 
 
 def test_v2_fs_module_reads_writes_appends_and_builds_a_tree(tmp_path: Path) -> None:
@@ -17,35 +18,35 @@ def test_v2_fs_module_reads_writes_appends_and_builds_a_tree(tmp_path: Path) -> 
     output = tmp_path / "tree.txt"
     source = tmp_path / "fs_module.zy"
     source.write_text(
-        """import <std/fs> as fs
+        """import std::fs as fs
 
 fn main() i32 {
-    let args: List<str> = GET_ARGS__
+    let args: List<str> = GET_ARGS__()
     let root: str = args[0] catch err {
         recover ""
     }
     let output: str = args[1] catch err {
         recover ""
     }
-    let rendered: str = fs.tree(root) catch err {
+    let rendered: str = fs::tree(root) catch err {
         recover ""
     }
     if rendered == "" {
         return 10
     }
-    let wrote: i32 = fs.write_text(output, rendered) catch err {
+    let wrote: i32 = fs::write_text(output, rendered) catch err {
         recover -1
     }
     if wrote != 0 {
         return 11
     }
-    let loaded: str = fs.read_text(output) catch err {
+    let loaded: str = fs::read_text(output) catch err {
         recover ""
     }
     if loaded != rendered {
         return 12
     }
-    let appended: i32 = fs.append_text(output, "\\nDONE") catch err {
+    let appended: i32 = fs::append_text(output, "\\nDONE") catch err {
         recover -1
     }
     return appended
@@ -79,16 +80,17 @@ fn main() i32 {
 
 
 def test_v2_run_passes_program_arguments_after_separator(tmp_path: Path) -> None:
-    source = tmp_path / "run_args.zy"
+    init_project(tmp_path, "run-args")
+    source = tmp_path / "src" / "main.zy"
     source.write_text(
-        """import <std/io> as io
+        """import std::io as io
 
 fn main() i32 {
-    let args: List<str> = GET_ARGS__
+    let args: List<str> = GET_ARGS__()
     let value: str = args[0] catch err {
         recover "missing"
     }
-    io.print(value)
+    io::print(value)
     return 0
 }
 """,
@@ -96,7 +98,7 @@ fn main() i32 {
     )
 
     result = subprocess.run(
-        [sys.executable, "-m", "zyenlang.v2", "run", str(source), "--", "hello from args"],
+        [sys.executable, "-m", "zyenlang.v2", "run", "--project", str(tmp_path), "--", "hello from args"],
         capture_output=True,
         text=True,
         check=False,
@@ -110,10 +112,10 @@ def test_v2_fs_reports_missing_paths_as_language_errors(tmp_path: Path) -> None:
     source = tmp_path / "fs_error.zy"
     missing = (tmp_path / "missing.txt").as_posix().replace('"', '\\"')
     source.write_text(
-        f"""import <std/fs> as fs
+        f"""import std::fs as fs
 
 fn main() i32 {{
-    let value: str = fs.read_text("{missing}") catch err {{
+    let value: str = fs::read_text("{missing}") catch err {{
         recover err.message
     }}
     if value == "" {{

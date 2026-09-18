@@ -379,7 +379,17 @@ static int zl_request_curl(const char* method, const char* url, const char* body
 
 #endif
 
-int zl_request_perform(const char* method, const char* url, const char* body, const char* content_type, int timeout_ms) {
+int zl_request_perform(
+    ZL_String method_value,
+    ZL_String url_value,
+    ZL_String body_value,
+    ZL_String content_type_value,
+    int timeout_ms
+) {
+    const char* method = zl_string_data(method_value);
+    const char* url = zl_string_data(url_value);
+    const char* body = zl_string_data(body_value);
+    const char* content_type = zl_string_data(content_type_value);
     zl_request_reset();
     if (!zl_request_data) {
         zl_request_set_error("out of memory before request");
@@ -400,15 +410,16 @@ int zl_request_status(void) {
     return zl_request_code;
 }
 
-const char* zl_request_body(void) {
-    return zl_request_data ? zl_request_data : "";
+ZL_String zl_request_body(void) {
+    return zl_string_copy(zl_request_data ? zl_request_data : "");
 }
 
-const char* zl_request_error(void) {
-    return zl_request_message;
+ZL_String zl_request_error(void) {
+    return zl_string_copy(zl_request_message);
 }
 
-int zl_request_save(const char* path) {
+int zl_request_save(ZL_String path_value) {
+    const char* path = zl_string_data(path_value);
     FILE* file;
     size_t written;
     if (!path || !path[0] || !zl_request_data) {

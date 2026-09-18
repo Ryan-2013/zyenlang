@@ -1,23 +1,27 @@
-import <std/io> as io
+import std::io as io
 
-struct Car {
+class Car {
     public value: i32
     private label: str = "car"
-}
 
-private fn (c: Car) validate() throws Error {
-    if c.value <= 0 {
-        stop "value must be positive"
+    public init(value: i32) {
+        this.value = value
     }
-}
 
-public fn (c: Car) return_value() i32 throws Error {
-    c.validate()
-    return c.value
-}
+    private fn validate() void throws Error {
+        if this.value <= 0 {
+            stop "value must be positive"
+        }
+    }
 
-public fn (c: Car) name() str {
-    return c.label
+    public fn return_value() i32 throws Error {
+        this.validate()
+        return this.value
+    }
+
+    public fn name() str {
+        return this.label
+    }
 }
 
 fn ret_two_result() (i32, str) {
@@ -25,33 +29,33 @@ fn ret_two_result() (i32, str) {
 }
 
 fn main() i32 {
-    let args: List<str> = GET_ARGS__
-    let executable: str = GET_EXE__
-    let car: Car = Car{value: 0}
-    io.print(car.name())
+    let args: List<str> = GET_ARGS__()
+    let executable: str = GET_EXE__()
+    let car: Car = Car(0)
+    io::print(car.name())
     let value: i32 = car.return_value() catch err {
-        io.print(err.message)
+        io::print(err.message)
         recover 0
     }
 
     let (num: i32, text: str) = ret_two_result()
-    io.print(text)
+    io::print(text)
 
     let maybe: i32 | null = null
     if maybe == null {
-        io.print("null")
+        io::print("null")
     }
 
     let some: i32 | null = 7
     if let actual = some {
         if actual == 7 {
-            io.print("some")
+            io::print("some")
         }
     }
 
     let matrix: List<List<i16>> = [[1231]]
     if LIST_LEN__(matrix) > 0 {
-        io.print("list")
+        io::print("list")
     }
 
     if value == 0 && num == 12 && LIST_LEN__(args) < 1000000 && executable != "" {

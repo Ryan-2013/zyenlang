@@ -11,15 +11,26 @@ KEYWORDS = {
     "await",
     "break",
     "catch",
+    "class",
+    "CLONE__",
+    "CLONE_REF__",
     "continue",
+    "defer",
+    "deinit",
+    "DROP__",
     "else",
+    "export",
     "false",
     "fn",
     "FREE__",
     "if",
     "import",
+    "init",
     "let",
+    "LIST_CLEAR__",
+    "LIST_GET__",
     "LIST_LEN__",
+    "LIST_POP__",
     "LIST_PUSH__",
     "LIST_SET__",
     "mut",
@@ -29,12 +40,18 @@ KEYWORDS = {
     "PRINT_CMD__",
     "public",
     "recover",
+    "REF_SET__",
     "return",
+    "static",
     "stop",
     "spawn",
     "SKIP__",
     "struct",
     "STR_TO_LIST__",
+    "STR_LEN__",
+    "STR_BYTE_LEN__",
+    "STR_GET__",
+    "STR_SLICE__",
     "throws",
     "true",
     "TYPEOF__",
@@ -55,8 +72,8 @@ RENAMED_SPECIAL_WORDS = {
 
 SPECIAL_VALUE_WORDS = {"FILE__", "GET_ARGS__", "GET_EXE__"}
 
-TWO_CHAR_SYMBOLS = {"==", "!=", "<=", ">=", "&&", "||", "->", "+=", "-=", "*=", "/=", "%="}
-ONE_CHAR_SYMBOLS = set("{}()[],:.=+-*/%<>!|")
+TWO_CHAR_SYMBOLS = {"==", "!=", "<=", ">=", "&&", "||", "::", "->", "+=", "-=", "*=", "/=", "%="}
+ONE_CHAR_SYMBOLS = set("{}()[],:.=+-*/%<>!|&")
 
 
 @dataclass(frozen=True)
@@ -134,7 +151,7 @@ def lex(source: str, source_name: str = "<source>") -> list[Token]:
             continue
 
         if ch == ";":
-            raise CompileError("semicolons were removed in ZyenLang 0.2", span(), source_name)
+            raise CompileError("semicolons were removed in ZyenLang 0.3", span(), source_name)
 
         if source.startswith('f"', i):
             start = span()

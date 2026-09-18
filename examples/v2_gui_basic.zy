@@ -1,8 +1,8 @@
-import <std/gui> as gui
-import <std/thread> as thread
+import std::gui as gui
+import std::thread as thread
 
 fn main() i32 {
-    let window = gui.window("ZyenLang 0.2", 800, 480)
+    let window = gui::window("ZyenLang 0.3", 800, 480)
     if window.open() != 0 {
         return 1
     }
@@ -12,8 +12,8 @@ fn main() i32 {
         if window.begin_frame() != 0 {
             break
         }
-        gui.text(40, 40, "Hello from ZyenLang 0.2", "#ffffff", 28)
-        gui.rect(40, 96, 240, 80, "#2f6fed")
+        gui::text(40, 40, "Hello from ZyenLang 0.3", "#ffffff", 28)
+        gui::rect(40, 96, 240, 80, "#2f6fed")
         if window.present() != 0 {
             break
         }
@@ -25,7 +25,7 @@ fn main() i32 {
         if frames >= 90 {
             break
         }
-        thread.sleep_ms(16)
+        thread::sleep_ms(16)
     }
     return window.close()
 }

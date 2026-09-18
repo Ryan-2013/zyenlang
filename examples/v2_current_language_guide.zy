@@ -1,4 +1,4 @@
-import <std/io> as io
+import std::io as io
 
 public struct Dict {
 }
@@ -8,15 +8,15 @@ public struct Counter {
     private label: str = "counter"
 }
 
-private fn (counter: Counter) internal_label() str {
+private fn internal_label(counter: Counter) str {
     return counter.label
 }
 
-public fn (counter: Counter) name() str {
-    return counter.internal_label()
+public fn counter_name(counter: Counter) str {
+    return internal_label(counter)
 }
 
-public fn (counter: Counter) with_value(value: i32) Counter {
+public fn counter_with_value(counter: Counter, value: i32) Counter {
     return Counter{value: value}
 }
 
@@ -38,21 +38,21 @@ fn calculate() i32 {
 fn main() i32 {
     let empty = Dict{}
     let counter = Counter{}
-    let updated = counter.with_value(7)
-    io.print(updated.name())
+    let updated = counter_with_value(counter, 7)
+    io::print(counter_name(updated))
 
     let (number: i32, text: str) = pair()
-    io.print(text)
+    io::print(text)
 
     let maybe: i32 | null = number
     if let value = maybe {
         if value == 12 {
-            io.print("optional value")
+            io::print("optional value")
         }
     }
 
     let safe: i32 = checked_positive(-1) catch err {
-        io.eprint((str)err.message)
+        io::eprint((str)err.message)
         recover 0
     }
 
@@ -65,25 +65,25 @@ fn main() i32 {
         recover 0
     }
     if LIST_LEN__(values) == 4 && first_value == 11 {
-        io.print("dynamic values")
+        io::print("dynamic values")
     }
 
     let owned = Box(12)
     let alias = owned
     alias.value = 20
     if owned.value == 20 && owned.__strong_count__ == 2 {
-        io.print("ARC alias")
+        io::print("ARC alias")
     }
 
     let attributes: List<str> = counter.__attributes__
     let methods: List<str> = counter.__methods__
-    if LIST_LEN__(attributes) == 2 && LIST_LEN__(methods) == 3 {
-        io.print("struct metadata")
+    if LIST_LEN__(attributes) == 2 && LIST_LEN__(methods) == 0 {
+        io::print("struct metadata")
     }
 
-    let args: List<str> = GET_ARGS__
+    let args: List<str> = GET_ARGS__()
     if TYPEOF__(empty, Dict) && TYPEOF__(args, List<str>) {
-        io.print("types checked")
+        io::print("types checked")
     }
 
     let task: Task<i32> = spawn calculate()

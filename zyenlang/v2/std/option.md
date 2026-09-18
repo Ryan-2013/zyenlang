@@ -3,10 +3,10 @@
 `T | null` 是語言內建的受限 optional 型別；`std/option` 提供可讀性 helper：
 
 ```zy
-import <std/option> as option
+import std::option as option
 
 let name: str | null = null
-if option.is_null(name) {
+if option::is_null(name) {
     // empty
 }
 ```

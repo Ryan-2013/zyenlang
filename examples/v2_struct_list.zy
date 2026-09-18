@@ -1,4 +1,4 @@
-import <std/io> as io
+import std::io as io
 
 struct Inventory {
     public items: List<i32> = []
@@ -19,9 +19,9 @@ fn main() i32 {
     let store = make_store()
     let alias = store
     let first = alias.inventory.items[0] catch err {
-        io.eprint(err.message)
+        io::eprint(err.message)
         return 1
     }
-    io.print(f"items={store.inventory.items.len()}, first={first}")
+    io::print(f"items={store.inventory.items.len()}, first={first}")
     return 0
 }

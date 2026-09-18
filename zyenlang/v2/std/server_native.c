@@ -47,7 +47,9 @@ static int zy2_send_all(zy2_socket socket_value, const char* data, size_t length
     return 0;
 }
 
-int32_t zy2_server_serve(const char* host, int32_t port, const char* body, int32_t max_requests) {
+int32_t zy2_server_serve(ZL_String host_value, int32_t port, ZL_String body_value, int32_t max_requests) {
+    const char* host = zl_string_data(host_value);
+    const char* body = zl_string_data(body_value);
     struct addrinfo hints;
     struct addrinfo* addresses = NULL;
     struct addrinfo* address;
@@ -139,6 +141,6 @@ fail:
     return -1;
 }
 
-const char* zy2_server_error(void) {
-    return zy2_server_message;
+ZL_String zy2_server_error(void) {
+    return zl_string_copy(zy2_server_message);
 }

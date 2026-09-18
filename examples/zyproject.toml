@@ -1,0 +1,47 @@
+[package]
+name = "zyenlang-examples"
+version = "0.3.0"
+zyen = ">=0.3.0"
+
+[build]
+default-target = "tour"
+target-dir = "target"
+
+[targets.tour]
+kind = "bin"
+entry = "v2_language_tour.zy"
+output-name = "zyenlang-tour"
+
+[targets.language-guide]
+kind = "bin"
+entry = "v2_current_language_guide.zy"
+
+[targets.file-tree]
+kind = "bin"
+entry = "v2_file_tree.zy"
+
+[targets.gui-basic]
+kind = "bin"
+entry = "v2_gui_basic.zy"
+
+[targets.gui-button]
+kind = "bin"
+entry = "v2_gui_button.zy"
+
+[targets.path]
+kind = "bin"
+entry = "v2_path_basic.zy"
+
+[targets.struct-list]
+kind = "bin"
+entry = "v2_struct_list.zy"
+
+[targets.task]
+kind = "bin"
+entry = "v2_task_basic.zy"
+
+[targets.thread]
+kind = "bin"
+entry = "v2_thread_basic.zy"
+
+[dependencies]

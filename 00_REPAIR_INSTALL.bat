@@ -15,5 +15,5 @@ echo.
 echo Testing zy...
 zy --help
 echo.
-echo Done. Try: zy run examples\v2_language_tour.zy
+echo Done. Try: zy run tour --project examples
 pause

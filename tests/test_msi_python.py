@@ -26,13 +26,13 @@ def test_msi_rejects_invalid_versions(version: str) -> None:
 def test_msi_contains_product_files_and_safe_user_path_update(tmp_path: Path) -> None:
     import msilib
 
-    stage = tmp_path / "zyv200"
+    stage = tmp_path / "zyv300"
     (stage / "examples").mkdir(parents=True)
     (stage / "zy.exe").write_bytes(b"current")
     (stage / "examples" / "hello.zy").write_text("fn main() i32 { return 0 }", encoding="utf-8")
     output = tmp_path / "zyenlang.msi"
 
-    build_msi(stage, output, "0.2.0")
+    build_msi(stage, output, "0.3.0")
 
     assert output.is_file() and output.stat().st_size > 0
     database = msilib.OpenDatabase(str(output), msilib.MSIDBOPEN_READONLY)
@@ -44,7 +44,7 @@ def test_msi_contains_product_files_and_safe_user_path_update(tmp_path: Path) ->
         assert record is not None
         return record.GetString(1)
 
-    assert scalar("SELECT `Value` FROM `Property` WHERE `Property`='ProductVersion'") == "0.2.0"
+    assert scalar("SELECT `Value` FROM `Property` WHERE `Property`='ProductVersion'") == "0.3.0"
     assert scalar("SELECT `Value` FROM `Property` WHERE `Property`='UpgradeCode'") == UPGRADE_CODE
     assert scalar("SELECT `Name` FROM `Environment` WHERE `Environment`='ZyenLangPath'") == "=-Path"
     assert scalar("SELECT `Value` FROM `Environment` WHERE `Environment`='ZyenLangPath'") == "[INSTALLDIR];[~]"

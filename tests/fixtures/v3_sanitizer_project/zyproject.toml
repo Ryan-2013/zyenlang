@@ -1,0 +1,15 @@
+[package]
+name = "v3-sanitizer-smoke"
+version = "0.3.0"
+zyen = ">=0.3.0"
+
+[build]
+default-target = "app"
+target-dir = "target"
+
+[targets.app]
+kind = "bin"
+entry = "src/main.zy"
+output-name = "v3_sanitizer_smoke"
+
+[dependencies]

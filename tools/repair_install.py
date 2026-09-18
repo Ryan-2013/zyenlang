@@ -22,4 +22,4 @@ for cmd in cmds:
 
 print("\nTesting zy command...")
 subprocess.run(["zy", "--help"], check=False)
-print("\nDone. Try: zy run examples/v2_language_tour.zy")
+print("\nDone. Try: zy new hello; zy run --project hello")

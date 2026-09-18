@@ -1,1 +1,1 @@
-"""ZyenLang CLI subcommands (ZEP-0007 zy doctor, future zy env / zy pkg)."""
+"""ZyenLang command-line support, including diagnostics and version management."""

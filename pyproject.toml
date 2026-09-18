@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "zyenlang"
-version = "0.2.1"
+version = "0.3.0"
 description = "ZyenLang: a concise C-like language transpiled to C"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -17,7 +17,6 @@ authors = [{name = "ZyenLang"}]
 zy = "zyenlang.cli.main:main"
 zyen = "zyenlang.cli.main:main"
 zyenv = "zyenlang.cli.zyenv:main"
-zypkg = "zyenlang.v2.package_manager:main"
 
 [tool.setuptools.packages.find]
 include = ["zyenlang*"]

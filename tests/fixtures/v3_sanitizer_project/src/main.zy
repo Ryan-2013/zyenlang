@@ -1,0 +1,43 @@
+class Counter {
+    private value: i32
+
+    public init(value: i32) {
+        this.value = value
+    }
+
+    public mut fn add(amount: i32) void {
+        this.value += amount
+    }
+
+    public fn get() i32 {
+        return this.value
+    }
+}
+
+fn make_adder(amount: i32) fn(i32) i32 {
+    return fn(value: i32) i32 {
+        return value + amount
+    }
+}
+
+fn checked(values: List<str>) i32 throws Error {
+    return (i32)LIST_LEN__(values)
+}
+
+fn main() i32 {
+    let values: List<str> = ["alpha", "beta"]
+    let copy = CLONE__(values)
+    LIST_PUSH__(copy, "gamma")
+    let counter = Counter(39)
+    counter.add(3)
+    let add = make_adder(2)
+    let size = checked(copy) catch err {
+        recover 0
+    }
+    if counter.get() != 42 || add(40) != 42 || size != 3 || LIST_LEN__(values) != 2 {
+        return 1
+    }
+    DROP__(add)
+    DROP__(counter)
+    return 0
+}

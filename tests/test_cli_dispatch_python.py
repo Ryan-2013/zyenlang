@@ -3,6 +3,8 @@ from __future__ import annotations
 import importlib
 from pathlib import Path
 
+import pytest
+
 
 def cli_module():
     return importlib.import_module("zyenlang.cli.main")
@@ -36,7 +38,7 @@ def test_only_current_public_compiler_commands_are_packaged() -> None:
     assert "\nzy2 =" not in pyproject
 
 
-def test_only_v02_standard_library_is_present() -> None:
+def test_only_v03_standard_library_is_present() -> None:
     project = Path(__file__).resolve().parents[1]
     package = Path(importlib.import_module("zyenlang").__file__).resolve().parent
 
@@ -45,32 +47,22 @@ def test_only_v02_standard_library_is_present() -> None:
     assert not (project / "std").exists()
 
 
-def test_run_accepts_direct_program_arguments(monkeypatch, tmp_path: Path) -> None:
+def test_run_rejects_program_arguments_without_separator(tmp_path: Path) -> None:
     entry = importlib.import_module("zyenlang.v2.__main__")
-    received: list[tuple[Path, list[str]]] = []
-
-    class FakeCompiler:
-        def run_file(self, path: Path, arguments: list[str]) -> int:
-            received.append((path, arguments))
-            return 19
-
-    monkeypatch.setattr(entry, "Compiler", lambda _options: FakeCompiler())
-
-    source = tmp_path / "main.zy"
-    assert entry.main(["run", str(source), "folder", "output.txt"]) == 19
-    assert received == [(source, ["folder", "output.txt"])]
+    with pytest.raises(SystemExit):
+        entry.main(["run", "app", "folder", "output.txt"])
 
 
 def test_run_keeps_double_dash_program_arguments(monkeypatch, tmp_path: Path) -> None:
     entry = importlib.import_module("zyenlang.v2.__main__")
-    received: list[list[str]] = []
+    received: list[tuple[str | None, list[str]]] = []
 
-    class FakeCompiler:
-        def run_file(self, _path: Path, arguments: list[str]) -> int:
-            received.append(arguments)
+    class FakeBuilder:
+        def run(self, target: str | None, *, program_args: list[str], out_dir=None) -> int:
+            received.append((target, program_args))
             return 0
 
-    monkeypatch.setattr(entry, "Compiler", lambda _options: FakeCompiler())
+    monkeypatch.setattr(entry, "ArtifactBuilder", lambda _project, release=False: FakeBuilder())
 
-    assert entry.main(["run", str(tmp_path / "main.zy"), "--", "-h"]) == 0
-    assert received == [["-h"]]
+    assert entry.main(["run", "app", "--project", str(tmp_path), "--", "-h"]) == 0
+    assert received == [("app", ["-h"])]

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import argparse
 from dataclasses import dataclass
 import hashlib
 import json
@@ -9,11 +8,9 @@ from pathlib import Path, PurePosixPath
 import re
 import shutil
 import stat
-import sys
+import subprocess
 import tempfile
-from typing import Any
-
-from .diagnostics import render_error
+from typing import Any, TypeAlias
 
 try:
     import tomllib
@@ -23,19 +20,52 @@ except ModuleNotFoundError:  # pragma: no cover - Python 3.10 compatibility
 
 MANIFEST_NAME = "zyproject.toml"
 LOCK_NAME = "zy.lock"
-LOCK_VERSION = 1
+LOCK_VERSION = 2
 MAX_MANIFEST_BYTES = 1024 * 1024
 MAX_PACKAGE_FILES = 10_000
 MAX_PACKAGE_BYTES = 256 * 1024 * 1024
 MAX_LOCK_PACKAGES = 1024
 PACKAGE_NAME_RE = re.compile(r"^[a-z][a-z0-9]*(?:[-_][a-z0-9]+)*$")
-SEMVER_RE = re.compile(r"^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$")
-IGNORED_DIRECTORIES = {".git", ".hg", ".svn", "__pycache__"}
+ALIAS_RE = re.compile(r"^[a-z][a-z0-9_]*$")
+TARGET_NAME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_-]*$")
+OUTPUT_NAME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_-]*$")
+SEMVER_RE = re.compile(
+    r"^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)"
+    r"(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$"
+)
+GIT_COMMIT_RE = re.compile(r"^(?:[0-9a-fA-F]{40}|[0-9a-fA-F]{64})$")
+TARGET_KINDS = frozenset({"bin", "c-source", "staticlib", "sharedlib"})
+IGNORED_DIRECTORIES = {
+    ".git",
+    ".hg",
+    ".svn",
+    ".zyen",
+    "__pycache__",
+    "build",
+    "dist",
+    "target",
+}
 IGNORED_FILES = {LOCK_NAME, ".DS_Store"}
 
 
 class PackageError(Exception):
     pass
+
+
+def _valid_git_source(value: str) -> bool:
+    if not value or any(char in value for char in "\0\r\n") or value.startswith("-"):
+        return False
+    if value.startswith(("/", "\\")) or re.match(r"^[A-Za-z]:[\\/]", value):
+        return True
+    if re.match(r"^[A-Za-z][A-Za-z0-9+.-]*://", value):
+        return bool(
+            re.fullmatch(r"https://[A-Za-z0-9._~-]+(?::[0-9]+)?/[^\s]+", value)
+            or re.fullmatch(
+                r"ssh://(?:[A-Za-z0-9._~-]+@)?[A-Za-z0-9._~-]+(?::[0-9]+)?/[^\s]+",
+                value,
+            )
+        )
+    return re.fullmatch(r"(?:[A-Za-z0-9._~-]+@)?[A-Za-z0-9._~-]+:[^\s:][^\s]*", value) is not None
 
 
 @dataclass(frozen=True)
@@ -44,20 +74,61 @@ class PathDependency:
 
 
 @dataclass(frozen=True)
+class GitDependency:
+    git: str
+    rev: str
+
+
+DependencySpec: TypeAlias = PathDependency | GitDependency
+
+
+@dataclass(frozen=True)
+class TargetSpec:
+    name: str
+    kind: str
+    entry: str
+    out_dir: str | None = None
+    output_name: str | None = None
+
+
+@dataclass(frozen=True)
+class BuildSpec:
+    default_target: str
+    target_dir: str
+
+
+@dataclass(frozen=True)
 class PackageManifest:
     root: Path
     name: str
     version: str
-    entry: str
     zyen: str
-    dependencies: dict[str, PathDependency]
+    build: BuildSpec
+    targets: dict[str, TargetSpec]
+    dependencies: dict[str, DependencySpec]
+    library_entry: str
+
+    @property
+    def entry(self) -> str:
+        return self.library_entry
+
+    def target(self, name: str | None = None) -> TargetSpec:
+        selected = name or self.build.default_target
+        try:
+            return self.targets[selected]
+        except KeyError as exc:
+            available = ", ".join(sorted(self.targets)) or "<none>"
+            raise PackageError(f"unknown target `{selected}`; available targets: {available}") from exc
 
 
 @dataclass(frozen=True)
 class LockedPackage:
     name: str
+    package_name: str
     version: str
+    source_type: str
     source: str
+    revision: str
     digest: str
     dependencies: tuple[str, ...]
 
@@ -78,7 +149,11 @@ def zyen_home() -> Path:
 
 
 def package_cache_root() -> Path:
-    return zyen_home() / "packages" / "0.2"
+    return zyen_home() / "packages" / "0.3"
+
+
+def git_cache_root() -> Path:
+    return zyen_home() / "git" / "0.3"
 
 
 def cache_path(digest: str) -> Path:
@@ -105,11 +180,11 @@ def _required_string(table: dict[str, Any], key: str, context: str) -> str:
     value = table.get(key)
     if not isinstance(value, str) or not value.strip():
         raise PackageError(f"{context}.{key} must be a non-empty string")
-    return value
+    return value.strip()
 
 
 def _validate_relative_file(value: str, field: str) -> str:
-    path = PurePosixPath(value)
+    path = PurePosixPath(value.replace("\\", "/"))
     if (
         path.is_absolute()
         or not path.parts
@@ -118,7 +193,62 @@ def _validate_relative_file(value: str, field: str) -> str:
         raise PackageError(f"{field} must stay inside the package root")
     if path.suffix != ".zy":
         raise PackageError(f"{field} must name a .zy source file")
-    return value
+    return path.as_posix()
+
+
+def _validate_relative_directory(value: str, field: str) -> str:
+    path = PurePosixPath(value.replace("\\", "/"))
+    if (
+        path.is_absolute()
+        or not path.parts
+        or any(part in {"", ".", ".."} or ":" in part or "\x00" in part for part in path.parts)
+    ):
+        raise PackageError(f"{field} must be a relative directory inside the package root")
+    return path.as_posix()
+
+
+def _validate_out_dir(value: str, field: str) -> str:
+    if not value.strip() or "\x00" in value or "\n" in value or "\r" in value:
+        raise PackageError(f"{field} must be a non-empty path")
+    return value.replace("\\", "/")
+
+
+def _parse_dependencies(data: dict[str, Any]) -> dict[str, DependencySpec]:
+    raw_dependencies = data.get("dependencies", {})
+    if not isinstance(raw_dependencies, dict):
+        raise PackageError("[dependencies] must be a table")
+    dependencies: dict[str, DependencySpec] = {}
+    for alias, raw_spec in raw_dependencies.items():
+        if not isinstance(alias, str) or not ALIAS_RE.fullmatch(alias):
+            raise PackageError(
+                f"invalid dependency alias `{alias}`; aliases use lowercase letters, digits, and `_`"
+            )
+        if not isinstance(raw_spec, dict):
+            raise PackageError(f"dependency `{alias}` must be an inline table")
+        if set(raw_spec) == {"path"} and isinstance(raw_spec.get("path"), str):
+            path = raw_spec["path"].strip()
+            if not path or "\x00" in path or "\n" in path or "\r" in path:
+                raise PackageError(f"dependency `{alias}` has an invalid path")
+            dependencies[alias] = PathDependency(path)
+            continue
+        if set(raw_spec) == {"git", "rev"} and all(
+            isinstance(raw_spec.get(key), str) for key in ("git", "rev")
+        ):
+            git = raw_spec["git"].strip()
+            rev = raw_spec["rev"].strip()
+            if not _valid_git_source(git):
+                raise PackageError(f"dependency `{alias}` has an invalid Git URL")
+            if not GIT_COMMIT_RE.fullmatch(rev):
+                raise PackageError(
+                    f"dependency `{alias}` Git rev must be a full 40- or 64-hex commit"
+                )
+            dependencies[alias] = GitDependency(git, rev)
+            continue
+        raise PackageError(
+            f"dependency `{alias}` must use {{ path = \"../package\" }} or "
+            "{ git = \"https://example/repo.git\", rev = \"COMMIT\" }"
+        )
+    return dependencies
 
 
 def load_manifest(root: Path) -> PackageManifest:
@@ -129,34 +259,68 @@ def load_manifest(root: Path) -> PackageManifest:
         raise PackageError(f"{MANIFEST_NAME} requires a [package] table")
     name = _required_string(package, "name", "package")
     version = _required_string(package, "version", "package")
-    entry = package.get("entry", "src/lib.zy")
-    zyen = package.get("zyen", ">=0.2.0")
+    zyen = package.get("zyen", ">=0.3.0")
     if not PACKAGE_NAME_RE.fullmatch(name):
         raise PackageError(f"invalid package name `{name}`; use lowercase letters, digits, `-`, or `_`")
     if not SEMVER_RE.fullmatch(version):
-        raise PackageError(f"package.version must be semantic versioning, got `{version}`")
-    if not isinstance(entry, str) or not entry:
-        raise PackageError("package.entry must be a non-empty string")
-    if not isinstance(zyen, str) or not zyen:
+        raise PackageError(f"package.version must use semantic versioning, got `{version}`")
+    if not isinstance(zyen, str) or not zyen.strip():
         raise PackageError("package.zyen must be a non-empty string")
-    entry = _validate_relative_file(entry.replace("\\", "/"), "package.entry")
 
-    raw_dependencies = data.get("dependencies", {})
-    if not isinstance(raw_dependencies, dict):
-        raise PackageError("[dependencies] must be a table")
-    dependencies: dict[str, PathDependency] = {}
-    for dependency_name, raw_spec in raw_dependencies.items():
-        if not isinstance(dependency_name, str) or not PACKAGE_NAME_RE.fullmatch(dependency_name):
-            raise PackageError(f"invalid dependency name `{dependency_name}`")
-        if not isinstance(raw_spec, dict) or set(raw_spec) != {"path"} or not isinstance(raw_spec.get("path"), str):
-            raise PackageError(
-                f"dependency `{dependency_name}` must use {{ path = \"../package\" }}; registry and Git sources are not supported yet"
-            )
-        dependency_path = raw_spec["path"].strip()
-        if not dependency_path or "\x00" in dependency_path:
-            raise PackageError(f"dependency `{dependency_name}` has an empty path")
-        dependencies[dependency_name] = PathDependency(dependency_path)
-    return PackageManifest(root, name, version, entry, zyen, dependencies)
+    raw_targets = data.get("targets")
+    if not isinstance(raw_targets, dict) or not raw_targets:
+        raise PackageError(f"{MANIFEST_NAME} requires at least one [targets.<name>] table")
+    targets: dict[str, TargetSpec] = {}
+    for target_name, raw_target in raw_targets.items():
+        context = f"targets.{target_name}"
+        if not isinstance(target_name, str) or not TARGET_NAME_RE.fullmatch(target_name):
+            raise PackageError(f"invalid target name `{target_name}`")
+        if not isinstance(raw_target, dict):
+            raise PackageError(f"[{context}] must be a table")
+        unknown = set(raw_target) - {"kind", "entry", "out-dir", "output-name"}
+        if unknown:
+            raise PackageError(f"[{context}] has unknown key(s): {', '.join(sorted(unknown))}")
+        kind = _required_string(raw_target, "kind", context)
+        entry = _validate_relative_file(_required_string(raw_target, "entry", context), f"{context}.entry")
+        if kind not in TARGET_KINDS:
+            raise PackageError(f"{context}.kind must be one of: {', '.join(sorted(TARGET_KINDS))}")
+        raw_out_dir = raw_target.get("out-dir")
+        if raw_out_dir is not None and not isinstance(raw_out_dir, str):
+            raise PackageError(f"{context}.out-dir must be a string")
+        out_dir = _validate_out_dir(raw_out_dir, f"{context}.out-dir") if raw_out_dir is not None else None
+        raw_output_name = raw_target.get("output-name", target_name)
+        if not isinstance(raw_output_name, str) or not OUTPUT_NAME_RE.fullmatch(raw_output_name):
+            raise PackageError(f"{context}.output-name must be a safe file stem")
+        targets[target_name] = TargetSpec(target_name, kind, entry, out_dir, raw_output_name)
+
+    raw_build = data.get("build", {})
+    if not isinstance(raw_build, dict):
+        raise PackageError("[build] must be a table")
+    unknown_build = set(raw_build) - {"default-target", "target-dir"}
+    if unknown_build:
+        raise PackageError(f"[build] has unknown key(s): {', '.join(sorted(unknown_build))}")
+    default_target = raw_build.get("default-target", next(iter(targets)))
+    target_dir = raw_build.get("target-dir", "target")
+    if not isinstance(default_target, str) or default_target not in targets:
+        raise PackageError("build.default-target must name one of the declared targets")
+    if not isinstance(target_dir, str):
+        raise PackageError("build.target-dir must be a string")
+    build = BuildSpec(default_target, _validate_relative_directory(target_dir, "build.target-dir"))
+
+    raw_library_entry = package.get("entry", "src/lib.zy")
+    if not isinstance(raw_library_entry, str):
+        raise PackageError("package.entry must be a string when provided")
+    library_entry = _validate_relative_file(raw_library_entry, "package.entry")
+    return PackageManifest(
+        root,
+        name,
+        version,
+        zyen.strip(),
+        build,
+        targets,
+        _parse_dependencies(data),
+        library_entry,
+    )
 
 
 def find_project_root(start: Path, *, required: bool = True) -> Path | None:
@@ -213,8 +377,7 @@ def _package_files(root: Path) -> list[tuple[Path, str, int]]:
 
 def compute_package_digest(root: Path) -> str:
     digest = hashlib.sha256()
-    # Keep the original digest domain so existing 0.2 lockfiles remain valid.
-    digest.update(b"ZyenLang package v1\0")
+    digest.update(b"ZyenLang package v0.3\0")
     for path, relative, size in _package_files(root):
         encoded_path = relative.encode("utf-8")
         digest.update(len(encoded_path).to_bytes(4, "big"))
@@ -234,7 +397,6 @@ def ensure_cached(source: Path, digest: str) -> Path:
         if destination.is_symlink() or not destination.is_dir() or compute_package_digest(destination) != digest:
             raise PackageError(f"cached package `{digest}` failed integrity verification")
         return destination
-
     temporary = Path(tempfile.mkdtemp(prefix=".install-", dir=root))
     try:
         for path, relative, _ in _package_files(source):
@@ -254,6 +416,60 @@ def ensure_cached(source: Path, digest: str) -> Path:
             shutil.rmtree(temporary)
 
 
+def _git_environment() -> dict[str, str]:
+    environment = dict(os.environ)
+    environment["GIT_CONFIG_NOSYSTEM"] = "1"
+    environment["GIT_CONFIG_GLOBAL"] = os.devnull
+    environment["GIT_TERMINAL_PROMPT"] = "0"
+    return environment
+
+
+def _run_git(arguments: list[str], *, cwd: Path | None = None, capture: bool = False) -> str:
+    try:
+        result = subprocess.run(
+            ["git", *arguments],
+            cwd=cwd,
+            env=_git_environment(),
+            check=True,
+            capture_output=capture,
+            text=True,
+        )
+    except FileNotFoundError as exc:
+        raise PackageError("Git dependencies require `git` on PATH") from exc
+    except subprocess.CalledProcessError as exc:
+        detail = (exc.stderr or exc.stdout or "Git command failed").strip()
+        raise PackageError(detail) from exc
+    return result.stdout.strip() if capture else ""
+
+
+def checkout_git(spec: GitDependency, *, locked_commit: str | None = None) -> tuple[Path, str]:
+    identity = hashlib.sha256(f"{spec.git}\0{locked_commit or spec.rev}".encode("utf-8")).hexdigest()
+    destination = git_cache_root() / identity
+    marker = destination / ".zyen-commit"
+    if destination.is_dir() and marker.is_file():
+        commit = marker.read_text(encoding="ascii").strip()
+        if locked_commit is None or commit == locked_commit:
+            return destination, commit
+    git_cache_root().mkdir(parents=True, exist_ok=True)
+    temporary = Path(tempfile.mkdtemp(prefix=".checkout-", dir=git_cache_root()))
+    try:
+        _run_git(["clone", "--no-checkout", "--filter=blob:none", "--", spec.git, str(temporary)])
+        revision = locked_commit or spec.rev
+        _run_git(["checkout", "--detach", revision], cwd=temporary)
+        commit = _run_git(["rev-parse", "HEAD"], cwd=temporary, capture=True)
+        if locked_commit is not None and commit != locked_commit:
+            raise PackageError(f"Git dependency resolved `{commit}` instead of locked commit `{locked_commit}`")
+        shutil.rmtree(temporary / ".git", ignore_errors=True)
+        (temporary / ".zyen-commit").write_text(commit + "\n", encoding="ascii")
+        if destination.exists():
+            shutil.rmtree(destination)
+        temporary.replace(destination)
+        return destination, commit
+    finally:
+        if temporary.exists():
+            shutil.rmtree(temporary)
+
+
 def _relative_source(project_root: Path, source: Path) -> str:
     try:
         return Path(os.path.relpath(source, project_root)).as_posix()
@@ -266,47 +482,60 @@ def _source_from_lock(project_root: Path, value: str) -> Path:
     return source.resolve() if source.is_absolute() else (project_root / source).resolve()
 
 
-def resolve_path_dependencies(project_root: Path) -> tuple[LockedPackage, ...]:
+def resolve_dependencies(project_root: Path) -> tuple[LockedPackage, ...]:
     project_root = project_root.resolve()
     root_manifest = load_manifest(project_root)
     selected: dict[str, tuple[Path, LockedPackage]] = {}
-    visiting: list[Path] = []
+    visiting: list[str] = []
 
-    def visit(name: str, dependency: PathDependency, owner: PackageManifest) -> None:
-        source = (owner.root / dependency.path).resolve()
-        if source == project_root:
-            raise PackageError(f"dependency cycle returns to root package `{root_manifest.name}`")
-        if source in visiting:
-            cycle = " -> ".join(path.name for path in visiting + [source])
+    def visit(alias: str, spec: DependencySpec, owner: PackageManifest) -> None:
+        if alias in visiting:
+            cycle = " -> ".join([*visiting, alias])
             raise PackageError(f"dependency cycle: {cycle}")
+        if isinstance(spec, PathDependency):
+            source = (owner.root / spec.path).resolve()
+            source_type = "path"
+            source_label = _relative_source(project_root, source)
+            revision = ""
+        else:
+            source, revision = checkout_git(spec)
+            source_type = "git"
+            source_label = spec.git
+        if source == project_root:
+            raise PackageError(f"dependency `{alias}` resolves to the root package")
         manifest = load_manifest(source)
-        if manifest.name != name:
-            raise PackageError(f"dependency key `{name}` does not match package name `{manifest.name}` at {source}")
-        previous = selected.get(name)
+        previous = selected.get(alias)
         if previous is not None:
-            if previous[0] != source:
-                raise PackageError(f"package `{name}` is required from both {previous[0]} and {source}")
+            previous_record = previous[1]
+            identity = (previous_record.source_type, previous_record.source, previous_record.revision)
+            current = (source_type, source_label, revision)
+            if identity != current:
+                raise PackageError(f"dependency alias `{alias}` resolves to more than one source")
             return
-
-        visiting.append(source)
+        visiting.append(alias)
         try:
-            for child_name, child_dependency in sorted(manifest.dependencies.items()):
-                visit(child_name, child_dependency, manifest)
+            for child_alias, child_spec in sorted(manifest.dependencies.items()):
+                visit(child_alias, child_spec, manifest)
         finally:
             visiting.pop()
         digest = compute_package_digest(source)
         ensure_cached(source, digest)
-        locked = LockedPackage(
-            name=manifest.name,
-            version=manifest.version,
-            source=_relative_source(project_root, source),
-            digest=digest,
-            dependencies=tuple(sorted(manifest.dependencies)),
+        selected[alias] = (
+            source,
+            LockedPackage(
+                alias,
+                manifest.name,
+                manifest.version,
+                source_type,
+                source_label,
+                revision,
+                digest,
+                tuple(sorted(manifest.dependencies)),
+            ),
         )
-        selected[name] = (source, locked)
 
-    for dependency_name, dependency in sorted(root_manifest.dependencies.items()):
-        visit(dependency_name, dependency, root_manifest)
+    for alias, dependency in sorted(root_manifest.dependencies.items()):
+        visit(alias, dependency, root_manifest)
     return tuple(selected[name][1] for name in sorted(selected))
 
 
@@ -318,6 +547,17 @@ def _toml_array(values: tuple[str, ...] | list[str]) -> str:
     return "[" + ", ".join(_toml_string(value) for value in values) + "]"
 
 
+def _atomic_write(path: Path, value: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    try:
+        temporary.write_text(value, encoding="utf-8", newline="\n")
+        os.replace(temporary, path)
+    finally:
+        if temporary.exists():
+            temporary.unlink()
+
+
 def write_lock(project_root: Path, packages: tuple[LockedPackage, ...]) -> LockFile:
     manifest = load_manifest(project_root)
     lock = LockFile(
@@ -326,7 +566,7 @@ def write_lock(project_root: Path, packages: tuple[LockedPackage, ...]) -> LockF
         tuple(sorted(packages, key=lambda package: package.name)),
     )
     lines = [
-        "# Generated by ZyenLang. Do not edit by hand.",
+        "# Generated by ZyenLang 0.3. Do not edit by hand.",
         f"lock_version = {LOCK_VERSION}",
         f"manifest_sha256 = {_toml_string(lock.manifest_sha256)}",
         f"root_dependencies = {_toml_array(lock.root_dependencies)}",
@@ -337,9 +577,11 @@ def write_lock(project_root: Path, packages: tuple[LockedPackage, ...]) -> LockF
             [
                 "[[package]]",
                 f"name = {_toml_string(package.name)}",
+                f"package_name = {_toml_string(package.package_name)}",
                 f"version = {_toml_string(package.version)}",
-                'source_type = "path"',
+                f"source_type = {_toml_string(package.source_type)}",
                 f"source = {_toml_string(package.source)}",
+                f"revision = {_toml_string(package.revision)}",
                 f"digest = {_toml_string(package.digest)}",
                 f"dependencies = {_toml_array(package.dependencies)}",
                 "",
@@ -358,17 +600,17 @@ def _lock_string(table: dict[str, Any], key: str, context: str) -> str:
 
 def _lock_names(value: Any, context: str) -> tuple[str, ...]:
     if not isinstance(value, list) or any(not isinstance(item, str) for item in value):
-        raise PackageError(f"invalid {LOCK_NAME}: {context} must be an array of package names")
+        raise PackageError(f"invalid {LOCK_NAME}: {context} must be an array of dependency aliases")
     names = tuple(value)
-    if len(set(names)) != len(names) or any(not PACKAGE_NAME_RE.fullmatch(name) for name in names):
-        raise PackageError(f"invalid {LOCK_NAME}: {context} contains invalid or duplicate names")
+    if len(set(names)) != len(names) or any(not ALIAS_RE.fullmatch(name) for name in names):
+        raise PackageError(f"invalid {LOCK_NAME}: {context} contains invalid or duplicate aliases")
     return names
 
 
 def read_lock(project_root: Path) -> LockFile:
     data = _load_toml(project_root / LOCK_NAME)
     if data.get("lock_version") != LOCK_VERSION:
-        raise PackageError(f"unsupported {LOCK_NAME} version; run `zy pkg install`")
+        raise PackageError(f"unsupported {LOCK_NAME} version; run `zy fetch`")
     manifest_digest = _lock_string(data, "manifest_sha256", "lock")
     if not re.fullmatch(r"[0-9a-f]{64}", manifest_digest):
         raise PackageError(f"invalid {LOCK_NAME}: manifest_sha256 is not SHA-256")
@@ -385,23 +627,35 @@ def read_lock(project_root: Path) -> LockFile:
         if not isinstance(raw_package, dict):
             raise PackageError(f"invalid {LOCK_NAME}: {context} must be a table")
         name = _lock_string(raw_package, "name", context)
+        package_name = _lock_string(raw_package, "package_name", context)
         version = _lock_string(raw_package, "version", context)
         source_type = _lock_string(raw_package, "source_type", context)
         source = _lock_string(raw_package, "source", context)
+        revision = _lock_string(raw_package, "revision", context)
         digest = _lock_string(raw_package, "digest", context)
         dependencies = _lock_names(raw_package.get("dependencies"), f"{context}.dependencies")
-        if not PACKAGE_NAME_RE.fullmatch(name) or name in names:
-            raise PackageError(f"invalid {LOCK_NAME}: duplicate or invalid package `{name}`")
+        if not ALIAS_RE.fullmatch(name) or name in names:
+            raise PackageError(f"invalid {LOCK_NAME}: duplicate or invalid alias `{name}`")
+        if not PACKAGE_NAME_RE.fullmatch(package_name):
+            raise PackageError(f"invalid {LOCK_NAME}: invalid package name `{package_name}`")
         if not SEMVER_RE.fullmatch(version):
             raise PackageError(f"invalid {LOCK_NAME}: package `{name}` has invalid version `{version}`")
-        if source_type != "path":
-            raise PackageError(f"the current package manager only supports path sources, got `{source_type}`")
+        if source_type not in {"path", "git"}:
+            raise PackageError(f"invalid {LOCK_NAME}: unsupported source type `{source_type}`")
         if not source or "\x00" in source:
-            raise PackageError(f"invalid {LOCK_NAME}: package `{name}` has an invalid source path")
+            raise PackageError(f"invalid {LOCK_NAME}: package `{name}` has an invalid source")
+        if source_type == "git" and not _valid_git_source(source):
+            raise PackageError(f"invalid {LOCK_NAME}: Git package `{name}` has an invalid source")
+        if source_type == "git" and not GIT_COMMIT_RE.fullmatch(revision):
+            raise PackageError(f"invalid {LOCK_NAME}: Git package `{name}` has an invalid commit")
+        if source_type == "path" and revision:
+            raise PackageError(f"invalid {LOCK_NAME}: path package `{name}` cannot have a revision")
         if not re.fullmatch(r"[0-9a-f]{64}", digest):
             raise PackageError(f"invalid {LOCK_NAME}: package `{name}` digest is not SHA-256")
         names.add(name)
-        packages.append(LockedPackage(name, version, source, digest, dependencies))
+        packages.append(
+            LockedPackage(name, package_name, version, source_type, source, revision, digest, dependencies)
+        )
     if any(name not in names for name in root_dependencies):
         raise PackageError(f"invalid {LOCK_NAME}: a root dependency has no package entry")
     for package in packages:
@@ -412,39 +666,51 @@ def read_lock(project_root: Path) -> LockFile:
 
 def _validate_locked_manifest(package: LockedPackage, root: Path) -> PackageManifest:
     manifest = load_manifest(root)
-    if manifest.name != package.name:
-        raise PackageError(f"locked package `{package.name}` contains manifest for `{manifest.name}`")
+    if manifest.name != package.package_name:
+        raise PackageError(
+            f"locked alias `{package.name}` expected package `{package.package_name}`, got `{manifest.name}`"
+        )
     if manifest.version != package.version:
         raise PackageError(
             f"locked package `{package.name}` expected version `{package.version}`, got `{manifest.version}`"
         )
-    if set(manifest.dependencies) != set(package.dependencies):
-        raise PackageError(f"locked package `{package.name}` dependency metadata does not match its manifest")
+    if tuple(sorted(manifest.dependencies)) != package.dependencies:
+        raise PackageError(f"locked dependency graph for `{package.name}` does not match its manifest")
     return manifest
 
 
-def validate_lock(project_root: Path, *, populate_cache: bool) -> LockFile:
+def _populate_locked_package(project_root: Path, package: LockedPackage) -> Path:
+    destination = cache_path(package.digest)
+    if destination.is_dir():
+        if compute_package_digest(destination) != package.digest:
+            raise PackageError(f"cached package `{package.name}` failed integrity verification")
+        return destination
+    if package.source_type == "path":
+        source = _source_from_lock(project_root, package.source)
+    else:
+        source, commit = checkout_git(GitDependency(package.source, package.revision), locked_commit=package.revision)
+        if commit != package.revision:
+            raise PackageError(f"Git package `{package.name}` did not reproduce its locked commit")
+    if not source.is_dir() or compute_package_digest(source) != package.digest:
+        raise PackageError(f"source for locked package `{package.name}` changed; run `zy fetch` without --locked")
+    return ensure_cached(source, package.digest)
+
+
+def validate_lock(project_root: Path, *, populate_cache: bool = False) -> LockFile:
     project_root = project_root.resolve()
     manifest = load_manifest(project_root)
     lock = read_lock(project_root)
     if lock.manifest_sha256 != manifest_sha256(project_root):
-        raise PackageError(f"{LOCK_NAME} is out of date; run `zy pkg install`")
-    if set(lock.root_dependencies) != set(manifest.dependencies):
-        raise PackageError(f"{LOCK_NAME} dependencies do not match {MANIFEST_NAME}; run `zy pkg install`")
+        raise PackageError(f"{LOCK_NAME} is out of date; run `zy fetch`")
+    if lock.root_dependencies != tuple(sorted(manifest.dependencies)):
+        raise PackageError(f"{LOCK_NAME} dependencies do not match {MANIFEST_NAME}; run `zy fetch`")
     for package in lock.packages:
-        destination = cache_path(package.digest)
-        if destination.is_dir():
-            if destination.is_symlink() or compute_package_digest(destination) != package.digest:
-                raise PackageError(f"cached package `{package.name}` failed integrity verification")
-            _validate_locked_manifest(package, destination)
-            continue
-        if not populate_cache:
-            raise PackageError(f"package `{package.name}` is not installed; run `zy pkg install --locked`")
-        source = _source_from_lock(project_root, package.source)
-        _validate_locked_manifest(package, source)
-        if compute_package_digest(source) != package.digest:
-            raise PackageError(f"locked package `{package.name}` changed at {source}")
-        ensure_cached(source, package.digest)
+        root = _populate_locked_package(project_root, package) if populate_cache else cache_path(package.digest)
+        if not root.is_dir():
+            raise PackageError(f"package `{package.name}` is not fetched; run `zy fetch --locked`")
+        if compute_package_digest(root) != package.digest:
+            raise PackageError(f"cached package `{package.name}` failed integrity verification")
+        _validate_locked_manifest(package, root)
     return lock
 
 
@@ -452,8 +718,11 @@ def install_project(project_root: Path, *, locked: bool = False) -> LockFile:
     project_root = project_root.resolve()
     if locked:
         return validate_lock(project_root, populate_cache=True)
-    packages = resolve_path_dependencies(project_root)
-    return write_lock(project_root, packages)
+    return write_lock(project_root, resolve_dependencies(project_root))
+
+
+def fetch_project(project_root: Path, *, locked: bool = False) -> LockFile:
+    return install_project(project_root, locked=locked)
 
 
 def locked_packages_for_project(project_root: Path) -> tuple[LockFile, dict[str, Path]]:
@@ -461,21 +730,16 @@ def locked_packages_for_project(project_root: Path) -> tuple[LockFile, dict[str,
     return lock, {package.name: cache_path(package.digest) for package in lock.packages}
 
 
-def _atomic_write(path: Path, value: str) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
-    try:
-        temporary.write_text(value, encoding="utf-8", newline="\n")
-        os.replace(temporary, path)
-    finally:
-        if temporary.exists():
-            temporary.unlink()
+def _render_dependency(spec: DependencySpec) -> str:
+    if isinstance(spec, PathDependency):
+        return f"{{ path = {_toml_string(spec.path)} }}"
+    return f"{{ git = {_toml_string(spec.git)}, rev = {_toml_string(spec.rev)} }}"
 
 
-def _manifest_with_dependencies(path: Path, dependencies: dict[str, PathDependency]) -> str:
+def _manifest_with_dependencies(path: Path, dependencies: dict[str, DependencySpec]) -> str:
     lines = path.read_text(encoding="utf-8").splitlines()
     start = next((index for index, line in enumerate(lines) if re.fullmatch(r"\s*\[dependencies\]\s*", line)), None)
-    rendered = [f"{name} = {{ path = {_toml_string(spec.path)} }}" for name, spec in sorted(dependencies.items())]
+    rendered = [f"{name} = {_render_dependency(spec)}" for name, spec in sorted(dependencies.items())]
     if start is None:
         while lines and not lines[-1].strip():
             lines.pop()
@@ -484,13 +748,10 @@ def _manifest_with_dependencies(path: Path, dependencies: dict[str, PathDependen
     end = start + 1
     while end < len(lines) and not re.fullmatch(r"\s*\[+[^]]+\]+\s*", lines[end]):
         end += 1
-    replacement = [lines[start], *rendered]
-    if end == len(lines) or (replacement and replacement[-1].strip()):
-        replacement.append("")
-    return "\n".join(lines[:start] + replacement + lines[end:]).rstrip() + "\n"
+    return "\n".join(lines[:start] + [lines[start], *rendered, ""] + lines[end:]).rstrip() + "\n"
 
 
-def update_manifest_dependencies(project_root: Path, dependencies: dict[str, PathDependency]) -> None:
+def update_manifest_dependencies(project_root: Path, dependencies: dict[str, DependencySpec]) -> None:
     manifest_path = project_root / MANIFEST_NAME
     _atomic_write(manifest_path, _manifest_with_dependencies(manifest_path, dependencies))
     load_manifest(project_root)
@@ -503,7 +764,13 @@ def _default_package_name(root: Path) -> str:
     return value
 
 
-def init_project(root: Path, name: str | None = None, *, force: bool = False) -> PackageManifest:
+def init_project(
+    root: Path,
+    name: str | None = None,
+    *,
+    force: bool = False,
+    library: bool = False,
+) -> PackageManifest:
     root = root.resolve()
     root.mkdir(parents=True, exist_ok=True)
     package_name = name or _default_package_name(root)
@@ -512,39 +779,60 @@ def init_project(root: Path, name: str | None = None, *, force: bool = False) ->
     manifest_path = root / MANIFEST_NAME
     if manifest_path.exists() and not force:
         raise PackageError(f"{manifest_path} already exists; use --force to replace it")
+    target_name = "lib" if library else "app"
+    kind = "c-source" if library else "bin"
+    entry_path = "src/lib.zy" if library else "src/main.zy"
+    output_name = package_name.replace("-", "_")
     manifest_text = "\n".join(
         [
             "[package]",
             f"name = {_toml_string(package_name)}",
             'version = "0.1.0"',
-            'entry = "src/main.zy"',
-            'zyen = ">=0.2.1"',
+            'zyen = ">=0.3.0"',
+            'entry = "src/lib.zy"',
+            "",
+            "[build]",
+            f"default-target = {_toml_string(target_name)}",
+            'target-dir = "target"',
+            "",
+            f"[targets.{target_name}]",
+            f"kind = {_toml_string(kind)}",
+            f"entry = {_toml_string(entry_path)}",
+            f"output-name = {_toml_string(output_name)}",
             "",
             "[dependencies]",
             "",
         ]
     )
     _atomic_write(manifest_path, manifest_text)
-    entry = root / "src" / "main.zy"
+    entry = root / Path(*PurePosixPath(entry_path).parts)
     if not entry.exists():
-        _atomic_write(entry, "fn main() i32 {\n    return 0\n}\n")
+        source = "export fn version() i32 {\n    return 1\n}\n" if library else "fn main() i32 {\n    return 0\n}\n"
+        _atomic_write(entry, source)
+    library_entry = root / "src" / "lib.zy"
+    if not library_entry.exists() and not library:
+        _atomic_write(
+            library_entry,
+            f"public fn package_name() str {{\n    return {_toml_string(package_name)}\n}}\n",
+        )
     write_lock(root, ())
     return load_manifest(root)
 
 
-def add_dependency(project_root: Path, source: Path) -> LockFile:
+def new_project(root: Path, name: str | None = None, *, library: bool = False) -> PackageManifest:
+    resolved = root.resolve()
+    if resolved.exists() and any(resolved.iterdir()):
+        raise PackageError(f"new project destination is not empty: {resolved}")
+    return init_project(resolved, name, library=library)
+
+
+def add_dependency_spec(project_root: Path, alias: str, spec: DependencySpec) -> LockFile:
     project_root = project_root.resolve()
+    if not ALIAS_RE.fullmatch(alias):
+        raise PackageError(f"invalid dependency alias `{alias}`")
     manifest = load_manifest(project_root)
-    source = source.resolve()
-    if not source.is_dir():
-        raise PackageError(
-            f"local package path not found: {source}; registry and Git sources are not supported yet"
-        )
-    dependency = load_manifest(source)
-    if dependency.name == manifest.name:
-        raise PackageError("a package cannot depend on itself")
     dependencies = dict(manifest.dependencies)
-    dependencies[dependency.name] = PathDependency(_relative_source(project_root, source))
+    dependencies[alias] = spec
     manifest_path = project_root / MANIFEST_NAME
     original = manifest_path.read_text(encoding="utf-8")
     try:
@@ -553,6 +841,27 @@ def add_dependency(project_root: Path, source: Path) -> LockFile:
     except Exception:
         _atomic_write(manifest_path, original)
         raise
+
+
+def add_dependency(project_root: Path, source: Path, alias: str | None = None) -> LockFile:
+    source = source.resolve()
+    if not source.is_dir():
+        raise PackageError(f"local package path not found: {source}")
+    dependency = load_manifest(source)
+    selected_alias = alias or dependency.name.replace("-", "_")
+    return add_dependency_spec(
+        project_root,
+        selected_alias,
+        PathDependency(_relative_source(project_root.resolve(), source)),
+    )
+
+
+def add_git_dependency(project_root: Path, alias: str, git: str, rev: str) -> LockFile:
+    if not _valid_git_source(git):
+        raise PackageError("invalid Git URL; use HTTPS, SSH, scp syntax, or an absolute local path")
+    if not GIT_COMMIT_RE.fullmatch(rev):
+        raise PackageError("Git rev must be a full 40- or 64-hex commit")
+    return add_dependency_spec(project_root, alias, GitDependency(git, rev))
 
 
 def remove_dependency(project_root: Path, name: str) -> LockFile:
@@ -569,77 +878,3 @@ def remove_dependency(project_root: Path, name: str) -> LockFile:
     except Exception:
         _atomic_write(manifest_path, original)
         raise
-
-
-def configure_parser(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("--project", type=Path, default=Path.cwd(), help="project directory or a path inside it")
-    commands = parser.add_subparsers(dest="pkg_command", required=True)
-
-    init = commands.add_parser("init", help="create zyproject.toml and src/main.zy")
-    init.add_argument("--name")
-    init.add_argument("--force", action="store_true")
-
-    add = commands.add_parser("add", help="add a local path dependency")
-    add.add_argument("source", type=Path)
-
-    remove = commands.add_parser("remove", help="remove a direct dependency")
-    remove.add_argument("name")
-
-    install = commands.add_parser("install", help="resolve and install dependencies")
-    install.add_argument("--locked", action="store_true", help="require the existing lockfile without changing it")
-
-    commands.add_parser("list", help="list direct and transitive dependencies")
-
-
-def handle_command(args: argparse.Namespace) -> int:
-    if args.pkg_command == "init":
-        manifest = init_project(args.project, args.name, force=args.force)
-        print(f"initialized {manifest.name} at {manifest.root}")
-        return 0
-
-    project_root = find_project_root(args.project)
-    assert project_root is not None
-    if args.pkg_command == "add":
-        source = args.source if args.source.is_absolute() else Path.cwd() / args.source
-        lock = add_dependency(project_root, source)
-        added = load_manifest(source.resolve())
-        print(f"added {added.name} {added.version} ({len(lock.packages)} locked package(s))")
-        return 0
-    if args.pkg_command == "remove":
-        lock = remove_dependency(project_root, args.name)
-        print(f"removed {args.name} ({len(lock.packages)} locked package(s))")
-        return 0
-    if args.pkg_command == "install":
-        lock = install_project(project_root, locked=args.locked)
-        print(f"installed {len(lock.packages)} package(s)")
-        return 0
-    if args.pkg_command == "list":
-        manifest = load_manifest(project_root)
-        lock = validate_lock(project_root, populate_cache=False)
-        direct = set(manifest.dependencies)
-        if not lock.packages:
-            print("No dependencies.")
-            return 0
-        for package in lock.packages:
-            kind = "direct" if package.name in direct else "transitive"
-            print(f"{package.name} {package.version} {kind} path:{package.source} sha256:{package.digest[:12]}")
-        return 0
-    raise PackageError(f"unknown package command `{args.pkg_command}`")
-
-
-def make_parser(prog: str = "zy pkg") -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog=prog, description="ZyenLang 0.2 package manager")
-    configure_parser(parser)
-    return parser
-
-
-def main(argv: list[str] | None = None, *, prog: str = "zy pkg") -> int:
-    try:
-        return handle_command(make_parser(prog).parse_args(argv))
-    except PackageError as exc:
-        print(render_error(f"{prog}: {exc}", sys.stderr), file=sys.stderr)
-        return 2
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())

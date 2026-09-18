@@ -138,7 +138,7 @@ def check_compiler_importable() -> CheckResult:
             f"compiler import failed: {exc}",
             "Reinstall the package and check recent compiler edits.",
         )
-    return CheckResult("compiler_importable", "installation", STATUS_PASS, "v0.2 compiler import OK")
+    return CheckResult("compiler_importable", "installation", STATUS_PASS, "v0.3 compiler import OK")
 
 
 def _std_dir() -> Path | None:
@@ -205,10 +205,10 @@ def check_tmpdir_writable() -> CheckResult:
     return CheckResult("tmpdir_writable", "configuration", STATUS_PASS, "temporary directory is writable")
 
 
-SMOKE_SOURCE = """import <std/io> as io
+SMOKE_SOURCE = """import std::io as io
 
 fn main() i32 {
-    io.print("doctor_ok")
+    io::print("doctor_ok")
     return 0
 }
 """

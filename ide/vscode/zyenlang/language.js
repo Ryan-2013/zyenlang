@@ -193,6 +193,14 @@ const BUILTINS = {
   ]
 };
 
+const BUILTIN_TYPES = {
+  c_module: [
+    ['Module', 'c_module::Module (template-dependent native module)']
+  ]
+};
+
+const STANDARD_MODULES = [...new Set([...Object.keys(BUILTINS), ...Object.keys(BUILTIN_TYPES), 'editor'])].sort();
+
 function maskLine(line) {
   let result = '';
   let inString = false;
@@ -349,7 +357,7 @@ function addSymbol(result, symbol) {
 function parseDocument(text, uri = '') {
   const lines = text.split(/\r?\n/);
   const maskedLines = lines.map(maskLine);
-  const result = { uri, imports: [], symbols: [], exports: [], lines, maskedLines };
+  const result = { uri, imports: [], symbols: [], exports: [], lines, maskedLines, functions: [] };
   let depth = 0;
   let activeType = null;
   let activeFunction = null;
@@ -421,7 +429,8 @@ function parseDocument(text, uri = '') {
         exported: functionMatch.exported
       };
       addSymbol(result, symbol);
-      activeFunction = trimmed.endsWith('{') ? { name, depth: depth + 1 } : null;
+      activeFunction = line.includes('{') ? { name, depth: depth + 1, startLine: lineNumber } : null;
+      if (activeFunction) result.functions.push(activeFunction);
       if (receiverName) {
         result.symbols.push({
           name: receiverName,
@@ -472,12 +481,13 @@ function parseDocument(text, uri = '') {
         });
       }
     } else {
-      const letMatch = line.match(/\blet\s+([A-Za-z_]\w*)\s*(?::\s*([^=]+?))?\s*=/);
+      const letMatch = line.match(/\blet\s+([A-Za-z_]\w*)\s*(?::\s*([^=]+?))?\s*=\s*(.+)$/);
       if (letMatch) {
         const name = letMatch[1];
         const column = original.indexOf(name, original.indexOf('let') + 3);
+        const assignment = original.indexOf('=', column + name.length);
         result.symbols.push({
-          name, kind: 'variable', type: (letMatch[2] || '').trim(),
+          name, kind: 'variable', type: (letMatch[2] || '').trim(), initializer: assignment >= 0 ? original.slice(assignment + 1).trim() : letMatch[3].trim(),
           detail: letMatch[2] ? `${name}: ${letMatch[2].trim()}` : name,
           line: lineNumber, column, endColumn: column + name.length,
           container: activeFunction && activeFunction.name
@@ -492,8 +502,22 @@ function parseDocument(text, uri = '') {
       else if (char === '}') closes += 1;
     }
     depth += opens - closes;
-    if (activeFunction && depth < activeFunction.depth) activeFunction = null;
+    if (activeFunction && depth < activeFunction.depth) {
+      activeFunction.endLine = lineNumber;
+      activeFunction = null;
+    }
     if (activeType && depth < activeType.depth) activeType = null;
+  }
+  for (const fn of result.functions) {
+    if (fn.endLine === undefined) fn.endLine = lines.length - 1;
+  }
+  for (let pass = 0; pass < 3; pass += 1) {
+    for (const symbol of result.symbols) {
+      if (symbol.kind === 'variable' && !symbol.type && symbol.initializer) {
+        symbol.type = inferExpressionType(symbol.initializer, result, symbol.line);
+        if (symbol.type) symbol.detail = `${symbol.name}: ${symbol.type}`;
+      }
+    }
   }
   return result;
 }
@@ -511,6 +535,18 @@ function qualifierAt(line, column) {
   const before = line.slice(0, column);
   const match = before.match(/([A-Za-z_]\w*)(::|\.)([A-Za-z_]\w*)?$/);
   return match ? { qualifier: match[1], separator: match[2], prefix: match[3] || '' } : null;
+}
+
+function accessPathAt(line, column) {
+  const before = line.slice(0, column);
+  const match = before.match(/([A-Za-z_]\w*(?:(?:::|\.)[A-Za-z_]\w*)*)(::|\.)([A-Za-z_]\w*)?$/);
+  if (!match) return null;
+  return {
+    path: match[1],
+    qualifier: match[1].split(/::|\./).pop(),
+    separator: match[2],
+    prefix: match[3] || ''
+  };
 }
 
 function callAt(line, column) {
@@ -531,23 +567,128 @@ function callAt(line, column) {
   return null;
 }
 
+function callPathAt(line, column) {
+  const before = line.slice(0, column);
+  let depth = 0;
+  let comma = 0;
+  for (let index = before.length - 1; index >= 0; index -= 1) {
+    const char = before[index];
+    if (char === ')') depth += 1;
+    else if (char === '(') {
+      if (depth > 0) depth -= 1;
+      else {
+        const match = before.slice(0, index).match(/([A-Za-z_]\w*(?:(?:::|\.)[A-Za-z_]\w*)*)\s*$/);
+        return match ? { path: match[1], name: match[1].split(/::|\./).pop(), activeParameter: comma } : null;
+      }
+    } else if (char === ',' && depth === 0) comma += 1;
+  }
+  return null;
+}
+
 function importPathAt(line, column) {
   const before = line.slice(0, column);
-  const standard = before.match(/^\s*import\s+std::([A-Za-z_]\w*)?$/);
-  if (standard) return { kind: 'std', prefix: standard[1] || '' };
+  const imported = before.match(/^\s*import\s+(std|crate|[A-Za-z_]\w*)::([A-Za-z_]\w*(?:::[A-Za-z_]\w*)*)?$/);
+  if (imported) return { kind: imported[1], prefix: imported[2] || '' };
   return null;
+}
+
+function importRootAt(line, column) {
+  const match = line.slice(0, column).match(/^\s*import\s+([A-Za-z_]\w*)?$/);
+  return match ? { prefix: match[1] || '' } : null;
+}
+
+function normalizeType(typeName) {
+  let value = String(typeName || '').trim();
+  value = value.replace(/\s*\|\s*null\s*$/, '').trim();
+  value = value.replace(/^&\s*(?:mut\s+)?/, '').trim();
+  return value;
+}
+
+function baseType(typeName) {
+  const value = normalizeType(typeName);
+  let depth = 0;
+  for (let index = 0; index < value.length; index += 1) {
+    if (value[index] === '<') {
+      if (depth === 0) return value.slice(0, index).trim();
+      depth += 1;
+    } else if (value[index] === '>') depth = Math.max(0, depth - 1);
+  }
+  return value;
+}
+
+function returnTypeFromDetail(detail) {
+  const value = String(detail || '').replace(/\s+throws\s+Error\s*$/, '').trim();
+  let depth = 0;
+  for (let index = 0; index < value.length; index += 1) {
+    if (value[index] === '(') depth += 1;
+    else if (value[index] === ')') {
+      depth -= 1;
+      if (depth === 0) return value.slice(index + 1).trim() || 'void';
+    }
+  }
+  return '';
+}
+
+function inferExpressionType(expression, parsed, lineNumber = Number.MAX_SAFE_INTEGER) {
+  let value = String(expression || '').trim().replace(/\s+catch\b[\s\S]*$/, '').trim();
+  if (!value) return '';
+  if (/^f?"(?:\\.|[^"])*"$/.test(value)) return 'str';
+  if (/^(?:true|false)$/.test(value)) return 'bool';
+  if (/^[-+]?\d+[uU]?$/.test(value)) return 'i32';
+  if (/^[-+]?(?:\d+\.\d*|\d*\.\d+)(?:[eE][-+]?\d+)?$/.test(value)) return 'f64';
+  if (value === 'null') return 'null';
+  const cast = value.match(/^\(([^()]+)\)\s*.+$/);
+  if (cast) return cast[1].trim();
+  const borrow = value.match(/^&\s*(mut\s+)?([A-Za-z_]\w*)$/);
+  if (borrow) {
+    const source = [...parsed.symbols].reverse().find((item) => item.name === borrow[2] && item.line <= lineNumber);
+    return source?.type ? `&${borrow[1] ? 'mut ' : ''}${source.type}` : '';
+  }
+  if (value.startsWith('[') && value.endsWith(']')) {
+    const elements = splitTopLevel(value.slice(1, -1));
+    if (!elements.length) return 'List';
+    const elementTypes = elements.map((item) => inferExpressionType(item, parsed, lineNumber)).filter(Boolean);
+    return elementTypes.length && elementTypes.every((item) => item === elementTypes[0]) ? `List<${elementTypes[0]}>` : 'List';
+  }
+  const call = value.match(/^((?:[A-Za-z_]\w*(?:::|\.))*[A-Za-z_]\w*)\s*\(/);
+  if (call) {
+    const name = call[1].split(/::|\./).pop();
+    const symbol = parsed.symbols.find((item) => item.name === name && ['function', 'method', 'native'].includes(item.kind));
+    if (symbol) return symbol.returnType || returnTypeFromDetail(symbol.detail);
+    const imported = call[1].split('::');
+    if (imported.length === 2) {
+      const moduleImport = parsed.imports.find((item) => item.name === imported[0]);
+      const moduleName = moduleImport?.path.split('::').pop();
+      const builtin = (BUILTINS[moduleName] || []).find(([item]) => item === imported[1]);
+      if (builtin) return returnTypeFromDetail(builtin[1]);
+    }
+  }
+  const constructed = value.match(/^((?:[A-Za-z_]\w*::)*[A-Za-z_]\w*(?:<[^>]+>)?)\s*(?:\(|\{)/);
+  if (constructed) return constructed[1];
+  const local = [...parsed.symbols].reverse().find((item) => item.name === value && item.line <= lineNumber);
+  return local?.type || '';
 }
 
 module.exports = {
   BUILTINS,
+  BUILTIN_TYPES,
   KEYWORDS,
   SPECIAL_FORMS,
   SPECIAL_VALUES,
+  STANDARD_MODULES,
   TYPES,
+  accessPathAt,
+  baseType,
   callAt,
+  callPathAt,
+  inferExpressionType,
   importPathAt,
+  importRootAt,
+  maskLine,
+  normalizeType,
   parseDocument,
   qualifierAt,
+  returnTypeFromDetail,
   splitTopLevel,
   wordAt
 };

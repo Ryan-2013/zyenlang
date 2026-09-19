@@ -1,17 +1,21 @@
 # ZyenLang for Visual Studio Code
 
-The official editor extension for ZyenLang 0.3.
+The official project-aware editor extension for ZyenLang 0.3.
 
 ## Features
 
 - ZyenLang 0.3 highlighting for `::` paths, pure structs, classes, references, intrinsics, and native declarations
-- completion for keywords, types, imports, module symbols, class methods, struct/class fields, and standard modules
-- hover signatures, parameter hints, Go to Definition, code-only Find References, document highlights, outline, and workspace symbols
+- project-aware completion for `std::`, `crate::`, path dependencies, imported module symbols, static functions, class methods, and fields
+- inferred-type completion for locals such as `let app = gui::application(...)`
+- hover, parameter hints, Go to Definition, Go to Type Definition, safe local Rename, Find References, import/native-source links, outline, folding, and workspace symbols
+- inferred type hints for unannotated `let` declarations
 - live `zy check` diagnostics for the current unsaved buffer
-- Run Project Target, Build Project Target, and Emit C Source commands
+- migration quick fixes for old imports, module `.` access, and `FREE__()`
+- manifest target selection plus Run, Build, Test, Clean, Emit C, and Refresh Index commands
 - optional **ZyenLang Ember** theme using `#20201F` with `#D97757` accents
 
-The extension debounces checks while typing and cancels stale compiler processes.
+The extension finds the nearest `zyproject.toml`, debounces checks while typing,
+and cancels stale compiler processes.
 Compiler errors remain authoritative; the extension's lightweight index is only
 used for responsive navigation and completion.
 
@@ -31,7 +35,10 @@ Open the Command Palette with `Ctrl+Shift+P`:
 - `ZyenLang: Check Current File`
 - `ZyenLang: Run Project Target`
 - `ZyenLang: Build Project Target`
+- `ZyenLang: Test Project`
+- `ZyenLang: Clean Project Target`
 - `ZyenLang: Emit C Source`
+- `ZyenLang: Refresh Project Index`
 
 The editor title also shows Run and Check buttons for `.zy` files.
 
@@ -43,12 +50,14 @@ The editor title also shows Run and Check buttons for `.zy` files.
 - `zyenlang.diagnostics.timeout`: check timeout in milliseconds, default `15000`
 - `zyenlang.diagnostics.maxFileSizeKb`: live-check size limit, default `1024`
 - `zyenlang.build.release`: use release builds for Run and Build, default `true`
+- `zyenlang.project.target`: preferred target; empty uses the manifest default or opens a picker
+- `zyenlang.run.arguments`: string array passed after `zy run --`
 
 ## Install a VSIX
 
 In VS Code, choose **Extensions: Install from VSIX...** and select the packaged
-`zyenlang-0.3.0.vsix`, or run:
+`zyenlang-0.3.1.vsix`, or run:
 
 ```powershell
-code --install-extension zyenlang-0.3.0.vsix --force
+code --install-extension zyenlang-0.3.1.vsix --force
 ```

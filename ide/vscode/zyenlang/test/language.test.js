@@ -52,7 +52,10 @@ assert(parsed.symbols.some((item) => item.kind === 'variable' && item.name === '
 assert.deepStrictEqual(language.wordAt('return counter.add(number)', 16), { value: 'add', start: 15, end: 18 });
 assert.deepStrictEqual(language.qualifierAt('    io::pr', 10), { qualifier: 'io', separator: '::', prefix: 'pr' });
 assert.deepStrictEqual(language.qualifierAt('    counter.ad', 14), { qualifier: 'counter', separator: '.', prefix: 'ad' });
+assert.deepStrictEqual(language.accessPathAt('    tools::Cache::cr', 20), { path: 'tools::Cache', qualifier: 'Cache', separator: '::', prefix: 'cr' });
+assert.deepStrictEqual(language.accessPathAt('    counter.va', 14), { path: 'counter', qualifier: 'counter', separator: '.', prefix: 'va' });
 assert.deepStrictEqual(language.callAt('    pair(1, other(', 11), { name: 'pair', activeParameter: 1 });
+assert.deepStrictEqual(language.callPathAt('    io::print(value, ', 21), { path: 'io::print', name: 'print', activeParameter: 1 });
 assert.deepStrictEqual(language.splitTopLevel('List<i32>, fn(i32, str), i32 | null'), ['List<i32>', 'fn(i32, str)', 'i32 | null']);
 assert(language.KEYWORDS.includes('TYPEOF__'));
 assert(language.KEYWORDS.includes('LIST_LEN__'));
@@ -73,12 +76,37 @@ assert(language.SPECIAL_FORMS.some((item) => item.name === 'CLONE_REF__'));
 assert(language.SPECIAL_FORMS.some((item) => item.name === 'REF_SET__'));
 assert(language.SPECIAL_FORMS.some((item) => item.name === 'TYPEOF__' && item.detail === 'TYPEOF__(value, Type) bool'));
 assert.deepStrictEqual(language.importPathAt('import std::pa', 14), { kind: 'std', prefix: 'pa' });
+assert.deepStrictEqual(language.importPathAt('import crate::net::ht', 21), { kind: 'crate', prefix: 'net::ht' });
+assert.deepStrictEqual(language.importRootAt('import cr', 9), { prefix: 'cr' });
 assert.strictEqual(language.importPathAt('let value = 1', 13), null);
 assert(language.BUILTINS.path.some(([name]) => name === 'join'));
 assert(language.BUILTINS.fs.some(([name]) => name === 'tree'));
 assert(language.BUILTINS.fs.some(([name]) => name === 'write_text'));
 assert(language.BUILTINS.gui.some(([name]) => name === 'button'));
 assert(language.BUILTINS.gui.some(([name]) => name === 'button_group'));
+assert(language.STANDARD_MODULES.includes('c_module'));
+assert(language.STANDARD_MODULES.includes('editor'));
+assert(language.BUILTIN_TYPES.c_module.some(([name]) => name === 'Module'));
+
+const inferred = language.parseDocument(`import std::gui as gui
+class Cache { public fn open() i32 { return 0 } }
+fn main() i32 {
+    let count = 10
+    let ratio = 1.5
+    let names = ["a", "b"]
+    let cache = Cache()
+    let app = gui::application("Demo", 800, 600)
+    return 0
+}`, 'inferred.zy');
+assert.strictEqual(inferred.symbols.find((item) => item.name === 'count').type, 'i32');
+assert.strictEqual(inferred.symbols.find((item) => item.name === 'ratio').type, 'f64');
+assert.strictEqual(inferred.symbols.find((item) => item.name === 'names').type, 'List<str>');
+assert.strictEqual(inferred.symbols.find((item) => item.name === 'cache').type, 'Cache');
+assert.strictEqual(inferred.symbols.find((item) => item.name === 'app').type, 'Application');
+assert.strictEqual(language.normalizeType('&mut tools::Cache<i32> | null'), 'tools::Cache<i32>');
+assert.strictEqual(language.baseType('tools::Cache<i32>'), 'tools::Cache');
+assert.strictEqual(language.returnTypeFromDetail('fn get(path: str) Response throws Error'), 'Response');
+assert(inferred.functions.some((item) => item.name === 'main' && item.startLine === 2 && item.endLine === 9));
 
 const masked = language.parseDocument('fn main() i32 {\n    let value = 1 // value in comment\n    let text = "value in text"\n}', 'masked.zy');
 assert(masked.maskedLines[1].includes('let value'));
@@ -120,6 +148,11 @@ const extensionSource = fs.readFileSync(path.join(__dirname, '..', 'extension.js
 assert(extensionSource.includes('new vscode.ProcessExecution'));
 assert(!extensionSource.includes('.sendText('));
 assert(extensionSource.includes('registerDocumentHighlightProvider'));
+assert(extensionSource.includes('registerRenameProvider'));
+assert(extensionSource.includes('registerTypeDefinitionProvider'));
+assert(extensionSource.includes('registerDocumentLinkProvider'));
+assert(extensionSource.includes('registerInlayHintsProvider'));
+assert(extensionSource.includes("['$zyenlang']"));
 assert(extensionSource.includes('parsed.maskedLines'));
 
 const snippets = fs.readFileSync(path.join(__dirname, '..', 'snippets', 'zyen.code-snippets'), 'utf8');

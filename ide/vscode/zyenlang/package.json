@@ -1,8 +1,8 @@
 {
   "name": "zyenlang",
   "displayName": "ZyenLang",
-  "description": "Language support for ZyenLang: highlighting, completion, navigation, diagnostics, run, and build.",
-  "version": "0.3.0",
+  "description": "Project-aware language support for ZyenLang: completion, navigation, refactoring, diagnostics, run, build, and test.",
+  "version": "0.3.1",
   "publisher": "zyenlang",
   "license": "MIT",
   "repository": {
@@ -23,7 +23,10 @@
     "onCommand:zyenlang.check",
     "onCommand:zyenlang.run",
     "onCommand:zyenlang.build",
-    "onCommand:zyenlang.emitC"
+    "onCommand:zyenlang.emitC",
+    "onCommand:zyenlang.test",
+    "onCommand:zyenlang.clean",
+    "onCommand:zyenlang.refreshIndex"
   ],
   "main": "./extension.js",
   "capabilities": {
@@ -88,6 +91,20 @@
       {
         "command": "zyenlang.emitC",
         "title": "ZyenLang: Emit C Source"
+      },
+      {
+        "command": "zyenlang.test",
+        "title": "ZyenLang: Test Project",
+        "icon": "$(beaker)"
+      },
+      {
+        "command": "zyenlang.clean",
+        "title": "ZyenLang: Clean Project Target"
+      },
+      {
+        "command": "zyenlang.refreshIndex",
+        "title": "ZyenLang: Refresh Project Index",
+        "icon": "$(refresh)"
       }
     ],
     "menus": {
@@ -142,12 +159,37 @@
           "type": "boolean",
           "default": true,
           "description": "Use release mode for Run and Build commands."
+        },
+        "zyenlang.project.target": {
+          "type": "string",
+          "default": "",
+          "description": "Preferred project target. Leave empty to use build.default-target or choose when a project has multiple targets."
+        },
+        "zyenlang.run.arguments": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": [],
+          "description": "Arguments passed to the ZyenLang program after `zy run --`."
         }
       }
-    }
+    },
+    "problemMatchers": [
+      {
+        "name": "zyenlang",
+        "owner": "zyenlang",
+        "fileLocation": "absolute",
+        "pattern": {
+          "regexp": "^(.+?):(\\d+):(\\d+):\\s*(.+)$",
+          "file": 1,
+          "line": 2,
+          "column": 3,
+          "message": 4
+        }
+      }
+    ]
   },
   "scripts": {
-    "test": "node test/language.test.js",
+    "test": "node test/language.test.js && node test/project.test.js",
     "package": "vsce package --no-dependencies"
   },
   "devDependencies": {

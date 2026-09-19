@@ -4,6 +4,7 @@ const vscode = require('vscode');
 const path = require('path');
 const { spawn } = require('child_process');
 const language = require('./language');
+const projectTools = require('./project');
 
 const selector = { language: 'zyen' };
 const MAX_INDEX_FILE_BYTES = 2 * 1024 * 1024;
@@ -47,14 +48,6 @@ function markdownFor(symbol) {
   if (symbol.documentation) result.appendMarkdown(`\n${symbol.documentation}`);
   if (symbol.path) result.appendMarkdown(`\nModule: \`${symbol.path}\``);
   return result;
-}
-
-function importSuffix(importPath) {
-  const parts = importPath.split('::');
-  const root = parts.shift();
-  const relative = parts.join('/');
-  if (root === 'std') return `/std/${relative}.zy`;
-  return `/src/${relative}.zy`;
 }
 
 class WorkspaceIndex {
@@ -106,20 +99,77 @@ class WorkspaceIndex {
     return [...this.documents.values()];
   }
 
-  symbolsNamed(name) {
-    const found = [];
-    for (const item of this.documents.values()) {
-      for (const symbol of item.parsed.symbols) {
-        if (symbol.name === name) found.push({ symbol, uri: item.uri });
-      }
-    }
-    return found;
+  projectFor(document) {
+    return projectTools.loadProject(document.uri.fsPath);
   }
 
-  membersOf(typeName) {
-    const canonicalType = typeName.split('.').pop().trim();
+  async loadFile(filePath) {
+    if (!filePath) return undefined;
+    const uri = vscode.Uri.file(filePath);
+    const key = uri.toString();
+    if (this.documents.has(key)) return this.documents.get(key);
+    try {
+      const stat = await vscode.workspace.fs.stat(uri);
+      if (stat.size > MAX_INDEX_FILE_BYTES) return undefined;
+      const bytes = await vscode.workspace.fs.readFile(uri);
+      const parsed = language.parseDocument(Buffer.from(bytes).toString('utf8'), key);
+      const item = { version: -1, parsed, uri };
+      this.documents.set(key, item);
+      return item;
+    } catch (_) {
+      return undefined;
+    }
+  }
+
+  async moduleFor(document, importPath) {
+    const currentProject = this.projectFor(document);
+    const exact = projectTools.importFile(importPath, document.uri.fsPath, currentProject);
+    if (exact) return this.loadFile(exact);
+    if (importPath.startsWith('std::')) {
+      const suffix = `/std/${importPath.slice(5).replace(/::/g, '/')}.zy`;
+      return this.all().find((item) => item.uri.fsPath.replace(/\\/g, '/').endsWith(suffix));
+    }
+    return undefined;
+  }
+
+  async moduleExports(document, imported) {
+    const result = [];
+    const moduleName = imported.path.split('::').pop();
+    for (const [name, detail] of language.BUILTINS[moduleName] || []) {
+      result.push({ symbol: { name, kind: 'function', detail, returnType: language.returnTypeFromDetail(detail), visibility: 'public', builtin: true } });
+    }
+    for (const [name, detail] of language.BUILTIN_TYPES[moduleName] || []) {
+      result.push({ symbol: { name, kind: 'class', detail, visibility: 'public', builtin: true } });
+    }
+    if (moduleName === 'c_module') {
+      result.push({ symbol: { name: 'load', kind: 'function', detail: 'fn load(path: str) c_module::Module', returnType: 'c_module::Module', visibility: 'public', builtin: true } });
+    }
+    const module = await this.moduleFor(document, imported.path);
+    if (module) {
+      result.push(...module.parsed.exports
+        .filter((symbol) => symbol.visibility !== 'private')
+        .map((symbol) => ({ symbol, uri: module.uri })));
+    }
+    return result;
+  }
+
+  async membersOf(typeName, document) {
+    const normalized = language.normalizeType(typeName);
+    const pathParts = normalized.split('::');
+    const canonicalType = language.baseType(pathParts.pop());
     const found = [];
-    for (const item of this.documents.values()) {
+    let sources = this.all();
+    if (pathParts.length && document) {
+      const parsed = this.parse(document);
+      const imported = parsed.imports.find((item) => item.name === pathParts[0]);
+      const module = imported ? await this.moduleFor(document, imported.path) : undefined;
+      if (module) sources = [module];
+    } else if (document) {
+      const current = this.documents.get(document.uri.toString());
+      const ownType = current?.parsed.symbols.some((item) => item.name === canonicalType && ['class', 'struct'].includes(item.kind));
+      if (ownType) sources = [current];
+    }
+    for (const item of sources) {
       for (const symbol of item.parsed.exports) {
         if (symbol.container === canonicalType || symbol.receiverType === canonicalType) {
           found.push({ symbol, uri: item.uri });
@@ -127,6 +177,67 @@ class WorkspaceIndex {
       }
     }
     return found;
+  }
+
+  visibleLocal(parsed, name, line) {
+    const active = parsed.functions.find((item) => item.startLine <= line && line <= item.endLine);
+    return [...parsed.symbols].reverse().find((symbol) =>
+      symbol.name === name && symbol.line <= line &&
+      (!['variable', 'parameter'].includes(symbol.kind) || !symbol.container || symbol.container === active?.name)
+    );
+  }
+
+  async typeOfPath(document, accessPath, line) {
+    const parsed = this.parse(document);
+    const segments = accessPath.split('.');
+    const root = segments.shift();
+    let typeName;
+    if (root === 'this') {
+      const fn = activeFunction(parsed, line);
+      typeName = parsed.exports.find((item) => item.kind === 'method' && item.name === fn?.name)?.container;
+    } else {
+      typeName = this.visibleLocal(parsed, root, line)?.type;
+    }
+    for (const segment of segments) {
+      if (!typeName) return '';
+      const member = (await this.membersOf(typeName, document)).find((item) => item.symbol.name === segment && !item.symbol.static)?.symbol;
+      typeName = member?.type || member?.returnType || language.returnTypeFromDetail(member?.detail);
+    }
+    return typeName || '';
+  }
+
+  async resolve(document, position) {
+    const lineText = document.lineAt(position.line).text;
+    const word = language.wordAt(lineText, position.character);
+    if (!word) return undefined;
+    const parsed = this.parse(document);
+    const prefix = lineText.slice(0, word.start);
+    const owner = prefix.match(/([A-Za-z_]\w*(?:(?:::|\.)[A-Za-z_]\w*)*)(::|\.)\s*$/);
+    if (owner) {
+      const ownerPath = owner[1];
+      if (owner[2] === '::') {
+        const segments = ownerPath.split('::');
+        const imported = parsed.imports.find((item) => item.name === segments[0]);
+        if (imported) {
+          if (segments.length === 1) {
+            return (await this.moduleExports(document, imported)).find((item) => item.symbol.name === word.value);
+          }
+          const members = await this.membersOf(`${segments[0]}::${segments[1]}`, document);
+          return members.find((item) => item.symbol.name === word.value && item.symbol.static);
+        }
+        const members = await this.membersOf(ownerPath, document);
+        return members.find((item) => item.symbol.name === word.value && item.symbol.static);
+      }
+      const typeName = await this.typeOfPath(document, ownerPath, position.line);
+      if (typeName) {
+        const members = await this.membersOf(typeName, document);
+        return members.find((item) => item.symbol.name === word.value && !item.symbol.static);
+      }
+    }
+    const imported = parsed.imports.find((item) => item.name === word.value);
+    if (imported) return { symbol: imported, module: await this.moduleFor(document, imported.path), uri: document.uri };
+    const local = this.visibleLocal(parsed, word.value, position.line);
+    return local ? { symbol: local, uri: document.uri } : undefined;
   }
 }
 
@@ -139,16 +250,6 @@ function completionFromSymbol(symbol) {
     item.command = { command: 'editor.action.triggerParameterHints', title: 'Parameter hints' };
   }
   return item;
-}
-
-function builtInCompletions(moduleName) {
-  return (language.BUILTINS[moduleName] || []).map(([name, detail]) => {
-    const item = new vscode.CompletionItem(name, vscode.CompletionItemKind.Function);
-    item.detail = detail;
-    item.documentation = new vscode.MarkdownString().appendCodeblock(detail, 'zyen');
-    item.insertText = new vscode.SnippetString(`${name}($0)`);
-    return item;
-  });
 }
 
 function specialFormCompletion(form) {
@@ -177,43 +278,92 @@ function wordLocations(item, name) {
   return result;
 }
 
+function dedupeCompletions(items) {
+  const seen = new Set();
+  return items.filter((item) => {
+    const key = `${item.label}:${item.kind}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function activeFunction(parsed, line) {
+  return parsed.functions.find((item) => item.startLine <= line && line <= item.endLine);
+}
+
+function moduleCompletion(pathValue, prefix) {
+  const candidate = pathValue.split('::').slice(1);
+  const input = prefix.split('::');
+  const typed = input.pop() || '';
+  if (input.some((part, index) => candidate[index] !== part)) return undefined;
+  const label = candidate[input.length];
+  if (!label) return undefined;
+  if (!label.startsWith(typed)) return undefined;
+  const item = new vscode.CompletionItem(label, vscode.CompletionItemKind.Module);
+  item.detail = pathValue;
+  item.insertText = label;
+  return item;
+}
+
 function registerLanguageFeatures(context, index) {
   context.subscriptions.push(vscode.languages.registerCompletionItemProvider(selector, {
     async provideCompletionItems(document, position) {
       const parsed = index.parse(document);
       await index.ensureWorkspace();
       const line = document.lineAt(position.line).text;
-      const importPath = language.importPathAt(line, position.character);
-      if (importPath?.kind === 'std') {
-        return Object.keys(language.BUILTINS)
-          .filter((name) => name.startsWith(importPath.prefix))
-          .sort()
-          .map((name) => {
-            const item = new vscode.CompletionItem(name, vscode.CompletionItemKind.Module);
-            item.detail = `std/${name}`;
-            return item;
-          });
+      const importRoot = language.importRootAt(line, position.character);
+      if (importRoot) {
+        const currentProject = index.projectFor(document);
+        const roots = ['std', 'crate', ...[...(currentProject?.dependencies.keys() || [])]];
+        return roots.filter((item) => item.startsWith(importRoot.prefix)).map((name) => {
+          const item = new vscode.CompletionItem(name, vscode.CompletionItemKind.Module);
+          item.insertText = `${name}::`;
+          item.command = { command: 'editor.action.triggerSuggest', title: 'Continue module path' };
+          return item;
+        });
       }
-      const qualified = language.qualifierAt(line, position.character);
-      if (qualified) {
-        const imported = parsed.imports.find((item) => item.name === qualified.qualifier);
-        if (imported && qualified.separator === '::') {
-          const moduleName = imported.path.split('::').pop();
-          const items = builtInCompletions(moduleName);
+      const importPath = language.importPathAt(line, position.character);
+      if (importPath) {
+        const candidates = [];
+        if (importPath.kind === 'std') {
+          candidates.push(...language.STANDARD_MODULES.map((name) => `std::${name}`));
           for (const source of index.all()) {
-            if (!source.parsed.uri.replace(/\\/g, '/').endsWith(importSuffix(imported.path))) continue;
-            items.push(...source.parsed.exports.filter((item) => item.visibility !== 'private').map(completionFromSymbol));
+            const match = source.uri.fsPath.replace(/\\/g, '/').match(/\/std\/(.+)\.zy$/);
+            if (match) candidates.push(`std::${match[1].replace(/\//g, '::')}`);
           }
-          return items;
+        }
+        const currentProject = index.projectFor(document);
+        if (importPath.kind === 'crate') candidates.push(...projectTools.discoverCrateModules(currentProject));
+        if (!['std', 'crate'].includes(importPath.kind) && currentProject?.dependencies.has(importPath.kind)) {
+          const dependency = currentProject.dependencies.get(importPath.kind);
+          if (dependency.kind === 'path') {
+            const dependencyProject = projectTools.loadProject(path.resolve(currentProject.root, dependency.path));
+            candidates.push(...projectTools.discoverCrateModules(dependencyProject).map((item) => item.replace(/^crate/, importPath.kind)));
+          }
+        }
+        return dedupeCompletions(candidates.map((item) => moduleCompletion(item, importPath.prefix)).filter(Boolean));
+      }
+      const qualified = language.accessPathAt(line, position.character);
+      if (qualified) {
+        const root = qualified.path.split(/::|\./)[0];
+        const imported = parsed.imports.find((item) => item.name === root);
+        if (imported && qualified.separator === '::') {
+          if (!qualified.path.includes('::')) {
+            return dedupeCompletions((await index.moduleExports(document, imported)).map((item) => completionFromSymbol(item.symbol)));
+          }
+          return (await index.membersOf(qualified.path, document))
+            .filter((item) => item.symbol.static)
+            .map((item) => completionFromSymbol(item.symbol));
         }
         if (qualified.separator === '.') {
-          const variable = [...parsed.symbols].reverse().find((item) => item.name === qualified.qualifier && item.type);
-          if (variable) return index.membersOf(variable.type)
+          const typeName = await index.typeOfPath(document, qualified.path, position.line);
+          if (typeName) return (await index.membersOf(typeName, document))
             .filter((item) => !item.symbol.static)
             .map((item) => completionFromSymbol(item.symbol));
         } else {
           const type = parsed.symbols.find((item) => ['class', 'struct'].includes(item.kind) && item.name === qualified.qualifier);
-          if (type) return index.membersOf(type.name)
+          if (type) return (await index.membersOf(type.name, document))
             .filter((item) => item.symbol.static)
             .map((item) => completionFromSymbol(item.symbol));
         }
@@ -236,19 +386,14 @@ function registerLanguageFeatures(context, index) {
         items.push(new vscode.CompletionItem(value, vscode.CompletionItemKind.Constant));
       }
       items.push(...language.SPECIAL_FORMS.map(specialFormCompletion));
-      const seen = new Set();
-      for (const source of [
-        ...parsed.symbols
-          .filter((symbol) => !['variable', 'parameter'].includes(symbol.kind) || symbol.line <= position.line)
-          .map((symbol) => ({ symbol })),
-        ...index.all().flatMap((item) => item.parsed.exports.map((symbol) => ({ symbol })))
-      ]) {
-        const key = `${source.symbol.kind}:${source.symbol.name}:${source.symbol.container || ''}`;
-        if (seen.has(key)) continue;
-        seen.add(key);
-        items.push(completionFromSymbol(source.symbol));
-      }
-      return items;
+      const fn = activeFunction(parsed, position.line);
+      const visible = parsed.symbols.filter((symbol) => {
+        if (!['variable', 'parameter'].includes(symbol.kind)) return !symbol.container || ['class', 'struct'].includes(symbol.kind);
+        return symbol.line <= position.line && (!symbol.container || symbol.container === fn?.name);
+      });
+      items.push(...visible.map(completionFromSymbol));
+      items.push(...parsed.imports.map(completionFromSymbol));
+      return dedupeCompletions(items);
     }
   }, '.', ':'));
 
@@ -258,8 +403,8 @@ function registerLanguageFeatures(context, index) {
       if (!word) return undefined;
       index.parse(document);
       await index.ensureWorkspace();
-      const local = index.symbolsNamed(word.value);
-      if (local.length) return new vscode.Hover(markdownFor(local[0].symbol));
+      const resolved = await index.resolve(document, position);
+      if (resolved) return new vscode.Hover(markdownFor(resolved.symbol));
       const special = language.SPECIAL_FORMS.find((item) => item.name === word.value);
       if (special) {
         return new vscode.Hover(new vscode.MarkdownString(special.documentation).appendCodeblock(special.detail, 'zyen'));
@@ -278,19 +423,13 @@ function registerLanguageFeatures(context, index) {
     async provideDefinition(document, position) {
       const word = language.wordAt(document.lineAt(position.line).text, position.character);
       if (!word) return undefined;
-      const parsed = index.parse(document);
+      index.parse(document);
       await index.ensureWorkspace();
-      const imported = parsed.imports.find((item) => item.name === word.value);
-      if (imported) {
-        const suffix = importSuffix(imported.path);
-        const module = index.all().find((item) => item.parsed.uri.replace(/\\/g, '/').endsWith(suffix));
-        if (module) return new vscode.Location(module.uri, new vscode.Position(0, 0));
-      }
-      const found = index.symbolsNamed(word.value);
-      if (!found.length) return undefined;
-      const sameDocument = found.find((item) => item.uri.toString() === document.uri.toString());
-      const target = sameDocument || found[0];
-      return new vscode.Location(target.uri, symbolRange(target.symbol));
+      const resolved = await index.resolve(document, position);
+      if (!resolved) return undefined;
+      if (resolved.module) return new vscode.Location(resolved.module.uri, new vscode.Position(0, 0));
+      if (!resolved.uri || resolved.symbol.builtin) return undefined;
+      return new vscode.Location(resolved.uri, symbolRange(resolved.symbol));
     }
   }));
 
@@ -303,7 +442,7 @@ function registerLanguageFeatures(context, index) {
         const range = document.lineAt(symbol.line).range;
         const selection = symbolRange(symbol);
         const entry = new vscode.DocumentSymbol(symbol.name, symbol.detail || '', symbolKind(symbol.kind), range, selection);
-        if (symbol.kind === 'struct') {
+        if (['struct', 'class'].includes(symbol.kind)) {
           parents.set(symbol.name, entry);
           result.push(entry);
         } else if (symbol.container && parents.has(symbol.container)) {
@@ -338,12 +477,23 @@ function registerLanguageFeatures(context, index) {
 
   context.subscriptions.push(vscode.languages.registerSignatureHelpProvider(selector, {
     async provideSignatureHelp(document, position) {
-      const call = language.callAt(document.lineAt(position.line).text, position.character);
+      const call = language.callPathAt(document.lineAt(position.line).text, position.character);
       if (!call) return undefined;
-      index.parse(document);
+      const parsed = index.parse(document);
       await index.ensureWorkspace();
-      const symbols = index.symbolsNamed(call.name).filter((item) => ['function', 'method', 'native'].includes(item.symbol.kind));
-      let detail = symbols.length ? symbols[0].symbol.detail : undefined;
+      let detail;
+      if (call.path.includes('::')) {
+        const parts = call.path.split('::');
+        const imported = parsed.imports.find((item) => item.name === parts[0]);
+        if (imported && parts.length === 2) detail = (await index.moduleExports(document, imported)).find((item) => item.symbol.name === call.name)?.symbol.detail;
+        else if (parts.length > 2) detail = (await index.membersOf(parts.slice(0, -1).join('::'), document)).find((item) => item.symbol.name === call.name)?.symbol.detail;
+      } else if (call.path.includes('.')) {
+        const receiver = call.path.slice(0, call.path.lastIndexOf('.'));
+        const typeName = await index.typeOfPath(document, receiver, position.line);
+        if (typeName) detail = (await index.membersOf(typeName, document)).find((item) => item.symbol.name === call.name)?.symbol.detail;
+      } else {
+        detail = index.visibleLocal(parsed, call.name, position.line)?.detail;
+      }
       if (!detail) {
         const special = language.SPECIAL_FORMS.find((item) => item.name === call.name);
         if (special) detail = special.detail;
@@ -370,34 +520,191 @@ function registerLanguageFeatures(context, index) {
     async provideReferences(document, position, options) {
       const word = language.wordAt(document.lineAt(position.line).text, position.character);
       if (!word) return [];
-      index.parse(document);
-      await index.ensureWorkspace();
-      const references = [];
-      for (const item of index.all()) {
-        for (const location of wordLocations(item, word.value)) {
-          const isDeclaration = item.parsed.symbols.some((symbol) =>
-            symbol.name === word.value &&
-            symbol.line === location.range.start.line &&
-            symbol.column === location.range.start.character
-          );
-          if (options.includeDeclaration || !isDeclaration) references.push(location);
-        }
-      }
-      return references;
+      const parsed = index.parse(document);
+      const resolved = await index.resolve(document, position);
+      if (!resolved) return [];
+      const fn = activeFunction(parsed, position.line);
+      const locations = wordLocations({ parsed, uri: document.uri }, word.value).filter((location) => {
+        if (!['variable', 'parameter'].includes(resolved.symbol.kind) || !fn) return true;
+        return fn.startLine <= location.range.start.line && location.range.start.line <= fn.endLine;
+      });
+      return locations.filter((location) => options.includeDeclaration || !location.range.isEqual(symbolRange(resolved.symbol)));
     }
   }));
 
   context.subscriptions.push(vscode.languages.registerDocumentHighlightProvider(selector, {
-    provideDocumentHighlights(document, position) {
+    async provideDocumentHighlights(document, position) {
       const word = language.wordAt(document.lineAt(position.line).text, position.character);
       if (!word) return [];
       const parsed = index.parse(document);
+      const resolved = await index.resolve(document, position);
       const item = { parsed, uri: document.uri };
-      return wordLocations(item, word.value).map((location) =>
+      const fn = activeFunction(parsed, position.line);
+      return wordLocations(item, word.value).filter((location) => {
+        if (!resolved || !['variable', 'parameter'].includes(resolved.symbol.kind) || !fn) return true;
+        return fn.startLine <= location.range.start.line && location.range.start.line <= fn.endLine;
+      }).map((location) =>
         new vscode.DocumentHighlight(location.range, vscode.DocumentHighlightKind.Read)
       );
     }
   }));
+
+  context.subscriptions.push(vscode.languages.registerRenameProvider(selector, {
+    async prepareRename(document, position) {
+      const resolved = await index.resolve(document, position);
+      if (!resolved || resolved.uri?.toString() !== document.uri.toString() || resolved.symbol.builtin) {
+        throw new Error('Only symbols declared in the current ZyenLang module can be renamed safely.');
+      }
+      if (!['variable', 'parameter', 'import'].includes(resolved.symbol.kind) && resolved.symbol.visibility !== 'private') {
+        throw new Error('Public API rename is disabled because it can affect modules outside the workspace.');
+      }
+      const range = document.getWordRangeAtPosition(position);
+      if (!range) throw new Error('Place the cursor on a ZyenLang identifier.');
+      return range;
+    },
+    async provideRenameEdits(document, position, newName) {
+      if (!/^[A-Za-z_]\w*$/.test(newName)) throw new Error('ZyenLang names must be identifiers.');
+      const parsed = index.parse(document);
+      const resolved = await index.resolve(document, position);
+      if (!resolved || resolved.uri?.toString() !== document.uri.toString()) return undefined;
+      const fn = activeFunction(parsed, position.line);
+      const collision = parsed.symbols.find((item) => item.name === newName && item !== resolved.symbol && (
+        !['variable', 'parameter'].includes(resolved.symbol.kind) || item.container === fn?.name
+      ));
+      if (collision) throw new Error(`The name ${newName} is already declared in this scope.`);
+      const edit = new vscode.WorkspaceEdit();
+      for (const location of wordLocations({ parsed, uri: document.uri }, resolved.symbol.name)) {
+        if (['variable', 'parameter'].includes(resolved.symbol.kind) && fn &&
+            (location.range.start.line < fn.startLine || location.range.start.line > fn.endLine)) continue;
+        edit.replace(document.uri, location.range, newName);
+      }
+      return edit;
+    }
+  }));
+
+  context.subscriptions.push(vscode.languages.registerTypeDefinitionProvider(selector, {
+    async provideTypeDefinition(document, position) {
+      const resolved = await index.resolve(document, position);
+      if (!resolved?.symbol.type) return undefined;
+      const typeName = language.baseType(resolved.symbol.type);
+      const parsed = index.parse(document);
+      const own = parsed.symbols.find((item) => ['struct', 'class'].includes(item.kind) && item.name === typeName);
+      if (own) return new vscode.Location(document.uri, symbolRange(own));
+      const parts = language.normalizeType(resolved.symbol.type).split('::');
+      if (parts.length > 1) {
+        const imported = parsed.imports.find((item) => item.name === parts[0]);
+        const module = imported ? await index.moduleFor(document, imported.path) : undefined;
+        const target = module?.parsed.symbols.find((item) => ['struct', 'class'].includes(item.kind) && item.name === language.baseType(parts.at(-1)));
+        if (module && target) return new vscode.Location(module.uri, symbolRange(target));
+      }
+      for (const imported of parsed.imports) {
+        const module = await index.moduleFor(document, imported.path);
+        const target = module?.parsed.symbols.find((item) => ['struct', 'class'].includes(item.kind) && item.name === typeName);
+        if (module && target) return new vscode.Location(module.uri, symbolRange(target));
+      }
+      return undefined;
+    }
+  }));
+
+  context.subscriptions.push(vscode.languages.registerDocumentLinkProvider(selector, {
+    async provideDocumentLinks(document) {
+      await index.ensureWorkspace();
+      const parsed = index.parse(document);
+      const links = [];
+      for (const imported of parsed.imports) {
+        const module = await index.moduleFor(document, imported.path);
+        if (!module) continue;
+        const line = document.lineAt(imported.line).text;
+        const start = line.indexOf(imported.path);
+        if (start >= 0) links.push(new vscode.DocumentLink(new vscode.Range(imported.line, start, imported.line, start + imported.path.length), module.uri));
+      }
+      for (let lineNumber = 0; lineNumber < document.lineCount; lineNumber += 1) {
+        const line = document.lineAt(lineNumber).text;
+        const native = line.match(/^\s*native\s+(?:source|link\s+(?:windows|linux|macos))\s+"([^"]+)"/);
+        if (!native) continue;
+        const target = vscode.Uri.file(path.resolve(path.dirname(document.uri.fsPath), native[1]));
+        try {
+          await vscode.workspace.fs.stat(target);
+          const start = line.indexOf(native[1]);
+          links.push(new vscode.DocumentLink(new vscode.Range(lineNumber, start, lineNumber, start + native[1].length), target));
+        } catch (_) {
+          // Missing native files remain compiler diagnostics rather than broken editor links.
+        }
+      }
+      return links;
+    }
+  }));
+
+  context.subscriptions.push(vscode.languages.registerFoldingRangeProvider(selector, {
+    provideFoldingRanges(document) {
+      const result = [];
+      const stack = [];
+      let commentStart = -1;
+      for (let line = 0; line < document.lineCount; line += 1) {
+        const text = document.lineAt(line).text;
+        if (/^\s*\/\//.test(text)) {
+          if (commentStart < 0) commentStart = line;
+        } else if (commentStart >= 0) {
+          if (line - commentStart > 1) result.push(new vscode.FoldingRange(commentStart, line - 1, vscode.FoldingRangeKind.Comment));
+          commentStart = -1;
+        }
+        const masked = language.maskLine(text);
+        for (const char of masked) {
+          if (char === '{') stack.push(line);
+          else if (char === '}' && stack.length) {
+            const start = stack.pop();
+            if (line > start) result.push(new vscode.FoldingRange(start, line));
+          }
+        }
+      }
+      if (commentStart >= 0 && document.lineCount - commentStart > 1) result.push(new vscode.FoldingRange(commentStart, document.lineCount - 1, vscode.FoldingRangeKind.Comment));
+      return result;
+    }
+  }));
+
+  context.subscriptions.push(vscode.languages.registerInlayHintsProvider(selector, {
+    provideInlayHints(document, range) {
+      const parsed = index.parse(document);
+      return parsed.symbols
+        .filter((item) => item.kind === 'variable' && item.initializer && item.type && item.line >= range.start.line && item.line <= range.end.line)
+        .filter((item) => !document.lineAt(item.line).text.slice(item.endColumn).trimStart().startsWith(':'))
+        .map((item) => new vscode.InlayHint(new vscode.Position(item.line, item.endColumn), `: ${item.type}`, vscode.InlayHintKind.Type));
+    }
+  }));
+
+  context.subscriptions.push(vscode.languages.registerCodeActionsProvider(selector, {
+    provideCodeActions(document, range, contextInfo) {
+      const actions = [];
+      const line = document.lineAt(range.start.line).text;
+      const oldImport = line.match(/^(\s*)import\s+<std\/([A-Za-z_]\w*)>\s*(?:as\s+([A-Za-z_]\w*))?/);
+      if (oldImport) {
+        const alias = oldImport[3] || oldImport[2];
+        const action = new vscode.CodeAction('Convert to ZyenLang 0.3 import', vscode.CodeActionKind.QuickFix);
+        action.edit = new vscode.WorkspaceEdit();
+        action.edit.replace(document.uri, document.lineAt(range.start.line).range, `${oldImport[1]}import std::${oldImport[2]} as ${alias}`);
+        actions.push(action);
+      }
+      if (line.includes('FREE__(')) {
+        const action = new vscode.CodeAction('Replace FREE__ with DROP__', vscode.CodeActionKind.QuickFix);
+        action.edit = new vscode.WorkspaceEdit();
+        action.edit.replace(document.uri, document.lineAt(range.start.line).range, line.replace(/\bFREE__\s*\(/g, 'DROP__('));
+        actions.push(action);
+      }
+      const parsed = index.parse(document);
+      for (const diagnostic of contextInfo.diagnostics) {
+        if (!/use `::`|module/i.test(diagnostic.message)) continue;
+        const dot = line.match(/\b([A-Za-z_]\w*)\.([A-Za-z_]\w*)/);
+        if (!dot || !parsed.imports.some((item) => item.name === dot[1])) continue;
+        const action = new vscode.CodeAction(`Use ${dot[1]}::${dot[2]}`, vscode.CodeActionKind.QuickFix);
+        action.diagnostics = [diagnostic];
+        action.edit = new vscode.WorkspaceEdit();
+        const start = line.indexOf(dot[0]);
+        action.edit.replace(document.uri, new vscode.Range(range.start.line, start, range.start.line, start + dot[0].length), `${dot[1]}::${dot[2]}`);
+        actions.push(action);
+      }
+      return actions;
+    }
+  }, { providedCodeActionKinds: [vscode.CodeActionKind.QuickFix] }));
 }
 
 class DiagnosticsController {
@@ -451,7 +758,7 @@ class DiagnosticsController {
       return;
     }
     const executable = config.get('compilerPath', 'zy');
-    const cwd = vscode.workspace.getWorkspaceFolder(document.uri)?.uri.fsPath || path.dirname(document.uri.fsPath);
+    const cwd = projectTools.findProjectRoot(document.uri.fsPath) || vscode.workspace.getWorkspaceFolder(document.uri)?.uri.fsPath || path.dirname(document.uri.fsPath);
     const child = spawn(executable, ['check', '--file', document.uri.fsPath, '--library', '--stdin'], {
       cwd,
       windowsHide: true,
@@ -588,22 +895,58 @@ async function requireTrustedWorkspace() {
   return trusted;
 }
 
-async function processTask(document, args, label) {
+async function processTask(document, args, label, cwdOverride) {
   const config = vscode.workspace.getConfiguration('zyenlang', document.uri);
   const executable = config.get('compilerPath', 'zy');
-  const cwd = vscode.workspace.getWorkspaceFolder(document.uri)?.uri.fsPath || path.dirname(document.uri.fsPath);
+  const cwd = cwdOverride || projectTools.findProjectRoot(document.uri.fsPath) || vscode.workspace.getWorkspaceFolder(document.uri)?.uri.fsPath || path.dirname(document.uri.fsPath);
   const task = new vscode.Task(
     { type: 'zyenlang', command: args[0] },
     vscode.TaskScope.Workspace,
     label,
     'ZyenLang',
-    new vscode.ProcessExecution(executable, args, { cwd })
+    new vscode.ProcessExecution(executable, args, { cwd }),
+    ['$zyenlang']
   );
   task.presentationOptions = { reveal: vscode.TaskRevealKind.Always, panel: vscode.TaskPanelKind.Shared, clear: false };
   await vscode.tasks.executeTask(task);
 }
 
-function registerCommands(context, diagnostics) {
+function currentProject(document) {
+  const project = projectTools.loadProject(document.uri.fsPath);
+  if (!project) vscode.window.showErrorMessage('No zyproject.toml was found above the current file.');
+  return project;
+}
+
+async function selectTarget(document, project, runnableOnly = false) {
+  let targets = project.targets;
+  if (runnableOnly) targets = targets.filter((item) => item.kind === 'bin');
+  if (!targets.length) {
+    vscode.window.showErrorMessage(runnableOnly ? 'This project has no runnable bin target.' : 'This project has no targets.');
+    return undefined;
+  }
+  const configured = vscode.workspace.getConfiguration('zyenlang', document.uri).get('project.target', '');
+  const configuredTarget = targets.find((item) => item.name === configured);
+  if (configuredTarget) return configuredTarget.name;
+  const preferred = targets.find((item) => item.name === project.defaultTarget);
+  if (targets.length === 1) return targets[0].name;
+  const ordered = preferred ? [preferred, ...targets.filter((item) => item !== preferred)] : targets;
+  const picked = await vscode.window.showQuickPick(ordered.map((item) => ({
+    label: item.name,
+    description: item.kind,
+    detail: item.entry,
+    picked: item === preferred
+  })), { placeHolder: `Select a ZyenLang ${runnableOnly ? 'bin ' : ''}target` });
+  return picked?.label;
+}
+
+function projectArguments(command, project, target, release) {
+  const args = [command, '--project', project.root];
+  if (target) args.push(target);
+  if (release && ['run', 'build', 'test'].includes(command)) args.push('--release');
+  return args;
+}
+
+function registerCommands(context, diagnostics, index) {
   context.subscriptions.push(vscode.commands.registerCommand('zyenlang.check', () => {
     const document = vscode.window.activeTextEditor?.document;
     if (document?.languageId === 'zyen') diagnostics.schedule(document, true);
@@ -613,26 +956,54 @@ function registerCommands(context, diagnostics) {
     if (!(await requireTrustedWorkspace())) return;
     const document = await saveCurrentDocument();
     if (!document) return;
-    const args = ['run', '--project', vscode.workspace.getWorkspaceFolder(document.uri)?.uri.fsPath || path.dirname(document.uri.fsPath)];
-    if (vscode.workspace.getConfiguration('zyenlang', document.uri).get('build.release', true)) args.push('--release');
-    await processTask(document, args, 'Run project target');
+    const project = currentProject(document);
+    if (!project) return;
+    const target = await selectTarget(document, project, true);
+    if (!target) return;
+    const config = vscode.workspace.getConfiguration('zyenlang', document.uri);
+    const args = projectArguments('run', project, target, config.get('build.release', true));
+    const programArgs = config.get('run.arguments', []);
+    if (programArgs.length) args.push('--', ...programArgs);
+    await processTask(document, args, `Run ${target}`, project.root);
   }));
 
   context.subscriptions.push(vscode.commands.registerCommand('zyenlang.build', async () => {
     if (!(await requireTrustedWorkspace())) return;
     const document = await saveCurrentDocument();
     if (!document) return;
-    const selected = await vscode.window.showOpenDialog({
-      defaultUri: vscode.Uri.file(path.join(path.dirname(document.uri.fsPath), 'target')),
-      canSelectFiles: false,
-      canSelectFolders: true,
-      canSelectMany: false,
-      openLabel: 'Build here'
-    });
-    if (!selected?.length) return;
-    const args = ['build', '--project', vscode.workspace.getWorkspaceFolder(document.uri)?.uri.fsPath || path.dirname(document.uri.fsPath), '--out-dir', selected[0].fsPath];
-    if (vscode.workspace.getConfiguration('zyenlang', document.uri).get('build.release', true)) args.push('--release');
-    await processTask(document, args, 'Build project target');
+    const project = currentProject(document);
+    if (!project) return;
+    const target = await selectTarget(document, project);
+    if (!target) return;
+    const release = vscode.workspace.getConfiguration('zyenlang', document.uri).get('build.release', true);
+    await processTask(document, projectArguments('build', project, target, release), `Build ${target}`, project.root);
+  }));
+
+  context.subscriptions.push(vscode.commands.registerCommand('zyenlang.test', async () => {
+    if (!(await requireTrustedWorkspace())) return;
+    const document = await saveCurrentDocument();
+    if (!document) return;
+    const project = currentProject(document);
+    if (!project) return;
+    const release = vscode.workspace.getConfiguration('zyenlang', document.uri).get('build.release', true);
+    await processTask(document, projectArguments('test', project, undefined, release), 'Test project', project.root);
+  }));
+
+  context.subscriptions.push(vscode.commands.registerCommand('zyenlang.clean', async () => {
+    if (!(await requireTrustedWorkspace())) return;
+    const document = await saveCurrentDocument();
+    if (!document) return;
+    const project = currentProject(document);
+    if (!project) return;
+    const target = await selectTarget(document, project);
+    if (!target) return;
+    await processTask(document, projectArguments('clean', project, target, false), `Clean ${target}`, project.root);
+  }));
+
+  context.subscriptions.push(vscode.commands.registerCommand('zyenlang.refreshIndex', async () => {
+    index.invalidateWorkspace();
+    await index.ensureWorkspace();
+    vscode.window.showInformationMessage(`ZyenLang index refreshed: ${index.all().length} module(s).`);
   }));
 
   context.subscriptions.push(vscode.commands.registerCommand('zyenlang.emitC', async () => {
@@ -656,7 +1027,7 @@ function activate(context) {
   const index = new WorkspaceIndex();
   const diagnostics = new DiagnosticsController(context, index);
   registerLanguageFeatures(context, index);
-  registerCommands(context, diagnostics);
+  registerCommands(context, diagnostics, index);
 
   context.subscriptions.push(vscode.workspace.onDidOpenTextDocument((document) => {
     if (document.languageId === 'zyen') {
@@ -691,6 +1062,11 @@ function activate(context) {
   watcher.onDidChange((uri) => { index.forget(uri); index.invalidateWorkspace(); });
   watcher.onDidDelete((uri) => { index.forget(uri); index.invalidateWorkspace(); });
   context.subscriptions.push(watcher);
+  const manifestWatcher = vscode.workspace.createFileSystemWatcher('**/zyproject.toml');
+  manifestWatcher.onDidCreate(() => index.invalidateWorkspace());
+  manifestWatcher.onDidChange(() => index.invalidateWorkspace());
+  manifestWatcher.onDidDelete(() => index.invalidateWorkspace());
+  context.subscriptions.push(manifestWatcher);
 
   for (const document of vscode.workspace.textDocuments) {
     if (document.languageId === 'zyen') {

@@ -76,10 +76,22 @@ counts. Structs retain value semantics and receive generated recursive
 retain/release helpers when necessary. Lists share backing storage until a
 mutation triggers copy-on-write detachment.
 
-The semantic phase tracks initialized, moved/dropped, and borrowed bindings.
-References never own data. The first reference implementation deliberately
-allows only local/parameter borrows and rejects escaping, nested, aggregate,
-closure-captured, and cross-thread references.
+The semantic phase tracks initialized, moved/dropped, and borrowed places.
+Loans use field projections and statement-level last-use analysis; control-flow
+statements remain conservative regions. A reference does not own its pointee,
+but its C representation is `{data, pin}` so a List element reference may retain
+the backing ARC control block across copy-on-write detachment or reallocation.
+Ordinary local, field, class, and List-handle borrows use a null pin and do not
+allocate. References remain local/parameter-only and cannot escape through a
+return, aggregate, closure capture, thread, or native ABI.
+
+Class references are capabilities over ARC handles, not uniqueness proofs for
+the shared payload. Readonly references dispatch only readonly methods;
+mutable references also dispatch mutating methods and can replace their handle
+slot. List values passed by value preserve COW value semantics, `&List<T>` is a
+zero-copy readonly view, and only `&mut List<T>` writes structural changes back
+to the caller. Mutable element references are restricted to owned local/value-
+struct List places so class aliases cannot bypass the capability model.
 
 The cleanup planner feeds explicit IR cleanup points for normal scope exits,
 return, break, continue, error propagation, catch/recover, `DROP__`, and

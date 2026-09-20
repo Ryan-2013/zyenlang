@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, fields as dataclass_fields, is_dataclass, replace
 import os
 from pathlib import Path
 import re
@@ -105,6 +105,26 @@ class ClosureContext:
     captures: dict[str, tuple[str, Type, ir.IRExpr]]
 
 
+@dataclass(frozen=True)
+class BorrowPlace:
+    root: str
+    label: str
+    projections: tuple[str, ...] = ()
+
+    def overlaps(self, other: "BorrowPlace") -> bool:
+        if self.root != other.root:
+            return False
+        common = min(len(self.projections), len(other.projections))
+        return self.projections[:common] == other.projections[:common]
+
+
+@dataclass
+class BorrowLoan:
+    place: BorrowPlace
+    mutable: bool
+    aliases: set[str]
+
+
 class Lowerer:
     def __init__(self, program: ast.Program, source_name: str = "<source>", *, require_main: bool = True) -> None:
         self.program = program
@@ -121,7 +141,10 @@ class Lowerer:
         self.narrowed_scopes: list[dict[str, Type]] = []
         self.task_scopes: list[dict[str, tuple[bool, SourceSpan]]] = []
         self.dropped_scopes: list[set[str]] = []
-        self.borrow_scopes: list[list[tuple[str, bool]]] = []
+        self.borrow_scopes: list[list[BorrowLoan]] = []
+        self.reference_loan_scopes: list[dict[str, tuple[str, list[BorrowLoan]]]] = []
+        self.protected_borrow_names: set[str] = set()
+        self.expression_borrow_loans: dict[int, list[BorrowLoan]] = {}
         self.current_function: FunctionSymbol | None = None
         self.current_receiver: str | None = None
         # None marks a catch expression whose result is discarded as a statement.
@@ -933,6 +956,7 @@ class Lowerer:
         self.task_scopes.append({})
         self.dropped_scopes.append(set())
         self.borrow_scopes.append([])
+        self.reference_loan_scopes.append({})
 
     def pop_scope(self) -> None:
         self.scopes.pop()
@@ -942,20 +966,70 @@ class Lowerer:
         self.narrowed_scopes.pop()
         self.task_scopes.pop()
         self.dropped_scopes.pop()
-        self.borrow_scopes.pop()
+        loans = self.borrow_scopes.pop()
+        aliases = self.reference_loan_scopes.pop()
+        for _, (local_name, referenced_loans) in aliases.items():
+            for loan in referenced_loans:
+                loan.aliases.discard(local_name)
+        for loan in loans:
+            loan.aliases.clear()
 
-    def active_borrows(self, name: str) -> tuple[int, bool]:
+    def active_borrows(self, place: BorrowPlace | str) -> tuple[int, bool]:
+        if isinstance(place, str):
+            scope_index = self.find_local_scope_index(place)
+            if scope_index is None:
+                return 0, False
+            local_name = self.local_names[scope_index][place]
+            place = BorrowPlace(local_name, place)
         readonly = 0
         mutable = False
         for scope in self.borrow_scopes:
-            for borrowed_name, borrowed_mutable in scope:
-                if borrowed_name != name:
+            for loan in scope:
+                if not loan.place.overlaps(place):
                     continue
-                if borrowed_mutable:
+                if loan.mutable:
                     mutable = True
                 else:
                     readonly += 1
         return readonly, mutable
+
+    def register_borrow(self, place: BorrowPlace, mutable: bool, span: SourceSpan) -> BorrowLoan:
+        readonly, active_mutable = self.active_borrows(place)
+        if mutable:
+            if readonly or active_mutable:
+                raise self.error(
+                    f"cannot mutably borrow `{place.label}` while another reference exists",
+                    span,
+                )
+        elif active_mutable:
+            raise self.error(
+                f"cannot borrow `{place.label}` while a mutable reference exists",
+                span,
+            )
+        loan = BorrowLoan(place, mutable, set())
+        self.borrow_scopes[-1].append(loan)
+        return loan
+
+    def bind_reference_loans(self, name: str, local_name: str, loans: list[BorrowLoan]) -> None:
+        self.reference_loan_scopes[-1][name] = (local_name, loans)
+        for loan in loans:
+            loan.aliases.add(local_name)
+
+    def lookup_reference_loans(self, name: str) -> list[BorrowLoan]:
+        for scope in reversed(self.reference_loan_scopes):
+            if name in scope:
+                return scope[name][1]
+        return []
+
+    def expire_borrows(self, live_names: set[str]) -> None:
+        source_names = live_names | self.protected_borrow_names
+        keep_names: set[str] = set()
+        for scope in self.reference_loan_scopes:
+            for source_name, (local_name, _) in scope.items():
+                if source_name in source_names:
+                    keep_names.add(local_name)
+        for scope in self.borrow_scopes:
+            scope[:] = [loan for loan in scope if loan.aliases & keep_names]
 
     def validate_current_task_scope(self) -> None:
         for name, (consumed, span) in self.task_scopes[-1].items():
@@ -1186,14 +1260,46 @@ class Lowerer:
     def lower_block(self, block: ast.Block, *, push_scope: bool = True) -> ir.IRBlock:
         if push_scope:
             self.push_scope()
+        previous_protected = self.protected_borrow_names
         try:
-            statements = tuple(self.lower_stmt(statement) for statement in block.statements)
+            suffix_uses: list[set[str]] = [set() for _ in range(len(block.statements) + 1)]
+            for index in range(len(block.statements) - 1, -1, -1):
+                suffix_uses[index] = suffix_uses[index + 1] | self.name_uses(block.statements[index])
+            lowered: list[ir.IRStmt] = []
+            outer_live = set(previous_protected)
+            for index, statement in enumerate(block.statements):
+                # A control-flow statement is one conservative borrow region. This
+                # keeps branch/loop lowering sound while still ending ordinary
+                # loans immediately after their final statement-level use.
+                self.protected_borrow_names = outer_live | suffix_uses[index]
+                lowered.append(self.lower_stmt(statement))
+                self.protected_borrow_names = outer_live
+                self.expire_borrows(outer_live | suffix_uses[index + 1])
+            statements = tuple(lowered)
             if push_scope:
                 self.validate_current_task_scope()
             return ir.IRBlock(statements, block.span, tuple(self.hoisted_scopes[-1]))
         finally:
+            self.protected_borrow_names = previous_protected
             if push_scope:
                 self.pop_scope()
+
+    @classmethod
+    def name_uses(cls, value: object) -> set[str]:
+        if isinstance(value, ast.NameExpr):
+            return {value.name}
+        if isinstance(value, tuple):
+            result: set[str] = set()
+            for item in value:
+                result.update(cls.name_uses(item))
+            return result
+        if is_dataclass(value) and value.__class__.__module__ == ast.__name__:
+            result: set[str] = set()
+            for item in dataclass_fields(value):
+                if item.name != "span":
+                    result.update(cls.name_uses(getattr(value, item.name)))
+            return result
+        return set()
 
     def lower_stmt(self, statement: ast.Stmt) -> ir.IRStmt:
         if isinstance(statement, ast.LetStmt):
@@ -1336,6 +1442,8 @@ class Lowerer:
             if self.is_captured_local(statement.target.name):
                 raise self.error("closure captures are readonly snapshots", statement.target.span)
             assigned_name = statement.target.name
+            if isinstance(target_type, ReferenceType):
+                raise self.error("reference bindings cannot be reassigned; borrow again after their last use", statement.target.span)
             readonly, mutable = self.active_borrows(statement.target.name)
             if readonly or mutable:
                 raise self.error(f"cannot assign `{statement.target.name}` while it is borrowed", statement.target.span)
@@ -1355,6 +1463,12 @@ class Lowerer:
             if root.name == "this" and self.current_function and self.current_function.owner_class is not None:
                 if self.current_function.receiver is not None and not self.current_function.receiver[2]:
                     raise self.error("readonly class method cannot modify `this`", statement.target.span)
+            readonly, mutable = self.active_borrows(self.borrow_place(statement.target))
+            if readonly or mutable:
+                raise self.error(
+                    f"cannot assign `{self.borrow_place(statement.target).label}` while it is borrowed",
+                    statement.target.span,
+                )
             target = self.lower_field(statement.target)
             if is_task(target.typ):
                 raise self.error("Task<T> fields are not assignable", statement.target.span)
@@ -1377,7 +1491,18 @@ class Lowerer:
             self.validate_box_position(typ, binding.span, "local type")
             if is_task(typ) and not isinstance(value, ir.IRSpawn):
                 raise self.error("Task<T> is linear and cannot be copied", statement.value.span)
+            reference_loans = list(self.expression_borrow_loans.get(id(value), ()))
+            if isinstance(typ, ReferenceType) and isinstance(statement.value, ast.NameExpr):
+                source_type = self.lookup_local(statement.value.name, statement.value.span)
+                if isinstance(source_type, ReferenceType) and source_type.mutable:
+                    raise self.error(
+                        "mutable references cannot be copied; pass them directly or create a new borrow after the last use",
+                        statement.value.span,
+                    )
+                reference_loans = list(self.lookup_reference_loans(statement.value.name))
             local_name = self.define_local(binding.name, typ, binding.span)
+            if isinstance(typ, ReferenceType):
+                self.bind_reference_loans(binding.name, local_name, reference_loans)
             if is_task(typ):
                 self.task_scopes[-1][binding.name] = (False, binding.span)
             return ir.IRLet(statement.span, (local_name,), (typ,), value)
@@ -1531,28 +1656,27 @@ class Lowerer:
         if isinstance(expression, ast.AssociatedExpr):
             raise self.error("a class static function path must be called", expression.span)
         if isinstance(expression, ast.BorrowExpr):
-            if not isinstance(expression.value, ast.NameExpr):
-                raise self.error("references can currently borrow only a local variable", expression.value.span)
-            name = expression.value.name
-            typ = self.lookup_local(name, expression.value.span)
-            if self.is_captured_local(name):
+            if isinstance(expression.value, ast.IndexExpr):
+                return self.lower_list_element_borrow(expression, expected)
+            place = self.borrow_place(expression.value)
+            root_name = self.borrow_root_name(expression.value)
+            if root_name is None:
+                raise self.error("references require a stable local or local-rooted field", expression.value.span)
+            if self.is_captured_local(root_name):
                 raise self.error("references cannot borrow a value from an outer closure scope", expression.span)
+            value = self.lower_borrow_place(expression.value)
+            typ = value.typ
             if isinstance(typ, ReferenceType):
                 raise self.error("references cannot point to references", expression.span)
-            local_name = self.lookup_local_name(name, expression.value.span)
-            readonly, mutable = self.active_borrows(name)
-            if expression.mutable:
-                if readonly or mutable:
-                    raise self.error(f"cannot mutably borrow `{name}` while another reference exists", expression.span)
-            elif mutable:
-                raise self.error(f"cannot borrow `{name}` while a mutable reference exists", expression.span)
-            self.borrow_scopes[-1].append((name, expression.mutable))
+            loan = self.register_borrow(place, expression.mutable, expression.span)
             reference_type = ReferenceType(typ, expression.mutable)
-            return self.coerce(
-                ir.IRBorrow(reference_type, expression.span, ir.IRName(typ, expression.value.span, local_name), expression.mutable),
+            result = self.coerce(
+                ir.IRBorrow(reference_type, expression.span, value, expression.mutable),
                 expected,
                 expression.span,
             )
+            self.expression_borrow_loans[id(result)] = [loan]
+            return result
         if isinstance(expression, ast.UnaryExpr):
             operand = self.lower_expr(expression.operand, expected if expression.operator == "-" else None)
             if expression.operator == "-" and not is_numeric(operand.typ):
@@ -1590,6 +1714,7 @@ class Lowerer:
                     expression.receiver.span,
                 )
             receiver = self.lower_expr(expression.receiver)
+            receiver = self.autoderef_receiver(receiver, expression.receiver, "index")
             if not is_list(receiver.typ):
                 raise self.error(
                     f"indexing with `[]` requires `List<T>`, got `{receiver.typ.display()}`",
@@ -1922,45 +2047,26 @@ class Lowerer:
             if name == "LIST_LEN__":
                 if len(expression.args) != 1:
                     raise self.error("LIST_LEN__ expects exactly one List<T> value", expression.span)
-                value = self.lower_expr(expression.args[0])
-                if not is_list(value.typ):
-                    raise self.error(
-                        f"LIST_LEN__ expects `List<T>`, got `{value.typ.display()}`",
-                        expression.args[0].span,
-                    )
+                value = self.lower_list_receiver(expression.args[0], "LIST_LEN__")
                 return ir.IRCall(PrimitiveType("usize"), expression.span, "zy2_list_len", (value,))
             if name == "LIST_GET__":
                 if len(expression.args) != 2:
                     raise self.error("LIST_GET__ expects a List<T> and i32 index", expression.span)
-                receiver = self.lower_expr(expression.args[0])
-                if not is_list(receiver.typ):
-                    raise self.error("LIST_GET__ expects `List<T>`", expression.args[0].span)
+                receiver = self.lower_list_receiver(expression.args[0], "LIST_GET__")
                 index = self.lower_expr(expression.args[1], PrimitiveType("i32"))
                 assert isinstance(receiver.typ, NamedType)
                 return ir.IRCall(receiver.typ.args[0], expression.span, "__zy2_list_get", (receiver, index), ERROR)
             if name == "LIST_PUSH__":
                 if len(expression.args) != 2:
                     raise self.error("LIST_PUSH__ expects a List<T> variable and one value", expression.span)
-                self.require_mutable_list_receiver(expression.args[0], "LIST_PUSH__")
-                receiver = self.lower_expr(expression.args[0])
-                if not is_list(receiver.typ):
-                    raise self.error(
-                        f"LIST_PUSH__ expects `List<T>`, got `{receiver.typ.display()}`",
-                        expression.args[0].span,
-                    )
+                receiver = self.lower_list_receiver(expression.args[0], "LIST_PUSH__", mutable=True)
                 assert isinstance(receiver.typ, NamedType)
                 value = self.lower_expr(expression.args[1], receiver.typ.args[0])
                 return ir.IRCall(VOID, expression.span, "__zy2_list_push", (receiver, value))
             if name == "LIST_SET__":
                 if len(expression.args) != 3:
                     raise self.error("LIST_SET__ expects a List<T> variable, i32 index, and one value", expression.span)
-                self.require_mutable_list_receiver(expression.args[0], "LIST_SET__")
-                receiver = self.lower_expr(expression.args[0])
-                if not is_list(receiver.typ):
-                    raise self.error(
-                        f"LIST_SET__ expects `List<T>`, got `{receiver.typ.display()}`",
-                        expression.args[0].span,
-                    )
+                receiver = self.lower_list_receiver(expression.args[0], "LIST_SET__", mutable=True)
                 assert isinstance(receiver.typ, NamedType)
                 index = self.lower_expr(expression.args[1], PrimitiveType("i32"))
                 value = self.lower_expr(expression.args[2], receiver.typ.args[0])
@@ -1968,19 +2074,13 @@ class Lowerer:
             if name == "LIST_POP__":
                 if len(expression.args) != 1:
                     raise self.error("LIST_POP__ expects exactly one List<T> variable", expression.span)
-                self.require_mutable_list_receiver(expression.args[0], "LIST_POP__")
-                receiver = self.lower_expr(expression.args[0])
-                if not is_list(receiver.typ):
-                    raise self.error("LIST_POP__ expects `List<T>`", expression.args[0].span)
+                receiver = self.lower_list_receiver(expression.args[0], "LIST_POP__", mutable=True)
                 assert isinstance(receiver.typ, NamedType)
                 return ir.IRCall(receiver.typ.args[0], expression.span, "__zy2_list_pop", (receiver,), ERROR)
             if name == "LIST_CLEAR__":
                 if len(expression.args) != 1:
                     raise self.error("LIST_CLEAR__ expects exactly one List<T> variable", expression.span)
-                self.require_mutable_list_receiver(expression.args[0], "LIST_CLEAR__")
-                receiver = self.lower_expr(expression.args[0])
-                if not is_list(receiver.typ):
-                    raise self.error("LIST_CLEAR__ expects `List<T>`", expression.args[0].span)
+                receiver = self.lower_list_receiver(expression.args[0], "LIST_CLEAR__", mutable=True)
                 return ir.IRCall(VOID, expression.span, "__zy2_list_clear", (receiver,))
             if name == "PRINT_CMD__":
                 if len(expression.args) != 2:
@@ -2058,6 +2158,19 @@ class Lowerer:
                 )
             receiver = self.lower_expr(expression.callee.receiver)
             method_name = expression.callee.name
+            receiver_reference = receiver.typ if isinstance(receiver.typ, ReferenceType) else None
+            receiver_value_type = receiver_reference.inner if receiver_reference is not None else receiver.typ
+            if is_list(receiver_value_type):
+                mutating_list_method = method_name in {"push", "add", "set", "pop", "remove", "clear"}
+                if receiver_reference is not None:
+                    receiver = self.autoderef_receiver(
+                        receiver,
+                        expression.callee.receiver,
+                        f"List.{method_name}",
+                        mutable_place=mutating_list_method,
+                    )
+                elif mutating_list_method:
+                    self.require_mutable_list_receiver(expression.callee.receiver, method_name)
             if is_list(receiver.typ) and method_name == "len":
                 if expression.args:
                     raise self.error("List.len takes no arguments", expression.span)
@@ -2083,14 +2196,12 @@ class Lowerer:
                     ERROR,
                 )
             if is_list(receiver.typ) and method_name in {"push", "add"}:
-                self.require_mutable_list_receiver(expression.callee.receiver, method_name)
                 if len(expression.args) != 1:
                     raise self.error(f"List.{method_name} expects exactly one value", expression.span)
                 assert isinstance(receiver.typ, NamedType)
                 value = self.lower_expr(expression.args[0], receiver.typ.args[0])
                 return ir.IRCall(VOID, expression.span, "__zy2_list_push", (receiver, value))
             if is_list(receiver.typ) and method_name == "set":
-                self.require_mutable_list_receiver(expression.callee.receiver, method_name)
                 if len(expression.args) != 2:
                     raise self.error("List.set expects an i32 index and one value", expression.span)
                 assert isinstance(receiver.typ, NamedType)
@@ -2098,24 +2209,36 @@ class Lowerer:
                 value = self.lower_expr(expression.args[1], receiver.typ.args[0])
                 return ir.IRCall(VOID, expression.span, "__zy2_list_set", (receiver, index, value), ERROR)
             if is_list(receiver.typ) and method_name == "pop":
-                self.require_mutable_list_receiver(expression.callee.receiver, method_name)
                 if expression.args:
                     raise self.error("List.pop takes no arguments", expression.span)
                 assert isinstance(receiver.typ, NamedType)
                 return ir.IRCall(receiver.typ.args[0], expression.span, "__zy2_list_pop", (receiver,), ERROR)
             if is_list(receiver.typ) and method_name == "remove":
-                self.require_mutable_list_receiver(expression.callee.receiver, method_name)
                 if len(expression.args) != 1:
                     raise self.error("List.remove expects exactly one i32 index", expression.span)
                 assert isinstance(receiver.typ, NamedType)
                 index = self.lower_expr(expression.args[0], PrimitiveType("i32"))
                 return ir.IRCall(receiver.typ.args[0], expression.span, "__zy2_list_remove", (receiver, index), ERROR)
             if is_list(receiver.typ) and method_name == "clear":
-                self.require_mutable_list_receiver(expression.callee.receiver, method_name)
                 if expression.args:
                     raise self.error("List.clear takes no arguments", expression.span)
                 return ir.IRCall(VOID, expression.span, "__zy2_list_clear", (receiver,))
-            if isinstance(receiver.typ, NamedType) and receiver.typ.name in self.classes:
+            class_reference = receiver.typ if isinstance(receiver.typ, ReferenceType) else None
+            class_type = class_reference.inner if class_reference is not None else receiver.typ
+            if isinstance(class_type, NamedType) and class_type.name in self.classes:
+                instance = self.instantiate_class(class_type, expression.span)
+                symbol = instance.methods.get(method_name)
+                if symbol is not None and symbol.receiver is not None and symbol.receiver[2]:
+                    if class_reference is not None and not class_reference.mutable:
+                        raise self.error(
+                            f"mutating method `{class_type.display()}.{method_name}` requires `&mut {class_type.display()}`",
+                            expression.callee.receiver.span,
+                        )
+                    if class_reference is None:
+                        self.require_mutable_receiver(expression.callee.receiver)
+                if class_reference is not None:
+                    receiver = self.autoderef_receiver(receiver, expression.callee.receiver, method_name)
+                assert isinstance(receiver.typ, NamedType)
                 instance = self.instantiate_class(receiver.typ, expression.span)
                 symbol = instance.methods.get(method_name)
                 if symbol is None:
@@ -2128,8 +2251,6 @@ class Lowerer:
                     raise self.error(f"class `{receiver.typ.display()}` has no method `{method_name}`", expression.span)
                 if symbol.visibility == "private" and self.current_receiver != receiver.typ.name:
                     raise self.error(f"method `{receiver.typ.display()}.{method_name}` is private", expression.span)
-                if symbol.receiver is not None and symbol.receiver[2]:
-                    self.require_mutable_receiver(expression.callee.receiver)
                 return self.lower_symbol_call(symbol, expression.args, (receiver,), expression.span)
             if not isinstance(receiver.typ, NamedType) or receiver.typ.name not in self.structs:
                 raise self.error(f"`{receiver.typ.display()}` has no method `{method_name}`", expression.span)
@@ -2479,6 +2600,143 @@ class Lowerer:
             return self.type_requires_management(typ.inner, visiting)
         return False
 
+    def borrow_root_name(self, expression: ast.Expr) -> str | None:
+        current = expression
+        while isinstance(current, (ast.FieldExpr, ast.IndexExpr)):
+            current = current.receiver
+        return current.name if isinstance(current, ast.NameExpr) else None
+
+    def borrow_place(self, expression: ast.Expr) -> BorrowPlace:
+        projections: list[str] = []
+        current = expression
+        while isinstance(current, (ast.FieldExpr, ast.IndexExpr)):
+            if isinstance(current, ast.FieldExpr):
+                projections.append(current.name)
+            else:
+                projections.append("[*]")
+            current = current.receiver
+        if not isinstance(current, ast.NameExpr):
+            raise self.error("references require a stable local or local-rooted field", expression.span)
+        if self.is_captured_local(current.name):
+            raise self.error("references cannot borrow a value from an outer closure scope", expression.span)
+        root = self.lookup_local_name(current.name, current.span)
+        ordered = tuple(reversed(projections))
+        label = current.name + "".join(
+            projection if projection == "[*]" else f".{projection}" for projection in ordered
+        )
+        return BorrowPlace(root, label, ordered)
+
+    def lower_borrow_place(self, expression: ast.Expr) -> ir.IRExpr:
+        if isinstance(expression, ast.NameExpr):
+            return self.lower_local_access(expression.name, expression.span)
+        if isinstance(expression, ast.FieldExpr):
+            value = self.lower_field(expression)
+            if not isinstance(value, ir.IRField):
+                raise self.error("only concrete struct or class fields can be borrowed", expression.span)
+            if isinstance(value.receiver, ir.IRField) and (
+                isinstance(value.receiver.typ, NamedType) and value.receiver.typ.name in self.classes
+            ):
+                raise self.error(
+                    "borrowing through a nested class handle is not allowed; bind that class handle to a local first",
+                    expression.span,
+                )
+            return value
+        raise self.error("references require a stable local or local-rooted field", expression.span)
+
+    def autoderef_receiver(
+        self,
+        receiver: ir.IRExpr,
+        source: ast.Expr,
+        operation: str,
+        *,
+        mutable_place: bool = False,
+    ) -> ir.IRExpr:
+        if not isinstance(receiver.typ, ReferenceType):
+            return receiver
+        if mutable_place and not receiver.typ.mutable:
+            raise self.error(f"{operation} requires `&mut {receiver.typ.inner.display()}`", source.span)
+        if mutable_place:
+            if isinstance(source, ast.BorrowExpr):
+                if not source.mutable:
+                    raise self.error(f"{operation} requires a mutable reference", source.span)
+                return self.lower_borrow_place(source.value)
+            if not isinstance(source, ast.NameExpr):
+                raise self.error(
+                    f"{operation} through a reference requires a stable reference local or parameter",
+                    source.span,
+                )
+            return ir.IRReferencePlace(receiver.typ.inner, source.span, receiver)
+        return ir.IRReferenceValue(receiver.typ.inner, source.span, receiver)
+
+    def lower_list_receiver(self, source: ast.Expr, operation: str, *, mutable: bool = False) -> ir.IRExpr:
+        receiver = self.lower_expr(source)
+        if isinstance(receiver.typ, ReferenceType):
+            receiver = self.autoderef_receiver(
+                receiver,
+                source,
+                operation,
+                mutable_place=mutable,
+            )
+        elif mutable:
+            self.require_mutable_list_receiver(source, operation)
+        if not is_list(receiver.typ):
+            raise self.error(
+                f"{operation} expects `List<T>`, got `{receiver.typ.display()}`",
+                source.span,
+            )
+        return receiver
+
+    def lower_list_element_borrow(self, expression: ast.BorrowExpr, expected: Type | None) -> ir.IRExpr:
+        assert isinstance(expression.value, ast.IndexExpr)
+        indexed = expression.value
+        place = self.borrow_place(indexed)
+        root_name = self.borrow_root_name(indexed)
+        assert root_name is not None
+        root_type = self.lookup_local(root_name, indexed.span)
+        receiver = self.lower_expr(indexed.receiver)
+        if expression.mutable:
+            if isinstance(receiver.typ, ReferenceType):
+                raise self.error(
+                    "mutable List element borrows require an owned local List or value-struct field; use LIST_SET__ through &mut List<T>",
+                    indexed.receiver.span,
+                )
+            if isinstance(root_type, ReferenceType) or self.place_crosses_class(receiver) or (
+                isinstance(root_type, NamedType) and root_type.name in self.classes
+            ):
+                raise self.error(
+                    "mutable List element borrows cannot cross a class or reference alias",
+                    indexed.receiver.span,
+                )
+            self.require_mutable_list_receiver(indexed.receiver, "mutable List element borrow")
+        else:
+            receiver = self.autoderef_receiver(receiver, indexed.receiver, "List element borrow")
+        if not is_list(receiver.typ):
+            raise self.error(
+                f"List element borrow requires `List<T>`, got `{receiver.typ.display()}`",
+                indexed.receiver.span,
+            )
+        assert isinstance(receiver.typ, NamedType)
+        index = self.lower_expr(indexed.index, PrimitiveType("i32"))
+        reference_type = ReferenceType(receiver.typ.args[0], expression.mutable)
+        loan = self.register_borrow(place, expression.mutable, expression.span)
+        target = "__zy2_list_borrow_mut" if expression.mutable else "__zy2_list_borrow"
+        result = self.coerce(
+            ir.IRCall(reference_type, expression.span, target, (receiver, index), ERROR),
+            expected,
+            expression.span,
+        )
+        self.expression_borrow_loans[id(result)] = [loan]
+        return result
+
+    def place_crosses_class(self, value: ir.IRExpr) -> bool:
+        current = value
+        while isinstance(current, ir.IRField):
+            receiver_type = current.receiver.typ
+            if isinstance(receiver_type, NamedType) and receiver_type.name in self.classes:
+                return True
+            current = current.receiver
+        return False
+
     def require_mutable_list_receiver(self, receiver: ast.Expr, method_name: str) -> None:
         root = receiver
         while isinstance(root, ast.FieldExpr):
@@ -2502,9 +2760,10 @@ class Lowerer:
         if root.name == "this" and self.current_function and self.current_function.owner_class is not None:
             if self.current_function.receiver is not None and not self.current_function.receiver[2]:
                 raise self.error("readonly class method cannot modify `this`", receiver.span)
-        readonly, mutable = self.active_borrows(root.name)
+        place = self.borrow_place(receiver)
+        readonly, mutable = self.active_borrows(place)
         if readonly or mutable:
-            raise self.error(f"cannot modify `{root.name}` while it is borrowed", receiver.span)
+            raise self.error(f"cannot modify `{place.label}` while it is borrowed", receiver.span)
 
     @staticmethod
     def qualified_name(expression: ast.Expr) -> str | None:
@@ -2726,6 +2985,18 @@ class Lowerer:
     def coerce(self, value: ir.IRExpr, expected: Type | None, span: SourceSpan) -> ir.IRExpr:
         if expected is None or value.typ == expected:
             return value
+        if (
+            isinstance(expected, ReferenceType)
+            and not expected.mutable
+            and isinstance(value.typ, ReferenceType)
+            and value.typ.mutable
+            and value.typ.inner == expected.inner
+        ):
+            coerced = ir.IRReferenceCoerce(expected, span, value)
+            loans = self.expression_borrow_loans.get(id(value))
+            if loans is not None:
+                self.expression_borrow_loans[id(coerced)] = loans
+            return coerced
         if isinstance(expected, OptionalType) and value.typ == expected.inner:
             return ir.IROptionalSome(expected, span, value)
         if assignable(expected, value.typ):

@@ -190,6 +190,18 @@ LIST_CLEAR__(values)
 backing storage，第一次 mutation 才 detach。Managed element 會正確 retain/release，
 `LIST_POP__()` 將該 element 的 ownership 轉移給 caller。
 
+List 作為函式參數時，三種寫法有明確差異：
+
+```zy
+fn snapshot(values: List<i32>) void { values.push(1) } // 修改 COW 副本
+fn count(values: &List<i32>) usize { return values.len() } // 零拷貝唯讀
+fn append(values: &mut List<i32>) void { values.push(42) } // 修改呼叫端
+```
+
+`&List<T>` 可使用 `len/capacity/is_empty/get`、索引及對應的唯讀 intrinsic；
+`&mut List<T>` 也可使用 `push/set/pop/remove/clear`。只有 `&mut List<T>` 會把
+結構性變更寫回呼叫端。
+
 ## 函式、泛型與多回傳值
 
 ```zy
@@ -245,14 +257,39 @@ let copied: i32 = CLONE_REF__(read)
 
 let write: &mut i32 = &mut value
 REF_SET__(write, 20)
+
+let values: List<i32> = [10, 20]
+let first: &i32 = &values[0]
+let second: &mut i32 = &mut values[1]
+REF_SET__(second, 42)
 ```
 
 - `&T` 可同時存在多個；`&mut T` 必須唯一。
 - mutable borrow 存在時不能讀、改 owner 或再建立其他 reference。
-- reference 不可 null、不擁有資料，也不執行 cleanup。
+- borrow 在 reference 最後一次 statement-level 使用後結束；`if/while` 內採保守的
+  整個控制流程 statement 生命期。
+- reference 不可 null，也不擁有 pointee。List element reference 會在內部保留
+  backing storage pin，reference 離開 scope 時自動釋放該 pin。
 - 禁止 nested reference，例如 `&&T`、`&mut &T`。
 - 第一版只能放在 local 或 function parameter。
 - 禁止存入 struct/class/List、回傳、closure capture 或跨 thread 保存。
+- readonly reference 可複製；`&mut T` 不可複製，但可直接傳入函式。
+- `&mut T` 可暫時轉成 `&T`；反向轉換不允許。
+
+class 維持 ARC shared identity。`&Class` 只能呼叫 readonly `fn`；`&mut Class`
+可呼叫 `fn`、`mut fn`，也可用 `REF_SET__()` 替換該 handle slot。這是 capability，
+不是全域唯一性保證：其他 class alias 仍可能修改同一個 instance。
+
+```zy
+fn inspect(cache: &Cache<i32>) i32 { return cache.get() }
+fn update(cache: &mut Cache<i32>) void { cache.set(42) }
+```
+
+receiver 位置會自動解引用，因此可以直接寫 `cache.get()` 和 `values.push(42)`；
+field access 不自動解引用。可以借用 local 或 local-rooted field。Readonly List element
+borrow 可穿過 class field，因為 storage pin 會在 COW/reallocation 後保持舊元素有效；
+mutable List element borrow 只允許 owned local List 或 value-struct field。要處理 element
+bounds error，將 borrow 加括號後接 `catch`：`(&values[index]) catch err { recover }`。
 
 ## Clone、Drop 與 defer
 

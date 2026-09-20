@@ -24,17 +24,37 @@ fn checked(values: List<str>) i32 throws Error {
     return (i32)LIST_LEN__(values)
 }
 
+fn inspect(counter: &Counter) i32 {
+    return counter.get()
+}
+
+fn update(counter: &mut Counter) void {
+    counter.add(3)
+}
+
+fn append(values: &mut List<str>) void {
+    values.push("gamma")
+}
+
 fn main() i32 {
     let values: List<str> = ["alpha", "beta"]
+    let first: &str = &values[0]
+    let first_copy = CLONE_REF__(first)
     let copy = CLONE__(values)
-    LIST_PUSH__(copy, "gamma")
+    append(&mut copy)
+    let numbers: List<i32> = [39]
+    let number: &mut i32 = &mut numbers[0]
+    REF_SET__(number, 42)
     let counter = Counter(39)
-    counter.add(3)
+    update(&mut counter)
     let add = make_adder(2)
     let size = checked(copy) catch err {
         recover 0
     }
-    if counter.get() != 42 || add(40) != 42 || size != 3 || LIST_LEN__(values) != 2 {
+    if inspect(&counter) != 42 || add(40) != 42 || size != 3 || LIST_LEN__(&values) != 2 {
+        return 1
+    }
+    if first_copy != "alpha" || numbers[0] != 42 {
         return 1
     }
     DROP__(add)

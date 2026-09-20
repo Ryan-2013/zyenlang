@@ -69,6 +69,18 @@ class IRBorrow(IRExpr):
 
 
 @dataclass(frozen=True)
+class IRReferencePlace(IRExpr):
+    """The lvalue behind a stable reference, without cloning its pointee."""
+
+    reference: IRExpr
+
+
+@dataclass(frozen=True)
+class IRReferenceCoerce(IRExpr):
+    reference: IRExpr
+
+
+@dataclass(frozen=True)
 class IRReferenceValue(IRExpr):
     reference: IRExpr
 

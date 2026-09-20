@@ -443,7 +443,7 @@ def test_references_clone_and_mutate_without_ownership(tmp_path: Path) -> None:
     let value = 1
     let read: &i32 = &value
     let write: &mut i32 = &mut value
-    return 0
+    return CLONE_REF__(read)
 }
 """,
             "cannot mutably borrow `value` while another reference exists",
@@ -453,6 +453,7 @@ def test_references_clone_and_mutate_without_ownership(tmp_path: Path) -> None:
     let value = 1
     let write: &mut i32 = &mut value
     let read: &i32 = &value
+    REF_SET__(write, 2)
     return 0
 }
 """,
@@ -463,7 +464,8 @@ def test_references_clone_and_mutate_without_ownership(tmp_path: Path) -> None:
     let value = Box(1)
     let read: &Box<i32> = &value
     DROP__(value)
-    return 0
+    let copy = CLONE_REF__(read)
+    return copy.value
 }
 """,
             "cannot drop `value` while it is borrowed",
@@ -520,6 +522,294 @@ fn main() i32 { return 0 }
 )
 def test_reference_safety_diagnostics(source: str, message: str) -> None:
     with pytest.raises(CompileError, match=message):
+        Compiler().check_source(source)
+
+
+def test_class_references_dispatch_readonly_and_mutating_methods(tmp_path: Path) -> None:
+    result = run_source(
+        tmp_path,
+        """class Cache<T> {
+    private value: T
+    public init(value: T) { this.value = value }
+    public fn get() T { return CLONE__(this.value) }
+    public mut fn set(value: T) void { this.value = value }
+}
+
+fn inspect(cache: &Cache<i32>) i32 { return cache.get() }
+fn update(cache: &mut Cache<i32>) void { cache.set(42) }
+
+fn main() i32 {
+    let cache = Cache<i32>(10)
+    if inspect(&cache) != 10 { return 1 }
+    update(&mut cache)
+    return cache.get() - 42
+}
+""",
+        name="class_references",
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_list_references_are_zero_copy_readonly_and_explicitly_mutating(tmp_path: Path) -> None:
+    result = run_source(
+        tmp_path,
+        """fn count(values: &List<i32>) usize { return LIST_LEN__(values) }
+fn append(values: &mut List<i32>) void {
+    values.push(42)
+    LIST_PUSH__(values, 43)
+}
+
+fn main() i32 {
+    let values: List<i32> = [1]
+    let snapshot = values
+    if count(&values) != 1 { return 1 }
+    append(&mut values)
+    (&mut values).push(44)
+    LIST_PUSH__(&mut values, 45)
+    if values.len() != 5 { return 2 }
+    if snapshot.len() != 1 { return 3 }
+    return 0
+}
+""",
+        name="list_references",
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_list_element_references_write_and_pin_cow_storage(tmp_path: Path) -> None:
+    result = run_source(
+        tmp_path,
+        """class Bag {
+    public items: List<str> = []
+    public mut fn add(value: str) void { this.items.push(value) }
+}
+
+fn main() i32 {
+    let numbers: List<i32> = [10]
+    let write: &mut i32 = &mut numbers[0]
+    REF_SET__(write, 20)
+    if numbers[0] != 20 { return 1 }
+
+    let bag = Bag()
+    bag.add("old")
+    let alias = bag
+    let read: &str = &bag.items[0]
+    alias.add("new")
+    let old = CLONE_REF__(read)
+    if old != "old" { return 2 }
+    if bag.items[0] != "old" { return 3 }
+    if alias.items[0] != "old" { return 4 }
+    return 0
+}
+""",
+        name="list_element_references",
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_reference_loan_ends_after_last_statement_use(tmp_path: Path) -> None:
+    result = run_source(
+        tmp_path,
+        """fn main() i32 {
+    let value = 10
+    let read: &i32 = &value
+    let copied = CLONE_REF__(read)
+    let write: &mut i32 = &mut value
+    REF_SET__(write, 32)
+    return value + copied - 42
+}
+""",
+        name="reference_last_use",
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_field_borrows_track_disjoint_places(tmp_path: Path) -> None:
+    result = run_source(
+        tmp_path,
+        """struct Pair {
+    public left: i32
+    public right: i32
+}
+class Cell {
+    public value: i32 = 10
+}
+fn main() i32 {
+    let pair = Pair{left: 10, right: 0}
+    let left: &i32 = &pair.left
+    pair.right = 32
+    let cell = Cell()
+    let value: &mut i32 = &mut cell.value
+    REF_SET__(value, 42)
+    return CLONE_REF__(left) + pair.right + cell.value - 84
+}
+""",
+        name="field_borrows",
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_readonly_class_reference_rejects_mutating_method() -> None:
+    source = """class Counter {
+    public mut fn increment() void {}
+}
+fn bad(counter: &Counter) void { counter.increment() }
+fn main() i32 { return 0 }
+"""
+    with pytest.raises(CompileError, match="requires `&mut Counter`"):
+        Compiler().check_source(source)
+
+
+def test_mutable_list_element_reference_rejects_class_alias_path() -> None:
+    source = """class Values {
+    public items: List<i32> = [1]
+}
+fn main() i32 {
+    let values = Values()
+    let item: &mut i32 = &mut values.items[0]
+    return 0
+}
+"""
+    with pytest.raises(CompileError, match="cannot cross a class or reference alias"):
+        Compiler().check_source(source)
+
+    nested_source = """class Values {
+    public items: List<i32> = [1]
+}
+struct Holder {
+    public values: Values
+}
+fn main() i32 {
+    let holder = Holder{values: Values()}
+    let item: &mut i32 = &mut holder.values.items[0]
+    return 0
+}
+"""
+    with pytest.raises(CompileError, match="cannot cross a class or reference alias"):
+        Compiler().check_source(nested_source)
+
+
+def test_readonly_list_element_reference_works_through_list_parameter(tmp_path: Path) -> None:
+    result = run_source(
+        tmp_path,
+        """fn first(values: &List<i32>) i32 {
+    let item: &i32 = &values[0]
+    return CLONE_REF__(item)
+}
+fn main() i32 {
+    let values: List<i32> = [42]
+    return first(&values) - 42
+}
+""",
+        name="readonly_list_element_parameter",
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_mutable_list_element_reference_works_for_value_struct_field(tmp_path: Path) -> None:
+    result = run_source(
+        tmp_path,
+        """struct Values {
+    items: List<i32>
+}
+fn main() i32 {
+    let values = Values{items: [10]}
+    let item: &mut i32 = &mut values.items[0]
+    REF_SET__(item, 42)
+    return values.items[0] - 42
+}
+""",
+        name="mutable_struct_list_element",
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_mutable_class_reference_can_replace_handle(tmp_path: Path) -> None:
+    result = run_source(
+        tmp_path,
+        """class Cache {
+    public value: i32
+    public init(value: i32) { this.value = value }
+    public fn get() i32 { return this.value }
+}
+fn replace(cache: &mut Cache) void { REF_SET__(cache, Cache(42)) }
+fn main() i32 {
+    let cache = Cache(10)
+    replace(&mut cache)
+    return cache.get() - 42
+}
+""",
+        name="replace_class_handle",
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_list_element_borrow_can_recover_from_bounds_error(tmp_path: Path) -> None:
+    result = run_source(
+        tmp_path,
+        """fn main() i32 {
+    let values: List<i32> = [42]
+    (&values[9]) catch err {
+        if err.message != "List index out of range" { return 1 }
+        recover
+    }
+    return 0
+}
+""",
+        name="list_element_borrow_bounds",
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_mutable_reference_copy_is_rejected() -> None:
+    source = """fn main() i32 {
+    let value = 1
+    let first: &mut i32 = &mut value
+    let second: &mut i32 = first
+    return 0
+}
+"""
+    with pytest.raises(CompileError, match="mutable references cannot be copied"):
+        Compiler().check_source(source)
+
+
+def test_mutable_reference_can_be_temporarily_viewed_as_readonly(tmp_path: Path) -> None:
+    result = run_source(
+        tmp_path,
+        """fn read(value: &i32) i32 { return CLONE_REF__(value) }
+fn main() i32 {
+    let value = 10
+    let write: &mut i32 = &mut value
+    if read(write) != 10 { return 1 }
+    REF_SET__(write, 42)
+    return value - 42
+}
+""",
+        name="mutable_to_readonly_reference",
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_nested_class_field_borrow_requires_local_handle() -> None:
+    source = """class Child { public value: i32 = 1 }
+class Parent { public child: Child }
+fn main() i32 {
+    let parent = Parent()
+    let value: &i32 = &parent.child.value
+    return 0
+}
+"""
+    with pytest.raises(CompileError, match="nested class handle"):
         Compiler().check_source(source)
 
 

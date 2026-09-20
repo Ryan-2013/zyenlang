@@ -207,6 +207,10 @@ class CBackend:
                 expression(value.optional)
             elif isinstance(value, ir.IRBorrow):
                 expression(value.value)
+            elif isinstance(value, ir.IRReferencePlace):
+                expression(value.reference)
+            elif isinstance(value, ir.IRReferenceCoerce):
+                expression(value.reference)
             elif isinstance(value, ir.IRReferenceValue):
                 expression(value.reference)
             elif isinstance(value, ir.IRClosure):
@@ -325,6 +329,10 @@ class CBackend:
                 expression(value.optional)
             elif isinstance(value, ir.IRBorrow):
                 expression(value.value)
+            elif isinstance(value, ir.IRReferencePlace):
+                expression(value.reference)
+            elif isinstance(value, ir.IRReferenceCoerce):
+                expression(value.reference)
             elif isinstance(value, ir.IRReferenceValue):
                 expression(value.reference)
             elif isinstance(value, ir.IRClosure):
@@ -504,6 +512,24 @@ class CBackend:
                 self.type_lines.append("")
             elif isinstance(typ, ReferenceType):
                 self.emit_type_definition(typ.inner)
+                name = self.type_name(typ)
+                pointer = f"const {self.c_type(typ.inner)}*" if not typ.mutable else f"{self.c_type(typ.inner)}*"
+                self.type_lines.extend(
+                    [
+                        f"typedef struct {name} {{",
+                        f"    {pointer} data;",
+                        "    zy2_ArcControl* pin;",
+                        f"}} {name};",
+                        f"static inline ZY2_MAYBE_UNUSED {name} {name}_retain({name} value) {{",
+                        "    zy2_arc_retain(value.pin);",
+                        "    return value;",
+                        "}",
+                        f"static inline ZY2_MAYBE_UNUSED void {name}_release({name} value) {{",
+                        "    zy2_arc_release(value.pin);",
+                        "}",
+                        "",
+                    ]
+                )
             elif is_list(typ):
                 element = typ.args[0]
                 self.emit_type_definition(element)
@@ -860,6 +886,10 @@ class CBackend:
             lines.extend(self.emit_block(closure.body, 1, managed_params=managed_params))
             if closure.typ.return_type == VOID:
                 lines.append("    return;")
+            else:
+                lines.append(
+                    f"    return {self.zero_value(closure.typ.return_type)}; /* unreachable after verified returns */"
+                )
             lines.append("}")
             return lines
         finally:
@@ -882,6 +912,16 @@ class CBackend:
             elif function.return_type == VOID and function.throws:
                 result = self.result_type(function.return_type)
                 lines.append(f"    return ({result}){{ .ok = true }};")
+            elif function.throws:
+                result = self.result_type(function.return_type)
+                fallback = self.temp("unreachable_result")
+                lines.append(f"    {result} {fallback} = {{0}}; /* unreachable after verified returns */")
+                lines.append(f"    {fallback}.ok = true;")
+                lines.append(f"    return {fallback};")
+            else:
+                lines.append(
+                    f"    return {self.zero_value(function.return_type)}; /* unreachable after verified returns */"
+                )
             lines.append("}")
             return lines
         finally:
@@ -1250,11 +1290,47 @@ class CBackend:
                 raise ValueError("closure capture reached C generation outside a closure")
             return CExpr(f"__zy_env->{self.ident(expression.name)}", [])
         if isinstance(expression, ir.IRBorrow):
-            value = self.emit_expr(expression.value)
-            return CExpr(f"&({value.code})", value.prelude)
+            value = self.emit_place(expression.value)
+            return CExpr(
+                f"({self.c_type(expression.typ)}){{ .data = &({value.code}), .pin = NULL }}",
+                value.prelude,
+                owned=True,
+            )
+        if isinstance(expression, ir.IRReferencePlace):
+            reference = self.emit_expr(expression.reference)
+            if reference.owned:
+                raise ValueError("reference receiver must be stored in a stable local before use")
+            return CExpr(f"*(({reference.code}).data)", reference.prelude)
+        if isinstance(expression, ir.IRReferenceCoerce):
+            reference = self.emit_expr(expression.reference)
+            return CExpr(
+                f"({self.c_type(expression.typ)}){{ .data = ({reference.code}).data, .pin = ({reference.code}).pin }}",
+                reference.prelude,
+                owned=reference.owned,
+            )
         if isinstance(expression, ir.IRReferenceValue):
             reference = self.emit_expr(expression.reference)
-            return CExpr(f"*({reference.code})", reference.prelude)
+            prelude = list(reference.prelude)
+            reference_code = reference.code
+            if reference.owned:
+                reference_temp = self.temp("reference")
+                prelude.append(f"{self.c_type(expression.reference.typ)} {reference_temp} = {reference.code};")
+                reference_code = reference_temp
+            pointee = f"*(({reference_code}).data)"
+            if self.is_managed(expression.typ):
+                result = self.temp("referenced_value")
+                prelude.append(
+                    f"{self.c_type(expression.typ)} {result} = {self.retain_expr(pointee, expression.typ)};"
+                )
+                if reference.owned:
+                    prelude.append(self.release_stmt(reference_code, expression.reference.typ))
+                return CExpr(result, prelude, owned=True)
+            if reference.owned:
+                result = self.temp("referenced_value")
+                prelude.append(f"{self.c_type(expression.typ)} {result} = {pointee};")
+                prelude.append(self.release_stmt(reference_code, expression.reference.typ))
+                return CExpr(result, prelude)
+            return CExpr(pointee, prelude)
         if isinstance(expression, ir.IRUnary):
             operand = self.emit_expr(expression.operand)
             return CExpr(f"({expression.operator}{operand.code})", operand.prelude)
@@ -1734,10 +1810,10 @@ class CBackend:
             if self.is_managed(inner):
                 replacement = self.temp("reference_value")
                 prelude.append(f"{self.c_type(inner)} {replacement} = {self.retain_expr(args[1], inner)};")
-                prelude.append(self.release_stmt(f"*({args[0]})", inner))
-                prelude.append(f"*({args[0]}) = {replacement};")
+                prelude.append(self.release_stmt(f"*(({args[0]}).data)", inner))
+                prelude.append(f"*(({args[0]}).data) = {replacement};")
             else:
-                prelude.append(f"*({args[0]}) = {args[1]};")
+                prelude.append(f"*(({args[0]}).data) = {args[1]};")
             prelude.extend(owned_arg_releases)
             return CExpr("((void)0)", prelude)
         if expression.target == "__zy2_get_args":
@@ -1849,6 +1925,37 @@ class CBackend:
                     "} else {",
                     f"    {result}.ok = true;",
                     f"    {result}.value = {self.retain_expr(f'{list_name}_items({list_value})[{index_value}]', element_type)};",
+                    "}",
+                ]
+            )
+            prelude.extend(owned_arg_releases)
+            return self.finish_throwing_result(expression, result, prelude, propagate)
+        if expression.target in {"__zy2_list_borrow", "__zy2_list_borrow_mut"}:
+            list_value = self.temp("list_borrow_source")
+            index_value = self.temp("index")
+            result = self.temp("result")
+            source_name = f"zl_string_borrow({self.c_string(expression.span.source_name)})"
+            list_type = expression.args[0].typ
+            list_name = self.type_name(list_type)
+            reference_type = expression.typ
+            assert isinstance(reference_type, ReferenceType)
+            prelude.append(f"int32_t {index_value} = {args[1]};")
+            if expression.target == "__zy2_list_borrow_mut":
+                prelude.append(f"{list_name}_ensure_mutable(&({args[0]}), 0);")
+                list_code = args[0]
+            else:
+                prelude.append(f"{self.c_type(list_type)} {list_value} = {args[0]};")
+                list_code = list_value
+            prelude.extend(
+                [
+                    f"{self.result_type(reference_type)} {result} = {{0}};",
+                    f"if ({index_value} < 0 || (uintptr_t){index_value} >= {list_name}_len({list_code})) {{",
+                    f"    {result}.ok = false;",
+                    f"    {result}.error = (zy2_Error){{ .message = zl_string_borrow(\"List index out of range\"), .source_file = {source_name}, .line = {expression.span.line}, .column = {expression.span.column} }};",
+                    "} else {",
+                    f"    {result}.ok = true;",
+                    f"    {result}.value = ({self.c_type(reference_type)}){{ .data = &{list_name}_items({list_code})[{index_value}], .pin = ({list_code}).owner }};",
+                    f"    zy2_arc_retain({result}.value.pin);",
                     "}",
                 ]
             )
@@ -2156,8 +2263,7 @@ class CBackend:
             }
             return mapping[typ.name]
         if isinstance(typ, ReferenceType):
-            qualifier = "const " if not typ.mutable else ""
-            return f"{qualifier}{self.c_type(typ.inner)}*"
+            return self.type_name(typ)
         if typ in self.classes:
             return self.class_c_name(typ)
         if isinstance(typ, NamedType) and typ.name in self.structs:
@@ -2182,6 +2288,9 @@ class CBackend:
             return f"zy2_box_{self.type_slug(typ.args[0])}"
         if isinstance(typ, NamedType) and typ.name == "__Result":
             return f"zy2_result_{self.type_slug(typ.args[0])}"
+        if isinstance(typ, ReferenceType):
+            prefix = "mut_ref" if typ.mutable else "ref"
+            return f"zy2_{prefix}_{self.type_slug(typ.inner)}"
         if typ in self.classes:
             return self.class_c_name(typ)
         if isinstance(typ, NamedType) and typ.name in self.structs:
@@ -2216,7 +2325,7 @@ class CBackend:
         if isinstance(typ, FunctionType):
             return f"({self.c_type(typ)}){{0}}"
         if isinstance(typ, ReferenceType):
-            return "NULL"
+            return f"({self.c_type(typ)}){{0}}"
         if typ in self.classes:
             return f"({self.c_type(typ)}){{0}}"
         if isinstance(typ, PrimitiveType):
@@ -2224,7 +2333,7 @@ class CBackend:
         return f"({self.c_type(typ)}){{0}}"
 
     def is_managed(self, typ: Type, visiting: set[str] | None = None) -> bool:
-        if typ in {STR, ERROR} or is_box(typ) or is_list(typ) or isinstance(typ, FunctionType):
+        if typ in {STR, ERROR} or is_box(typ) or is_list(typ) or isinstance(typ, (FunctionType, ReferenceType)):
             return True
         if typ in self.classes:
             return True
@@ -2253,6 +2362,8 @@ class CBackend:
             return f"{self.type_name(typ)}_retain({code})"
         if isinstance(typ, FunctionType):
             return f"zl_fn_retain({code})"
+        if isinstance(typ, ReferenceType):
+            return f"{self.type_name(typ)}_retain({code})"
         if isinstance(typ, (OptionalType, TupleType)) and self.is_managed(typ):
             return f"{self.type_name(typ)}_retain({code})"
         if isinstance(typ, NamedType) and typ.name in self.structs and self.is_managed(typ):
@@ -2272,6 +2383,8 @@ class CBackend:
             return f"{self.type_name(typ)}_release({code});"
         if isinstance(typ, FunctionType):
             return f"zl_fn_release({code});"
+        if isinstance(typ, ReferenceType):
+            return f"{self.type_name(typ)}_release({code});"
         if isinstance(typ, (OptionalType, TupleType)) and self.is_managed(typ):
             return f"{self.type_name(typ)}_release({code});"
         if isinstance(typ, NamedType) and typ.name in self.structs and self.is_managed(typ):
@@ -2282,6 +2395,19 @@ class CBackend:
         if not self.is_managed(typ) or value.owned:
             return value.code
         return self.retain_expr(value.code, typ)
+
+    def emit_place(self, expression: ir.IRExpr) -> CExpr:
+        if isinstance(expression, ir.IRName):
+            return CExpr(self.ident(expression.name), [])
+        if isinstance(expression, ir.IRField):
+            receiver = self.emit_place(expression.receiver)
+            if expression.receiver.typ in self.classes:
+                return CExpr(
+                    f"({receiver.code}).data->{self.ident(expression.name)}",
+                    receiver.prelude,
+                )
+            return CExpr(f"({receiver.code}).{self.ident(expression.name)}", receiver.prelude)
+        raise ValueError(f"verified borrow does not contain a stable place: {type(expression).__name__}")
 
     def cleanup_lines(self, start: int, indent: int) -> list[str]:
         pad = "    " * indent

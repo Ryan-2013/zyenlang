@@ -108,6 +108,23 @@ assert.strictEqual(language.baseType('tools::Cache<i32>'), 'tools::Cache');
 assert.strictEqual(language.returnTypeFromDetail('fn get(path: str) Response throws Error'), 'Response');
 assert(inferred.functions.some((item) => item.name === 'main' && item.startLine === 2 && item.endLine === 9));
 
+const references = language.parseDocument(`class Bag {
+    public items: List<i32> = [1]
+}
+fn main() i32 {
+    let bag = Bag()
+    let values: List<i32> = [10]
+    let item = &values[0]
+    let write = &mut values[0]
+    let items = &bag.items
+    return 0
+}`, 'references.zy');
+assert.strictEqual(references.symbols.find((item) => item.name === 'item').type, '&i32');
+assert.strictEqual(references.symbols.find((item) => item.name === 'write').type, '&mut i32');
+assert.strictEqual(references.symbols.find((item) => item.kind === 'variable' && item.name === 'items').type, '&List<i32>');
+assert(language.SPECIAL_FORMS.some((item) => item.name === 'LIST_LEN__' && item.detail.includes('&List<T>')));
+assert(language.SPECIAL_FORMS.some((item) => item.name === 'LIST_PUSH__' && item.detail.includes('&mut List<T>')));
+
 const masked = language.parseDocument('fn main() i32 {\n    let value = 1 // value in comment\n    let text = "value in text"\n}', 'masked.zy');
 assert(masked.maskedLines[1].includes('let value'));
 assert(!masked.maskedLines[1].includes('value in comment'));

@@ -45,25 +45,25 @@ const SPECIAL_FORMS = [
   },
   {
     name: 'LIST_LEN__',
-    detail: 'LIST_LEN__(list: List<T>) usize',
+    detail: 'LIST_LEN__(list: List<T> | &List<T> | &mut List<T>) usize',
     snippet: 'LIST_LEN__(${1:list})',
-    documentation: 'Return the number of elements in a built-in List<T>.'
+    documentation: 'Return the number of elements without cloning List storage.'
   },
   {
     name: 'LIST_PUSH__',
-    detail: 'LIST_PUSH__(list: List<T>, value: T) void',
+    detail: 'LIST_PUSH__(list: List<T> | &mut List<T>, value: T) void',
     snippet: 'LIST_PUSH__(${1:list}, ${2:value})',
-    documentation: 'Append a strongly typed value to a local List<T> variable.'
+    documentation: 'Append to an owned List place or mutate the caller through &mut List<T>.'
   },
   {
     name: 'LIST_SET__',
-    detail: 'LIST_SET__(list: List<T>, index: i32, value: T) void throws Error',
+    detail: 'LIST_SET__(list: List<T> | &mut List<T>, index: i32, value: T) void throws Error',
     snippet: 'LIST_SET__(${1:list}, ${2:index}, ${3:value})',
     documentation: 'Replace a List<T> element with checked bounds.'
   },
   {
     name: 'LIST_GET__',
-    detail: 'LIST_GET__(list: List<T>, index: i32) T throws Error',
+    detail: 'LIST_GET__(list: List<T> | &List<T> | &mut List<T>, index: i32) T throws Error',
     snippet: 'LIST_GET__(${1:list}, ${2:index})',
     documentation: 'Read a checked List<T> element.'
   },
@@ -75,13 +75,13 @@ const SPECIAL_FORMS = [
   },
   {
     name: 'LIST_POP__',
-    detail: 'LIST_POP__(list: List<T>) T throws Error',
+    detail: 'LIST_POP__(list: List<T> | &mut List<T>) T throws Error',
     snippet: 'LIST_POP__(${1:list})',
     documentation: 'Remove and return the last List<T> element.'
   },
   {
     name: 'LIST_CLEAR__',
-    detail: 'LIST_CLEAR__(list: List<T>) void',
+    detail: 'LIST_CLEAR__(list: List<T> | &mut List<T>) void',
     snippet: 'LIST_CLEAR__(${1:list})',
     documentation: 'Clear a List<T> after copy-on-write detachment.'
   },
@@ -639,16 +639,33 @@ function inferExpressionType(expression, parsed, lineNumber = Number.MAX_SAFE_IN
   if (value === 'null') return 'null';
   const cast = value.match(/^\(([^()]+)\)\s*.+$/);
   if (cast) return cast[1].trim();
-  const borrow = value.match(/^&\s*(mut\s+)?([A-Za-z_]\w*)$/);
+  const borrow = value.match(/^&\s*(mut\s+)?(.+)$/);
   if (borrow) {
-    const source = [...parsed.symbols].reverse().find((item) => item.name === borrow[2] && item.line <= lineNumber);
-    return source?.type ? `&${borrow[1] ? 'mut ' : ''}${source.type}` : '';
+    const targetType = inferExpressionType(borrow[2], parsed, lineNumber);
+    return targetType ? `&${borrow[1] ? 'mut ' : ''}${targetType}` : '';
   }
   if (value.startsWith('[') && value.endsWith(']')) {
     const elements = splitTopLevel(value.slice(1, -1));
     if (!elements.length) return 'List';
     const elementTypes = elements.map((item) => inferExpressionType(item, parsed, lineNumber)).filter(Boolean);
     return elementTypes.length && elementTypes.every((item) => item === elementTypes[0]) ? `List<${elementTypes[0]}>` : 'List';
+  }
+  const indexed = value.match(/^(.+)\[[^\]]+\]$/);
+  if (indexed) {
+    const receiverType = normalizeType(inferExpressionType(indexed[1], parsed, lineNumber));
+    const list = receiverType.match(/^List\s*<(.+)>$/);
+    if (list) return list[1].trim();
+  }
+  const member = value.match(/^([A-Za-z_]\w*)\.([A-Za-z_]\w*)$/);
+  if (member) {
+    const receiver = [...parsed.symbols].reverse().find(
+      (item) => item.name === member[1] && item.line <= lineNumber
+    );
+    const container = receiver?.type ? baseType(receiver.type).split('::').pop() : '';
+    const field = [...parsed.symbols].reverse().find(
+      (item) => item.kind === 'field' && item.container === container && item.name === member[2]
+    );
+    if (field?.type) return field.type;
   }
   const call = value.match(/^((?:[A-Za-z_]\w*(?:::|\.))*[A-Za-z_]\w*)\s*\(/);
   if (call) {

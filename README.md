@@ -175,6 +175,17 @@ npm test
 npm run package
 ```
 
+Install or update the extension through VS Code's extension registry from the
+repository root:
+
+```powershell
+python tools/install_vscode_extension.py
+```
+
+The installer packages the extension when needed, installs the VSIX with the
+official `code` CLI, and verifies that VS Code registered the expected version.
+Reload every open VS Code window after updating.
+
 ## Security boundary
 
 `zy check` does not invoke the C compiler. `zy build` and `zy run` compile

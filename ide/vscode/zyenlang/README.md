@@ -62,3 +62,13 @@ In VS Code, choose **Extensions: Install from VSIX...** and select the packaged
 ```powershell
 code --install-extension zyenlang-0.3.2.vsix --force
 ```
+
+From a ZyenLang source checkout, the preferred command is:
+
+```powershell
+python tools/install_vscode_extension.py
+```
+
+It installs through VS Code's extension registry and verifies the registered
+version. Run **Developer: Reload Window** in every open VS Code window after an
+update; an existing extension host keeps the old JavaScript until reloaded.

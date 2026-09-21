@@ -2,22 +2,22 @@ import std::gui as gui
 import std::thread as thread
 
 fn main() i32 {
-    let window = gui::window("ZyenLang 0.3", 800, 480)
-    if window.open() != 0 {
+    let app = gui::application("ZyenLang 0.3", 800, 480)
+    if app.open() != 0 {
         return 1
     }
     let running: bool = true
     let frames: i32 = 0
     while running {
-        if window.begin_frame() != 0 {
+        if app.begin_frame() != 0 {
             break
         }
-        gui::text(40, 40, "Hello from ZyenLang 0.3", "#ffffff", 28)
-        gui::rect(40, 96, 240, 80, "#2f6fed")
-        if window.present() != 0 {
+        app.text(40, 40, "Hello from ZyenLang 0.3", "#ffffff", 28)
+        app.rect(40, 96, 240, 80, "#2f6fed")
+        if app.present() != 0 {
             break
         }
-        let event: str = window.next_event(0)
+        let event: str = app.next_event(0)
         if event == "quit" {
             running = false
         }
@@ -27,5 +27,5 @@ fn main() i32 {
         }
         thread::sleep_ms(16)
     }
-    return window.close()
+    return app.close()
 }

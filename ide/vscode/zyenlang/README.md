@@ -9,7 +9,7 @@ The official project-aware editor extension for ZyenLang 0.3.
 - inferred-type completion for locals such as `let app = gui::application(...)`,
   `let item = &values[0]`, and `let field = &object.value`
 - hover, parameter hints, Go to Definition, Go to Type Definition, safe local Rename, Find References, import/native-source links, outline, folding, and workspace symbols
-- inferred type hints for unannotated `let` declarations
+- inferred variable types on hover without always-visible editor annotations
 - live `zy check` diagnostics for the current unsaved buffer
 - migration quick fixes for old imports, module `.` access, and `FREE__()`
 - manifest target selection plus Run, Build, Test, Clean, Emit C, and Refresh Index commands

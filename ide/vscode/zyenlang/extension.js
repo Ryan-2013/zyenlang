@@ -158,6 +158,9 @@ class WorkspaceIndex {
     const pathParts = normalized.split('::');
     const canonicalType = language.baseType(pathParts.pop());
     const found = [];
+    for (const symbol of language.BUILTIN_MEMBERS[canonicalType] || []) {
+      found.push({ symbol: { ...symbol, visibility: 'public', builtin: true } });
+    }
     let sources = this.all();
     if (pathParts.length && document) {
       const parsed = this.parse(document);
@@ -176,7 +179,7 @@ class WorkspaceIndex {
         }
       }
     }
-    return found;
+    return [...new Map(found.map((item) => [item.symbol.name, item])).values()];
   }
 
   visibleLocal(parsed, name, line) {
@@ -659,16 +662,6 @@ function registerLanguageFeatures(context, index) {
       }
       if (commentStart >= 0 && document.lineCount - commentStart > 1) result.push(new vscode.FoldingRange(commentStart, document.lineCount - 1, vscode.FoldingRangeKind.Comment));
       return result;
-    }
-  }));
-
-  context.subscriptions.push(vscode.languages.registerInlayHintsProvider(selector, {
-    provideInlayHints(document, range) {
-      const parsed = index.parse(document);
-      return parsed.symbols
-        .filter((item) => item.kind === 'variable' && item.initializer && item.type && item.line >= range.start.line && item.line <= range.end.line)
-        .filter((item) => !document.lineAt(item.line).text.slice(item.endColumn).trimStart().startsWith(':'))
-        .map((item) => new vscode.InlayHint(new vscode.Position(item.line, item.endColumn), `: ${item.type}`, vscode.InlayHintKind.Type));
     }
   }));
 

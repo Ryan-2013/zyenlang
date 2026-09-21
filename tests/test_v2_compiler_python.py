@@ -2295,13 +2295,14 @@ fn clicked() void {
 }
 
 fn main() i32 {
-    let layout = gui::column(20, 30, 180, 44, 8)
+    let app = gui::application("Widgets", 640, 480)
+    let layout = app.column(20, 30, 180, 44, 8)
     let button = layout.button_at(2, "Save", clicked)
     let label = layout.label_at(0, "Settings")
     if button.y != 134 || label.y != 43 || !button.contains(30, 140) || button.contains(300, 140) {
         return 1
     }
-    let group = gui::button_group()
+    let group = app.button_group()
     group.add(button)
     if group.buttons.len() != 1 {
         return 2
@@ -2329,6 +2330,23 @@ fn main() i32 {
 
     assert result.returncode == 0, result.stdout + result.stderr
     assert result.stdout.splitlines() == ["clicked"]
+
+
+def test_v2_gui_widgets_require_an_application_owner(tmp_path: Path) -> None:
+    source = tmp_path / "legacy_gui_widget.zy"
+    source.write_text(
+        """import std::gui as gui
+
+fn main() i32 {
+    let title = gui::label(20, 20, "Detached")
+    return 0
+}
+""",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(CompileError, match=r"unknown function `gui::label`"):
+        Compiler().check_file(source)
 
 
 def test_v2_fstrings_format_typed_values_and_evaluate_once(tmp_path: Path) -> None:

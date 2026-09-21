@@ -170,19 +170,9 @@ const BUILTINS = {
   gui: [
     ['application', 'fn application(title: str, width: i32, height: i32) Application'],
     ['application_colored', 'fn application_colored(title: str, width: i32, height: i32, background: str) Application'],
-    ['window', 'fn window(title: str, width: i32, height: i32) Window'],
-    ['window_colored', 'fn window_colored(title: str, width: i32, height: i32, background: str) Window'],
-    ['panel', 'fn panel(x: i32, y: i32, width: i32, height: i32) Panel'],
-    ['label', 'fn label(x: i32, y: i32, value: str) Label'],
-    ['button', 'fn button(x: i32, y: i32, width: i32, height: i32, label: str, on_click: fn() void) Button'],
-    ['button_group', 'fn button_group() ButtonGroup'],
-    ['column', 'fn column(x: i32, y: i32, width: i32, row_height: i32, gap: i32) Column'],
-    ['pick_file', 'fn pick_file() i32'],
-    ['line', 'fn line(x1: i32, y1: i32, x2: i32, y2: i32, color: str, width: i32) i32'],
-    ['rect', 'fn rect(x: i32, y: i32, width: i32, height: i32, color: str) i32'],
-    ['circle', 'fn circle(x: i32, y: i32, radius: i32, color: str) i32'],
-    ['text', 'fn text(x: i32, y: i32, value: str, color: str, size: i32) i32'],
-    ['code_view', 'fn code_view(x: i32, y: i32, width: i32, height: i32, first_line: i32, line_height: i32, char_width: i32, size: i32, stamp: i32, lines: str) i32']
+    ['event_kind', 'fn event_kind(event: str) i32'],
+    ['event_x', 'fn event_x(event: str) i32'],
+    ['event_y', 'fn event_y(event: str) i32']
   ],
   error: [
     ['require', 'fn require(condition: bool, message: str) void throws Error']
@@ -196,6 +186,53 @@ const BUILTINS = {
 const BUILTIN_TYPES = {
   c_module: [
     ['Module', 'c_module::Module (template-dependent native module)']
+  ]
+};
+
+const BUILTIN_MEMBERS = {
+  Application: [
+    { name: 'open', kind: 'method', detail: 'mut fn open() i32', returnType: 'i32' },
+    { name: 'begin_frame', kind: 'method', detail: 'fn begin_frame() i32', returnType: 'i32' },
+    { name: 'present', kind: 'method', detail: 'fn present() i32', returnType: 'i32' },
+    { name: 'next_event', kind: 'method', detail: 'fn next_event(timeout_ms: i32) str', returnType: 'str' },
+    { name: 'close', kind: 'method', detail: 'mut fn close() i32', returnType: 'i32' },
+    { name: 'panel', kind: 'method', detail: 'fn panel(x: i32, y: i32, width: i32, height: i32) Panel', returnType: 'Panel' },
+    { name: 'label', kind: 'method', detail: 'fn label(x: i32, y: i32, value: str) Label', returnType: 'Label' },
+    { name: 'button', kind: 'method', detail: 'fn button(x: i32, y: i32, width: i32, height: i32, label: str, on_click: fn() void) Button', returnType: 'Button' },
+    { name: 'button_group', kind: 'method', detail: 'fn button_group() ButtonGroup', returnType: 'ButtonGroup' },
+    { name: 'column', kind: 'method', detail: 'fn column(x: i32, y: i32, width: i32, row_height: i32, gap: i32) Column', returnType: 'Column' },
+    { name: 'pick_file', kind: 'method', detail: 'fn pick_file() i32', returnType: 'i32' },
+    { name: 'line', kind: 'method', detail: 'fn line(x1: i32, y1: i32, x2: i32, y2: i32, color: str, width: i32) i32', returnType: 'i32' },
+    { name: 'rect', kind: 'method', detail: 'fn rect(x: i32, y: i32, width: i32, height: i32, color: str) i32', returnType: 'i32' },
+    { name: 'circle', kind: 'method', detail: 'fn circle(x: i32, y: i32, radius: i32, color: str) i32', returnType: 'i32' },
+    { name: 'text', kind: 'method', detail: 'fn text(x: i32, y: i32, value: str, color: str, size: i32) i32', returnType: 'i32' },
+    { name: 'code_view', kind: 'method', detail: 'fn code_view(x: i32, y: i32, width: i32, height: i32, first_line: i32, line_height: i32, char_width: i32, size: i32, stamp: i32, lines: str) i32', returnType: 'i32' },
+    { name: 'code_editor', kind: 'method', detail: 'fn code_editor(x: i32, y: i32, width: i32, height: i32, first_line: i32, line_height: i32, char_width: i32, size: i32, stamp: i32, lines: str, selection_start_line: i32, selection_start_column: i32, selection_end_line: i32, selection_end_column: i32) i32', returnType: 'i32' },
+    { name: 'completion', kind: 'method', detail: 'fn completion(x: i32, y: i32, width: i32, row_height: i32, size: i32, selected: i32, items: str) i32', returnType: 'i32' },
+    { name: 'event_kind', kind: 'method', detail: 'fn event_kind(event: str) i32', returnType: 'i32' },
+    { name: 'event_x', kind: 'method', detail: 'fn event_x(event: str) i32', returnType: 'i32' },
+    { name: 'event_y', kind: 'method', detail: 'fn event_y(event: str) i32', returnType: 'i32' }
+  ],
+  Panel: [
+    { name: 'draw', kind: 'method', detail: 'fn draw() i32', returnType: 'i32' }
+  ],
+  Label: [
+    { name: 'draw', kind: 'method', detail: 'fn draw() i32', returnType: 'i32' }
+  ],
+  Button: [
+    { name: 'contains', kind: 'method', detail: 'fn contains(x: i32, y: i32) bool', returnType: 'bool' },
+    { name: 'draw', kind: 'method', detail: 'fn draw() i32', returnType: 'i32' },
+    { name: 'handle', kind: 'method', detail: 'fn handle(event: str) bool', returnType: 'bool' }
+  ],
+  ButtonGroup: [
+    { name: 'add', kind: 'method', detail: 'mut fn add(button: Button) void', returnType: 'void' },
+    { name: 'draw', kind: 'method', detail: 'fn draw() i32 throws Error', returnType: 'i32' },
+    { name: 'handle', kind: 'method', detail: 'fn handle(event: str) bool throws Error', returnType: 'bool' }
+  ],
+  Column: [
+    { name: 'item_y', kind: 'method', detail: 'fn item_y(index: i32) i32', returnType: 'i32' },
+    { name: 'button_at', kind: 'method', detail: 'fn button_at(index: i32, label: str, on_click: fn() void) Button', returnType: 'Button' },
+    { name: 'label_at', kind: 'method', detail: 'fn label_at(index: i32, value: str) Label', returnType: 'Label' }
   ]
 };
 
@@ -672,6 +709,15 @@ function inferExpressionType(expression, parsed, lineNumber = Number.MAX_SAFE_IN
     const name = call[1].split(/::|\./).pop();
     const symbol = parsed.symbols.find((item) => item.name === name && ['function', 'method', 'native'].includes(item.kind));
     if (symbol) return symbol.returnType || returnTypeFromDetail(symbol.detail);
+    const memberCall = call[1].match(/^([A-Za-z_]\w*)\.([A-Za-z_]\w*)$/);
+    if (memberCall) {
+      const receiver = [...parsed.symbols].reverse().find(
+        (item) => item.name === memberCall[1] && item.line <= lineNumber
+      );
+      const receiverType = receiver?.type ? baseType(receiver.type).split('::').pop() : '';
+      const member = (BUILTIN_MEMBERS[receiverType] || []).find((item) => item.name === memberCall[2]);
+      if (member) return member.returnType || returnTypeFromDetail(member.detail);
+    }
     const imported = call[1].split('::');
     if (imported.length === 2) {
       const moduleImport = parsed.imports.find((item) => item.name === imported[0]);
@@ -688,6 +734,7 @@ function inferExpressionType(expression, parsed, lineNumber = Number.MAX_SAFE_IN
 
 module.exports = {
   BUILTINS,
+  BUILTIN_MEMBERS,
   BUILTIN_TYPES,
   KEYWORDS,
   SPECIAL_FORMS,

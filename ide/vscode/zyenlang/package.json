@@ -2,7 +2,7 @@
   "name": "zyenlang",
   "displayName": "ZyenLang",
   "description": "Project-aware language support for ZyenLang: completion, navigation, refactoring, diagnostics, run, build, and test.",
-  "version": "0.3.2",
+  "version": "0.3.3",
   "publisher": "zyenlang",
   "license": "MIT",
   "repository": {
@@ -167,7 +167,9 @@
         },
         "zyenlang.run.arguments": {
           "type": "array",
-          "items": { "type": "string" },
+          "items": {
+            "type": "string"
+          },
           "default": [],
           "description": "Arguments passed to the ZyenLang program after `zy run --`."
         }

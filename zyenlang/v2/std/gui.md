@@ -4,10 +4,11 @@
 native GUI runtime. It does not start Python or Tk. Windows, Linux, and macOS
 use the same ZyenLang API.
 
-The ARC classes are `Window`, `Application`, `Panel`, `Label`, `Button`,
-`ButtonGroup`, and `Column`. Create them through module functions such as
-`window`, `application`, `panel`, `label`, `button`, `button_group`, and
-`column`; call behavior with instance `.` methods.
+The ARC classes are `Application`, `Panel`, `Label`, `Button`, `ButtonGroup`,
+and `Column`. Create an `Application` through the module, then
+create widgets through that Application. Each widget retains its target
+Application, so `draw()` has an explicit owner instead of relying on an
+implicit current window.
 
 ```zy
 import std::gui as gui
@@ -19,7 +20,7 @@ fn clicked() void {
 
 fn main() i32 {
     let app = gui::application_colored("Widgets", 800, 480, "#20201F")
-    let button = gui::button(40, 48, 220, 48, "Save", clicked)
+    let button = app.button(40, 48, 220, 48, "Save", clicked)
     if app.open() != 0 { return 1 }
 
     while true {
@@ -34,12 +35,16 @@ fn main() i32 {
 }
 ```
 
-Drawing module functions are `line`, `rect`, `circle`, `text`, `code_view`,
+Application drawing methods are `line`, `rect`, `circle`, `text`, `code_view`,
 `code_editor`, and `completion`. Colors use `#RRGGBB`. Event parsing helpers
 are `event_kind`, `event_x`, and `event_y`. Button callbacks have type
 `fn() void`; closures use the same `ZL_Function` representation as all other
 function values.
 
-Window ownership is process-global in the current backend. Close it explicitly
-or register `defer app.close()` after a successful open. Platform display and
-graphics runtime requirements still apply.
+Raylib supports one process window in the current backend. A second
+Application cannot open concurrently. Close the Application explicitly or
+register `defer app.close()` after a successful open. Widgets tied to a closed
+Application return an error from drawing instead of drawing into another
+window. The final Application reference also closes an open native session
+during ARC cleanup. Platform display and graphics runtime requirements still
+apply.

@@ -113,13 +113,15 @@ production application server.
 The cross-platform native backend exposes ARC classes:
 
 ```text
-Window Application Panel Label Button ButtonGroup Column
+Application Panel Label Button ButtonGroup Column
 ```
 
-Module factories include `window`, `window_colored`, `application`,
-`application_colored`, `panel`, `label`, `button`, `button_group`, and
-`column`. Drawing functions include `line`, `rect`, `circle`, `text`,
-`code_view`, `code_editor`, and `completion`.
+Module factories create `application` or `application_colored`. Widgets are
+created through that Application with `app.panel`, `app.label`, `app.button`,
+`app.button_group`, and `app.column`, which binds every widget to its drawing
+target. Raw drawing is likewise explicit through `app.line`, `app.rect`,
+`app.circle`, `app.text`, `app.code_view`, `app.code_editor`, and
+`app.completion`.
 
 ```zy
 import std::gui as gui
@@ -129,7 +131,7 @@ fn clicked() void {
 
 fn main() i32 {
     let app = gui::application_colored("Demo", 800, 480, "#20201F")
-    let button = gui::button(24, 24, 180, 44, "Run", clicked)
+    let button = app.button(24, 24, 180, 44, "Run", clicked)
     if app.open() != 0 { return 1 }
     while true {
         if app.begin_frame() != 0 { break }
@@ -144,7 +146,9 @@ fn main() i32 {
 ```
 
 The backend is available on Windows, Linux, and macOS when the platform GUI
-runtime requirements are present. It is not a Windows-only API.
+runtime requirements are present. It is not a Windows-only API. The current
+Raylib backend supports one open Application per process. Application cleanup
+closes an open native session when the final ARC reference is released.
 
 ## `std::editor`
 

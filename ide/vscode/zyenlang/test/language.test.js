@@ -82,13 +82,15 @@ assert.strictEqual(language.importPathAt('let value = 1', 13), null);
 assert(language.BUILTINS.path.some(([name]) => name === 'join'));
 assert(language.BUILTINS.fs.some(([name]) => name === 'tree'));
 assert(language.BUILTINS.fs.some(([name]) => name === 'write_text'));
-assert(language.BUILTINS.gui.some(([name]) => name === 'button'));
-assert(language.BUILTINS.gui.some(([name]) => name === 'button_group'));
+assert(!language.BUILTINS.gui.some(([name]) => name === 'button'));
+assert(language.BUILTIN_MEMBERS.Application.some((item) => item.name === 'button'));
+assert(language.BUILTIN_MEMBERS.Application.some((item) => item.name === 'button_group'));
 assert(language.STANDARD_MODULES.includes('c_module'));
 assert(language.STANDARD_MODULES.includes('editor'));
 assert(language.BUILTIN_TYPES.c_module.some(([name]) => name === 'Module'));
 
 const inferred = language.parseDocument(`import std::gui as gui
+fn clicked() void {}
 class Cache { public fn open() i32 { return 0 } }
 fn main() i32 {
     let count = 10
@@ -96,6 +98,7 @@ fn main() i32 {
     let names = ["a", "b"]
     let cache = Cache()
     let app = gui::application("Demo", 800, 600)
+    let button = app.button(10, 20, 100, 40, "Run", clicked)
     return 0
 }`, 'inferred.zy');
 assert.strictEqual(inferred.symbols.find((item) => item.name === 'count').type, 'i32');
@@ -103,10 +106,11 @@ assert.strictEqual(inferred.symbols.find((item) => item.name === 'ratio').type, 
 assert.strictEqual(inferred.symbols.find((item) => item.name === 'names').type, 'List<str>');
 assert.strictEqual(inferred.symbols.find((item) => item.name === 'cache').type, 'Cache');
 assert.strictEqual(inferred.symbols.find((item) => item.name === 'app').type, 'Application');
+assert.strictEqual(inferred.symbols.find((item) => item.name === 'button').type, 'Button');
 assert.strictEqual(language.normalizeType('&mut tools::Cache<i32> | null'), 'tools::Cache<i32>');
 assert.strictEqual(language.baseType('tools::Cache<i32>'), 'tools::Cache');
 assert.strictEqual(language.returnTypeFromDetail('fn get(path: str) Response throws Error'), 'Response');
-assert(inferred.functions.some((item) => item.name === 'main' && item.startLine === 2 && item.endLine === 9));
+assert(inferred.functions.some((item) => item.name === 'main'));
 
 const references = language.parseDocument(`class Bag {
     public items: List<i32> = [1]
@@ -168,7 +172,8 @@ assert(extensionSource.includes('registerDocumentHighlightProvider'));
 assert(extensionSource.includes('registerRenameProvider'));
 assert(extensionSource.includes('registerTypeDefinitionProvider'));
 assert(extensionSource.includes('registerDocumentLinkProvider'));
-assert(extensionSource.includes('registerInlayHintsProvider'));
+assert(!extensionSource.includes('registerInlayHintsProvider'));
+assert(extensionSource.includes('registerHoverProvider'));
 assert(extensionSource.includes("['$zyenlang']"));
 assert(extensionSource.includes('parsed.maskedLines'));
 

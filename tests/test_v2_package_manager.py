@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 import shutil
 import subprocess
@@ -73,14 +74,14 @@ def test_package_manager_path_dependency_compiles_from_locked_cache(
 ) -> None:
     monkeypatch.setenv("ZYEN_HOME", str(tmp_path / "home"))
     library = tmp_path / "math-lib"
-    write_package(library, "math-lib", {"math.zy": "public fn answer() i32 {\n    return 42\n}\n"})
+    write_package(library, "math-lib", {"lib.zy": "public fn answer() i32 {\n    return 42\n}\n"})
     project = tmp_path / "app"
     init_project(project, "app")
 
     lock = add_dependency(project, library)
     source = project / "src" / "main.zy"
     source.write_text(
-        "import math_lib::math as math\n\nfn main() i32 {\n    return math::answer() - 42\n}\n",
+        "import math_lib\n\nfn main() i32 {\n    return math_lib::answer() - 42\n}\n",
         encoding="utf-8",
     )
     executable = tmp_path / ("compiled-app.exe" if sys.platform.startswith("win") else "compiled-app")
@@ -92,7 +93,7 @@ def test_package_manager_path_dependency_compiles_from_locked_cache(
     assert cache_path(lock.packages[0].digest).is_dir()
     assert read_lock(project).root_dependencies == ("math_lib",)
 
-    (library / "src" / "math.zy").write_text("public fn answer() i32 { return 7 }\n", encoding="utf-8")
+    (library / "src" / "lib.zy").write_text("public fn answer() i32 { return 7 }\n", encoding="utf-8")
     assert Compiler().check_file(source)
 
 
@@ -231,6 +232,29 @@ def test_project_cli_initializes_and_reports_metadata(tmp_path: Path, capsys: py
     assert '"name": "sample"' in output
 
 
+def test_pip_style_cli_installs_lists_shows_and_uninstalls(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setenv("ZYEN_HOME", str(tmp_path / "home"))
+    library = tmp_path / "requests"
+    write_package(library, "requests", {"lib.zy": "public fn version() str { return \"0.1.0\" }\n"})
+    project = tmp_path / "app"
+    init_project(project, "app")
+
+    assert cli_main(["install", str(library), "--project", str(project)]) == 0
+    assert cli_main(["list", "--project", str(project)]) == 0
+    assert cli_main(["show", "requests", "--project", str(project)]) == 0
+
+    output = capsys.readouterr().out
+    assert "installed requests 0.1.0 as requests" in output
+    assert "requests\trequests\t0.1.0\tpath (direct)" in output
+    assert "Name: requests" in output
+    assert "Alias: requests" in output
+
+    assert cli_main(["uninstall", "requests", "--project", str(project)]) == 0
+    assert load_manifest(project).dependencies == {}
+
+
 def test_failed_add_restores_the_original_manifest(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("ZYEN_HOME", str(tmp_path / "home"))
     project = tmp_path / "app"
@@ -294,7 +318,7 @@ def test_exact_revision_git_dependency_is_locked_and_reproducible(
     lock = add_git_dependency(project, "remote_math", str(repository), commit)
     source = project / "src" / "main.zy"
     source.write_text(
-        "import remote_math::lib as math\nfn main() i32 {\n    return math::answer() - 42\n}\n",
+        "import remote_math\nfn main() i32 {\n    return remote_math::answer() - 42\n}\n",
         encoding="utf-8",
     )
     executable = tmp_path / ("git-app.exe" if sys.platform.startswith("win") else "git-app")
@@ -308,6 +332,38 @@ def test_exact_revision_git_dependency_is_locked_and_reproducible(
     shutil.rmtree(cache_path(lock.packages[0].digest))
     reproduced = install_project(project, locked=True)
     assert reproduced.packages[0].revision == commit
+
+    pip_project = tmp_path / "pip-app"
+    init_project(pip_project, "pip-app")
+    assert cli_main(["install", f"git+{repository}@{commit}", "--project", str(pip_project)]) == 0
+    pip_lock = read_lock(pip_project)
+    assert pip_lock.root_dependencies == ("remote_math",)
+    assert pip_lock.packages[0].revision == commit
+
+    registry_path = tmp_path / "registry.json"
+    registry_path.write_text(
+        json.dumps(
+            {
+                "schema": 1,
+                "packages": {
+                    "remote-math": {
+                        "latest": "0.1.0",
+                        "versions": {
+                            "0.1.0": {"git": str(repository), "rev": commit},
+                        },
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("ZYEN_REGISTRY", str(registry_path))
+    registry_project = tmp_path / "registry-app"
+    init_project(registry_project, "registry-app")
+    assert cli_main(["install", "remote-math==0.1.0", "--project", str(registry_project)]) == 0
+    registry_lock = read_lock(registry_project)
+    assert registry_lock.root_dependencies == ("remote_math",)
+    assert registry_lock.packages[0].source == str(repository)
 
 
 @pytest.mark.parametrize("revision", ["main", "v1.0.0", "deadbeef", "a" * 41])

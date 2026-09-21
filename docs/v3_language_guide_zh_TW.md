@@ -27,12 +27,15 @@ fn main() i32 {
 import std::io as io
 import crate::model as model
 import utils::text as text
+import requests
 ```
 
 - `std::` 從標準庫解析。
 - `crate::net::http` 對應目前專案的 `src/net/http.zy`。
 - 其他 root 必須是 `zyproject.toml` 宣告的 dependency alias。
-- import 必須有 alias；alias 是 namespace，不是值。
+- `import requests` 會載入該套件 manifest 的 entry，預設為 `src/lib.zy`。
+- `as alias` 可省略；省略時使用路徑最後一段作為 namespace。
+- alias 是 namespace，不是值。
 - 不支援字串路徑、`<std/...>`、wildcard、selective import 或 re-export。
 
 ```zy

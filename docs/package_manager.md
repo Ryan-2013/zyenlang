@@ -20,6 +20,7 @@ zy init .
 name = "zy-math"
 version = "0.3.0"
 zyen = ">=0.3.0"
+entry = "src/lib.zy"
 
 [build]
 default-target = "ffi"
@@ -56,12 +57,16 @@ key.
 ## Dependencies
 
 ```powershell
-zy add ../utils
-zy add utils --path ../utils
-zy add net --git https://example.com/net.git --rev COMMIT_SHA
-zy remove net
-zy fetch
-zy fetch --locked
+zy install requests
+zy install requests==0.1.0
+zy install ../utils
+zy install ../utils --alias helpers
+zy install git+https://example.com/net.git@FULL_COMMIT_SHA
+zy install
+zy install --locked
+zy list
+zy show net
+zy uninstall net
 ```
 
 Path dependencies are resolved to canonical package roots. Git dependencies
@@ -69,18 +74,37 @@ require a full 40- or 64-hex commit in `rev`; branches, abbreviated hashes, and
 floating tags are rejected. `zy.lock` records source, resolved commit,
 content digest, and transitive edges.
 
-`zy fetch` resolves and writes the lock. `--locked` verifies without changing
-it. Build/check refuse missing, stale, or digest-mismatched locked packages.
+`zy install` without a package resolves the manifest and writes the lock.
+`--locked` installs exactly the existing lock without changing it. `zy add`,
+`zy remove`, and `zy fetch` remain compatible lower-level aliases. Build/check
+refuse missing, stale, or digest-mismatched locked packages.
 
-Imports use the dependency alias:
+The registry index maps a package name and exact version to a Git URL and full
+commit. `name` selects the index's `latest` version; `name==version` selects an
+exact entry. The package manifest name and version must match the index before
+the dependency is accepted. Set `ZYEN_REGISTRY` to an HTTPS URL or local JSON
+index for a private/offline registry. The default index is
+`registry/index.json` in the official ZyenLang repository.
+
+Registry schema 1 intentionally has no dependency install hook, floating Git
+reference, semver range solver, account, or upload protocol. Publishing is an
+index review that points at an immutable source commit; the resolved source is
+then content-addressed in `zy.lock`.
+
+Importing the dependency alias alone loads its `[package] entry`, which defaults
+to `src/lib.zy`. `as` is optional and changes only the local namespace:
 
 ```zy
+import utils
+import net as http
 import utils::math as math
+
+let version = utils::version()
 let result = math::add(20, 22)
 ```
 
-A package can import only its own direct dependencies. Import paths are kept
-inside the locked package's `src/` root.
+A package can import only its own direct dependencies. Entry and submodule
+paths are kept inside the locked package root.
 
 ## Build commands
 

@@ -126,7 +126,8 @@ entry = "src/main.zy"
 
 ```text
 zy new / zy init
-zy add / zy remove / zy fetch
+zy install / zy uninstall / zy list / zy show
+zy add / zy remove / zy fetch  (lower-level aliases)
 zy check [target]
 zy build [target] [--release] [--out-dir PATH]
 zy run [target] -- [program arguments]
@@ -136,9 +137,12 @@ zy metadata
 zy emit --file source.zy --kind c --out-dir PATH
 ```
 
-Dependencies can be local paths or Git repositories pinned to an exact
-revision. `zy.lock` records commits, digests, and the transitive graph. There
-is no registry or build-script hook in 0.3.
+Dependencies can come from registry names, local paths, or Git repositories
+pinned to an exact revision. `zy install package`, `zy install package==0.1.0`,
+`zy install ../package`, and `zy install git+URL@FULL_COMMIT` share one package
+workflow. `zy.lock` records commits, digests, and the transitive graph. The
+first registry protocol is an immutable Git index; it has no install hooks or
+automatic code execution.
 
 Targets can be `bin`, `c-source`, `staticlib`, or `sharedlib`. A `c-source`
 target emits C11 source, a C/C++ compatible header, the runtime/native source

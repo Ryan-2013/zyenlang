@@ -93,7 +93,7 @@
       "patterns": [
         {
           "name": "meta.import.zyen",
-          "match": "\\b(import)\\s+((?:std|crate|[A-Za-z_]\\w*)(?:::[A-Za-z_]\\w*)+)\\s+(as)\\s+([A-Za-z_]\\w*)",
+          "match": "\\b(import)\\s+([A-Za-z_]\\w*(?:::[A-Za-z_]\\w*)*)(?:\\s+(as)\\s+([A-Za-z_]\\w*))?",
           "captures": {
             "1": { "name": "keyword.control.import.zyen" },
             "2": { "name": "string.unquoted.import-path.zyen" },

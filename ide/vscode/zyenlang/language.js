@@ -404,10 +404,10 @@ function parseDocument(text, uri = '') {
     const line = maskedLines[lineNumber];
     const trimmed = line.trim();
 
-    const importMatch = original.match(/^\s*import\s+((?:std|crate|[A-Za-z_]\w*)(?:::[A-Za-z_]\w*)+)\s+as\s+([A-Za-z_]\w*)/);
+    const importMatch = original.match(/^\s*import\s+([A-Za-z_]\w*(?:::[A-Za-z_]\w*)*)(?:\s+as\s+([A-Za-z_]\w*))?/);
     if (importMatch) {
       const path = importMatch[1];
-      const alias = importMatch[2];
+      const alias = importMatch[2] || path.split('::').pop();
       const column = original.indexOf(alias);
       const symbol = {
         name: alias,

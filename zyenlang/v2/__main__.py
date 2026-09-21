@@ -12,17 +12,21 @@ from .compiler import Compiler, CompilerOptions
 from .diagnostics import CompileError, render_error
 from .modules import MAX_SOURCE_BYTES
 from .package_manager import (
+    GIT_COMMIT_RE,
     GitDependency,
     PackageError,
     PathDependency,
     add_dependency,
     add_dependency_spec,
+    checkout_git,
     fetch_project,
     find_project_root,
     init_project,
     load_manifest,
     new_project,
     remove_dependency,
+    resolve_registry_dependency,
+    validate_lock,
 )
 from zyenlang.cli.doctor import add_subparser as add_doctor_subparser, handle as handle_doctor
 
@@ -75,6 +79,28 @@ def make_parser() -> argparse.ArgumentParser:
     remove = commands.add_parser("remove", help="remove a direct dependency")
     _project_option(remove)
     remove.add_argument("dependency")
+
+    install = commands.add_parser("install", help="install a registry, local, or pinned Git package")
+    _project_option(install)
+    install.add_argument(
+        "dependency",
+        nargs="?",
+        help="name[==version], local path, Git URL with --rev, or git+URL@COMMIT",
+    )
+    install.add_argument("--alias", help="local import name; defaults to the package name")
+    install.add_argument("--rev", help="exact 40- or 64-hex Git commit")
+    install.add_argument("--locked", action="store_true", help="install exactly from the existing zy.lock")
+
+    uninstall = commands.add_parser("uninstall", help="remove an installed direct package")
+    _project_option(uninstall)
+    uninstall.add_argument("dependency")
+
+    package_list = commands.add_parser("list", help="list installed packages")
+    _project_option(package_list)
+
+    show = commands.add_parser("show", help="show one installed package")
+    _project_option(show)
+    show.add_argument("dependency")
 
     fetch = commands.add_parser("fetch", help="resolve dependencies and update zy.lock")
     _project_option(fetch)
@@ -146,6 +172,119 @@ def _handle_add(args: argparse.Namespace) -> int:
     lock = add_dependency(root, path)
     dependency = load_manifest(path.resolve())
     print(f"added {dependency.name} from {path.resolve()} ({len(lock.packages)} locked package(s))")
+    return 0
+
+
+def _git_requirement(value: str, revision: str | None) -> tuple[str, str] | None:
+    source = value
+    selected_revision = revision
+    if value.startswith("git+"):
+        source, separator, embedded_revision = value[4:].rpartition("@")
+        if not separator:
+            raise PackageError("Git package syntax is `git+URL@FULL_COMMIT`")
+        if selected_revision is not None and selected_revision != embedded_revision:
+            raise PackageError("Git revision was provided twice with different values")
+        selected_revision = embedded_revision
+    elif revision is None:
+        return None
+    if selected_revision is None or not GIT_COMMIT_RE.fullmatch(selected_revision):
+        raise PackageError("Git packages require an exact 40- or 64-hex commit")
+    return source, selected_revision
+
+
+def _handle_install(args: argparse.Namespace) -> int:
+    root = _root(args.project)
+    if args.dependency is None:
+        if args.alias or args.rev:
+            raise PackageError("--alias and --rev require a package argument")
+        lock = fetch_project(root, locked=args.locked)
+        print(f"installed {len(lock.packages)} package(s)")
+        return 0
+    if args.locked:
+        raise PackageError("--locked cannot be combined with a package argument")
+
+    git_requirement = _git_requirement(args.dependency, args.rev)
+    if git_requirement is not None:
+        source, revision = git_requirement
+        checkout, commit = checkout_git(GitDependency(source, revision), locked_commit=revision)
+        manifest = load_manifest(checkout)
+        alias = args.alias or manifest.name.replace("-", "_")
+        lock = add_dependency_spec(root, alias, GitDependency(source, commit))
+        print(f"installed {manifest.name} {manifest.version} as {alias} ({len(lock.packages)} locked package(s))")
+        return 0
+
+    supplied_path = Path(args.dependency)
+    path_like = (
+        supplied_path.is_absolute()
+        or args.dependency.startswith((".", "/", "\\"))
+        or "/" in args.dependency
+        or "\\" in args.dependency
+    )
+    path = supplied_path if supplied_path.is_absolute() else Path.cwd() / supplied_path
+    if path_like:
+        if not path.is_dir():
+            raise PackageError(f"local package path not found: {path.resolve()}")
+        manifest = load_manifest(path.resolve())
+        alias = args.alias or manifest.name.replace("-", "_")
+        lock = add_dependency(root, path, alias)
+        print(f"installed {manifest.name} {manifest.version} as {alias} ({len(lock.packages)} locked package(s))")
+        return 0
+
+    registry = resolve_registry_dependency(args.dependency)
+    checkout, commit = checkout_git(
+        GitDependency(registry.git, registry.rev),
+        locked_commit=registry.rev,
+    )
+    manifest = load_manifest(checkout)
+    if manifest.name != registry.name or manifest.version != registry.version:
+        raise PackageError(
+            f"registry expected `{registry.name}` {registry.version}, "
+            f"but the package declares `{manifest.name}` {manifest.version}"
+        )
+    alias = args.alias or manifest.name.replace("-", "_")
+    lock = add_dependency_spec(root, alias, GitDependency(registry.git, commit))
+    print(f"installed {manifest.name} {manifest.version} as {alias} ({len(lock.packages)} locked package(s))")
+    return 0
+
+
+def _handle_list(args: argparse.Namespace) -> int:
+    root = _root(args.project)
+    manifest = load_manifest(root)
+    lock = validate_lock(root)
+    records = lock.by_name()
+    if not records:
+        print("No packages installed.")
+        return 0
+    print("ALIAS\tPACKAGE\tVERSION\tSOURCE")
+    for name in sorted(records):
+        package = records[name]
+        direct = "direct" if name in manifest.dependencies else "transitive"
+        print(f"{name}\t{package.package_name}\t{package.version}\t{package.source_type} ({direct})")
+    return 0
+
+
+def _handle_show(args: argparse.Namespace) -> int:
+    root = _root(args.project)
+    lock = validate_lock(root)
+    package = next(
+        (
+            item
+            for item in lock.packages
+            if item.name == args.dependency or item.package_name == args.dependency
+        ),
+        None,
+    )
+    if package is None:
+        raise PackageError(f"package `{args.dependency}` is not installed")
+    print(f"Name: {package.package_name}")
+    print(f"Alias: {package.name}")
+    print(f"Version: {package.version}")
+    print(f"Source: {package.source_type} {package.source}")
+    if package.revision:
+        print(f"Revision: {package.revision}")
+    print(f"Digest: {package.digest}")
+    dependencies = ", ".join(package.dependencies) if package.dependencies else "<none>"
+    print(f"Dependencies: {dependencies}")
     return 0
 
 
@@ -221,6 +360,16 @@ def main(argv: list[str] | None = None) -> int:
             lock = remove_dependency(_root(args.project), args.dependency)
             print(f"removed {args.dependency} ({len(lock.packages)} locked package(s))")
             return 0
+        if args.command == "install":
+            return _handle_install(args)
+        if args.command == "uninstall":
+            lock = remove_dependency(_root(args.project), args.dependency)
+            print(f"uninstalled {args.dependency} ({len(lock.packages)} locked package(s))")
+            return 0
+        if args.command == "list":
+            return _handle_list(args)
+        if args.command == "show":
+            return _handle_show(args)
         if args.command == "fetch":
             lock = fetch_project(_root(args.project), locked=args.locked)
             print(f"fetched {len(lock.packages)} package(s)")

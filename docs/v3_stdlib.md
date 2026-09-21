@@ -150,6 +150,11 @@ runtime requirements are present. It is not a Windows-only API. The current
 Raylib backend supports one open Application per process. Application cleanup
 closes an open native session when the final ARC reference is released.
 
+The GUI source API is backend-neutral. Raylib is the current compatibility
+implementation; SDL3 plus SDL_GPU is the planned native backend for stronger
+windowing, IME, input, and future game-engine rendering without forcing raw
+OpenGL into the language API.
+
 ## `std::editor`
 
 Provides the native text-buffer operations used by the example editor:

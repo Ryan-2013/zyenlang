@@ -11,6 +11,7 @@ import stat
 import subprocess
 import tempfile
 from typing import Any, TypeAlias
+from urllib.request import Request, urlopen
 
 try:
     import tomllib
@@ -25,6 +26,9 @@ MAX_MANIFEST_BYTES = 1024 * 1024
 MAX_PACKAGE_FILES = 10_000
 MAX_PACKAGE_BYTES = 256 * 1024 * 1024
 MAX_LOCK_PACKAGES = 1024
+MAX_REGISTRY_BYTES = 1024 * 1024
+REGISTRY_SCHEMA = 1
+DEFAULT_REGISTRY_URL = "https://raw.githubusercontent.com/Ryan-2013/zyenlang/main/registry/index.json"
 PACKAGE_NAME_RE = re.compile(r"^[a-z][a-z0-9]*(?:[-_][a-z0-9]+)*$")
 ALIAS_RE = re.compile(r"^[a-z][a-z0-9_]*$")
 TARGET_NAME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_-]*$")
@@ -143,6 +147,14 @@ class LockFile:
         return {package.name: package for package in self.packages}
 
 
+@dataclass(frozen=True)
+class RegistryDependency:
+    name: str
+    version: str
+    git: str
+    rev: str
+
+
 def zyen_home() -> Path:
     configured = os.environ.get("ZYEN_HOME")
     return Path(configured).expanduser().resolve() if configured else Path.home() / ".zyen"
@@ -158,6 +170,71 @@ def git_cache_root() -> Path:
 
 def cache_path(digest: str) -> Path:
     return package_cache_root() / digest
+
+
+def _registry_bytes(source: str) -> bytes:
+    path = Path(source).expanduser()
+    if path.is_file():
+        if path.stat().st_size > MAX_REGISTRY_BYTES:
+            raise PackageError(f"registry index exceeds the {MAX_REGISTRY_BYTES}-byte safety limit")
+        return path.read_bytes()
+    if not source.startswith("https://"):
+        raise PackageError("registry must be an HTTPS URL or a local index file")
+    try:
+        request = Request(source, headers={"User-Agent": "ZyenLang/0.3 package-manager"})
+        with urlopen(request, timeout=10) as response:
+            final_url = response.geturl()
+            if not final_url.startswith("https://"):
+                raise PackageError("registry redirected to a non-HTTPS URL")
+            value = response.read(MAX_REGISTRY_BYTES + 1)
+    except PackageError:
+        raise
+    except OSError as exc:
+        raise PackageError(f"cannot read package registry: {exc}") from exc
+    if len(value) > MAX_REGISTRY_BYTES:
+        raise PackageError(f"registry index exceeds the {MAX_REGISTRY_BYTES}-byte safety limit")
+    return value
+
+
+def resolve_registry_dependency(requirement: str, source: str | None = None) -> RegistryDependency:
+    name, separator, requested_version = requirement.partition("==")
+    if (
+        not PACKAGE_NAME_RE.fullmatch(name)
+        or (separator and not SEMVER_RE.fullmatch(requested_version))
+        or "==" in requested_version
+    ):
+        raise PackageError("package requirement must be `name` or `name==version`")
+    selected_version = requested_version if separator else None
+    registry_source = source or os.environ.get("ZYEN_REGISTRY") or DEFAULT_REGISTRY_URL
+    raw = _registry_bytes(registry_source)
+    try:
+        data = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise PackageError(f"invalid registry index: {exc}") from exc
+    if not isinstance(data, dict) or data.get("schema") != REGISTRY_SCHEMA:
+        raise PackageError(f"registry index must use schema {REGISTRY_SCHEMA}")
+    packages = data.get("packages")
+    if not isinstance(packages, dict):
+        raise PackageError("registry index packages must be an object")
+    package = packages.get(name)
+    if not isinstance(package, dict):
+        raise PackageError(f"package `{name}` was not found in the registry")
+    versions = package.get("versions")
+    if not isinstance(versions, dict):
+        raise PackageError(f"registry package `{name}` has no versions")
+    version = selected_version or package.get("latest")
+    if not isinstance(version, str) or not SEMVER_RE.fullmatch(version):
+        raise PackageError(f"registry package `{name}` has an invalid latest version")
+    selected = versions.get(version)
+    if not isinstance(selected, dict):
+        raise PackageError(f"package `{name}` has no version `{version}`")
+    git = selected.get("git")
+    rev = selected.get("rev")
+    if not isinstance(git, str) or not _valid_git_source(git):
+        raise PackageError(f"registry package `{name}` version `{version}` has an invalid Git source")
+    if not isinstance(rev, str) or not GIT_COMMIT_RE.fullmatch(rev):
+        raise PackageError(f"registry package `{name}` version `{version}` must pin a full Git commit")
+    return RegistryDependency(name, version, git, rev)
 
 
 def _load_toml(path: Path) -> dict[str, Any]:
@@ -443,6 +520,11 @@ def _run_git(arguments: list[str], *, cwd: Path | None = None, capture: bool = F
 
 
 def checkout_git(spec: GitDependency, *, locked_commit: str | None = None) -> tuple[Path, str]:
+    if not _valid_git_source(spec.git):
+        raise PackageError("invalid Git URL; use HTTPS, SSH, scp syntax, or an absolute local path")
+    revision = locked_commit or spec.rev
+    if not GIT_COMMIT_RE.fullmatch(revision):
+        raise PackageError("Git rev must be a full 40- or 64-hex commit")
     identity = hashlib.sha256(f"{spec.git}\0{locked_commit or spec.rev}".encode("utf-8")).hexdigest()
     destination = git_cache_root() / identity
     marker = destination / ".zyen-commit"
@@ -454,7 +536,6 @@ def checkout_git(spec: GitDependency, *, locked_commit: str | None = None) -> tu
     temporary = Path(tempfile.mkdtemp(prefix=".checkout-", dir=git_cache_root()))
     try:
         _run_git(["clone", "--no-checkout", "--filter=blob:none", "--", spec.git, str(temporary)])
-        revision = locked_commit or spec.rev
         _run_git(["checkout", "--detach", revision], cwd=temporary)
         commit = _run_git(["rev-parse", "HEAD"], cwd=temporary, capture=True)
         if locked_commit is not None and commit != locked_commit:

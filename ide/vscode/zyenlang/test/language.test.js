@@ -49,6 +49,13 @@ assert(parsed.symbols.some((item) => item.kind === 'variable' && item.name === '
 assert(parsed.symbols.some((item) => item.kind === 'variable' && item.name === 'number' && item.type === 'i32'));
 assert(parsed.symbols.some((item) => item.kind === 'variable' && item.name === 'text' && item.type === 'str'));
 
+const shortImports = language.parseDocument('import std::io\nimport requests\nimport requests::client as http', 'imports.zy');
+assert.deepStrictEqual(shortImports.imports.map((item) => [item.name, item.path]), [
+  ['io', 'std::io'],
+  ['requests', 'requests'],
+  ['http', 'requests::client']
+]);
+
 assert.deepStrictEqual(language.wordAt('return counter.add(number)', 16), { value: 'add', start: 15, end: 18 });
 assert.deepStrictEqual(language.qualifierAt('    io::pr', 10), { qualifier: 'io', separator: '::', prefix: 'pr' });
 assert.deepStrictEqual(language.qualifierAt('    counter.ad', 14), { qualifier: 'counter', separator: '.', prefix: 'ad' });

@@ -48,3 +48,15 @@ Application return an error from drawing instead of drawing into another
 window. The final Application reference also closes an open native session
 during ARC cleanup. Platform display and graphics runtime requirements still
 apply.
+
+## Backend direction
+
+The public API does not expose Raylib handles or types. Raylib remains the
+current compatibility backend, but it is not the long-term API contract. The
+next backend target is SDL3 for windows, input, text input/IME, and audio, with
+SDL_GPU for rendering. This keeps Direct3D 12, Vulkan, and Metal available
+without making raw OpenGL part of ZyenLang source semantics.
+
+Dear ImGui may be used behind the native boundary for optional engine and
+debug tooling. ZyenLang applications continue to use the retained
+`Application`/widget API, so changing the backend does not rewrite user code.

@@ -122,7 +122,8 @@ class Parser:
     def parse_import(self, start: SourceSpan) -> ast.ImportDef:
         if self.at("<") or self.at("STRING"):
             raise CompileError(
-                "ZyenLang 0.3 imports use `import std::module as alias` or `import crate::module as alias`",
+                "ZyenLang 0.3 imports use `import std::module`, `import crate::module`, "
+                "or an installed package name; append `as alias` only when renaming",
                 self.current.span,
                 self.source_name,
             )
@@ -144,10 +145,11 @@ class Parser:
         parts = [self.expect("IDENT", "import expects a module path such as `std::io`").value]
         while self.match("::"):
             parts.append(self.expect("IDENT", "expected a module name after `::`").value)
-        if len(parts) < 2:
-            raise CompileError("import paths require a root and module name", start, self.source_name)
-        self.expect("AS", "ZyenLang 0.3 imports require `as alias`")
-        alias = self.expect("IDENT", "expected an import alias").value
+        if len(parts) < 2 and parts[0] in {"std", "crate"}:
+            raise CompileError(f"`{parts[0]}` imports require a module name", start, self.source_name)
+        alias = parts[-1]
+        if self.match("AS"):
+            alias = self.expect("IDENT", "expected an import alias").value
         return ast.ImportDef("::".join(parts), alias, False, start)
 
     def parse_import_path_part(self, message: str) -> str:

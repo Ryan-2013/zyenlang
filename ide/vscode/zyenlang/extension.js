@@ -321,8 +321,13 @@ function registerLanguageFeatures(context, index) {
         const roots = ['std', 'crate', ...[...(currentProject?.dependencies.keys() || [])]];
         return roots.filter((item) => item.startsWith(importRoot.prefix)).map((name) => {
           const item = new vscode.CompletionItem(name, vscode.CompletionItemKind.Module);
-          item.insertText = `${name}::`;
-          item.command = { command: 'editor.action.triggerSuggest', title: 'Continue module path' };
+          if (name === 'std' || name === 'crate') {
+            item.insertText = `${name}::`;
+            item.command = { command: 'editor.action.triggerSuggest', title: 'Continue module path' };
+          } else {
+            item.insertText = name;
+            item.detail = `Installed package entry: import ${name}`;
+          }
           return item;
         });
       }

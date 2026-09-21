@@ -19,6 +19,10 @@
 #include <dirent.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+#include <unistd.h>
+#ifdef __APPLE__
+#include <mach-o/dyld.h>
+#endif
 #endif
 
 #define ZY2_FS_ERROR_SIZE 1024u
@@ -105,7 +109,6 @@ static bool zy2_fs_buffer_append(zy2_fs_buffer* buffer, const char* value, size_
     return true;
 }
 
-#ifndef _WIN32
 static char* zy2_fs_duplicate(const char* value) {
     size_t length;
     char* result;
@@ -119,7 +122,6 @@ static char* zy2_fs_duplicate(const char* value) {
     memcpy(result, value, length + 1u);
     return result;
 }
-#endif
 
 static bool zy2_fs_is_separator(char value) {
     return value == '/' || value == '\\';
@@ -233,6 +235,113 @@ static FILE* zy2_fs_open_file(const char* path, const char* mode) {
     return fopen(path, mode);
 }
 #endif
+
+static bool zy2_fs_is_absolute(const char* path) {
+    if (!path || !path[0]) return false;
+#ifdef _WIN32
+    return zy2_fs_is_separator(path[0])
+        || (((path[0] >= 'A' && path[0] <= 'Z') || (path[0] >= 'a' && path[0] <= 'z'))
+            && path[1] == ':' && zy2_fs_is_separator(path[2]));
+#else
+    return path[0] == '/';
+#endif
+}
+
+static char* zy2_fs_executable_path(void) {
+#ifdef _WIN32
+    const DWORD capacity = 32768u;
+    wchar_t* wide = (wchar_t*)malloc((size_t)capacity * sizeof(wchar_t));
+    DWORD length;
+    char* result;
+    if (!wide) {
+        zy2_fs_set_message("filesystem operation ran out of memory");
+        return NULL;
+    }
+    length = GetModuleFileNameW(NULL, wide, capacity);
+    if (length == 0u || length >= capacity) {
+        free(wide);
+        zy2_fs_set_message("cannot determine the executable path");
+        return NULL;
+    }
+    wide[length] = L'\0';
+    result = zy2_fs_wide_to_utf8(wide);
+    free(wide);
+    return result;
+#elif defined(__APPLE__)
+    uint32_t size = 0u;
+    char* result;
+    (void)_NSGetExecutablePath(NULL, &size);
+    if (size == 0u) {
+        zy2_fs_set_message("cannot determine the executable path");
+        return NULL;
+    }
+    result = (char*)malloc((size_t)size);
+    if (!result) {
+        zy2_fs_set_message("filesystem operation ran out of memory");
+        return NULL;
+    }
+    if (_NSGetExecutablePath(result, &size) != 0) {
+        free(result);
+        zy2_fs_set_message("cannot determine the executable path");
+        return NULL;
+    }
+    return result;
+#else
+    size_t capacity = 256u;
+    while (capacity <= 1024u * 1024u) {
+        char* result = (char*)malloc(capacity);
+        ssize_t length;
+        if (!result) {
+            zy2_fs_set_message("filesystem operation ran out of memory");
+            return NULL;
+        }
+        length = readlink("/proc/self/exe", result, capacity - 1u);
+        if (length >= 0 && (size_t)length < capacity - 1u) {
+            result[length] = '\0';
+            return result;
+        }
+        free(result);
+        if (length < 0) break;
+        capacity *= 2u;
+    }
+    zy2_fs_set_message("cannot determine the executable path");
+    return NULL;
+#endif
+}
+
+static char* zy2_fs_executable_dir(void) {
+    char* result = zy2_fs_executable_path();
+    char* cursor;
+    char* separator = NULL;
+    if (!result) return NULL;
+    for (cursor = result; *cursor; ++cursor) {
+        if (zy2_fs_is_separator(*cursor)) separator = cursor;
+    }
+    if (!separator) {
+        free(result);
+        zy2_fs_set_message("executable path has no parent directory");
+        return NULL;
+    }
+#ifdef _WIN32
+    if (separator == result + 2 && result[1] == ':') separator[1] = '\0';
+    else
+#endif
+    if (separator == result) separator[1] = '\0';
+    else *separator = '\0';
+    return result;
+}
+
+static char* zy2_fs_resolve_path(const char* path) {
+    char* directory;
+    char* result;
+    zy2_fs_clear_error();
+    if (!path || !path[0] || zy2_fs_is_absolute(path)) return zy2_fs_duplicate(path ? path : "");
+    directory = zy2_fs_executable_dir();
+    if (!directory) return NULL;
+    result = zy2_fs_join(directory, path);
+    free(directory);
+    return result;
+}
 
 static FILE* zy2_fs_open_read(const char* path) {
 #ifdef _WIN32
@@ -585,19 +694,39 @@ static const char* zy2_fs_error_raw(void) {
 }
 
 ZL_String zy2_fs_read_text(ZL_String path) {
-    return zl_string_copy(zy2_fs_read_text_raw(zl_string_data(path)));
+    char* resolved = zy2_fs_resolve_path(zl_string_data(path));
+    ZL_String result;
+    if (!resolved) return zl_string_copy("");
+    result = zl_string_copy(zy2_fs_read_text_raw(resolved));
+    free(resolved);
+    return result;
 }
 
 int32_t zy2_fs_write_text(ZL_String path, ZL_String value) {
-    return zy2_fs_write_text_raw(zl_string_data(path), zl_string_data(value));
+    char* resolved = zy2_fs_resolve_path(zl_string_data(path));
+    int32_t result;
+    if (!resolved) return -1;
+    result = zy2_fs_write_text_raw(resolved, zl_string_data(value));
+    free(resolved);
+    return result;
 }
 
 int32_t zy2_fs_append_text(ZL_String path, ZL_String value) {
-    return zy2_fs_append_text_raw(zl_string_data(path), zl_string_data(value));
+    char* resolved = zy2_fs_resolve_path(zl_string_data(path));
+    int32_t result;
+    if (!resolved) return -1;
+    result = zy2_fs_append_text_raw(resolved, zl_string_data(value));
+    free(resolved);
+    return result;
 }
 
 ZL_String zy2_fs_tree(ZL_String path) {
-    return zl_string_copy(zy2_fs_tree_raw(zl_string_data(path)));
+    char* resolved = zy2_fs_resolve_path(zl_string_data(path));
+    ZL_String result;
+    if (!resolved) return zl_string_copy("");
+    result = zl_string_copy(zy2_fs_tree_raw(resolved));
+    free(resolved);
+    return result;
 }
 
 ZL_String zy2_fs_error(void) {

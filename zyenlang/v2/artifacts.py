@@ -448,7 +448,7 @@ class ArtifactBuilder:
         result = self.build(target.name, out_dir=out_dir)
         return subprocess.run(
             [str(result.primary), *program_args],
-            cwd=self.manifest.root,
+            cwd=result.primary.parent,
             check=False,
         ).returncode
 

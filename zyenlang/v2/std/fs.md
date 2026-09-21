@@ -25,6 +25,9 @@ fn main() i32 {
 - `append_text(path: str, value: str) i32 throws Error` appends to a file.
 - `tree(path: str) str throws Error` creates a sorted ASCII directory tree.
 
+Relative paths are resolved from the running executable's directory, not the
+shell working directory or source directory. Absolute paths remain unchanged.
+
 `tree` does not follow symbolic links or Windows reparse-point directories, so
 a link cycle cannot recursively trap the process. It limits traversal to 256
 levels and output to 16 MiB. File paths use Unicode APIs on Windows.

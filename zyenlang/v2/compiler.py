@@ -109,6 +109,6 @@ class Compiler:
             )
             return subprocess.run(
                 [str(exe_path), *program_args],
-                cwd=path.resolve().parent,
+                cwd=exe_path.parent,
                 check=False,
             ).returncode

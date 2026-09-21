@@ -66,8 +66,8 @@ tree(path: str) str throws Error
 
 Text files are UTF-8. `tree` returns a deterministic printable directory tree
 and reports inaccessible paths through `Error`.
-Relative paths used by `zy run` resolve from the project root. Single-file and
-test execution resolves them from the entry `.zy` file's directory.
+Relative paths resolve from the running executable's directory, independent of
+the shell working directory. This applies to read, write, append, and tree.
 
 ## `std::thread`
 

@@ -108,10 +108,12 @@ fn main() i32 {
     assert result.stdout.strip() == "hello from args"
 
 
-def test_v2_project_run_uses_project_root_as_working_directory(tmp_path: Path) -> None:
+def test_v2_project_run_resolves_relative_fs_from_executable_directory(tmp_path: Path) -> None:
     project = tmp_path / "relative-fs"
     init_project(project, "relative-fs")
-    (project / "message.txt").write_text("from project root", encoding="utf-8")
+    executable_dir = project / "target" / "debug" / "app"
+    executable_dir.mkdir(parents=True)
+    (executable_dir / "message.txt").write_text("beside executable", encoding="utf-8")
     (project / "src" / "main.zy").write_text(
         """import std::fs as fs
 import std::io as io
@@ -137,13 +139,12 @@ fn main() i32 {
     )
 
     assert result.returncode == 0, result.stdout + result.stderr
-    assert result.stdout.strip() == "from project root"
+    assert result.stdout.strip() == "beside executable"
 
 
-def test_v2_single_file_run_uses_source_directory(tmp_path: Path) -> None:
-    source_dir = tmp_path / "single"
+def test_v2_built_executable_resolves_relative_fs_independent_of_cwd(tmp_path: Path) -> None:
+    source_dir = tmp_path / "source"
     source_dir.mkdir()
-    (source_dir / "message.txt").write_text("beside source", encoding="utf-8")
     source = source_dir / "main.zy"
     source.write_text(
         """import std::fs as fs
@@ -152,7 +153,10 @@ fn main() i32 {
     let value = fs::read_text("message.txt") catch err {
         recover ""
     }
-    if value == "beside source" {
+    let status = fs::write_text("result.txt", value) catch err {
+        recover -1
+    }
+    if value == "beside executable" && status == 0 {
         return 0
     }
     return 1
@@ -161,7 +165,17 @@ fn main() i32 {
         encoding="utf-8",
     )
 
-    assert Compiler().run_file(source) == 0
+    executable_dir = tmp_path / "build"
+    executable_dir.mkdir()
+    executable = executable_dir / ("reader.exe" if sys.platform.startswith("win") else "reader")
+    (executable_dir / "message.txt").write_text("beside executable", encoding="utf-8")
+    Compiler().build_file(source, executable)
+
+    result = subprocess.run([str(executable)], cwd=source_dir, check=False)
+
+    assert result.returncode == 0
+    assert (executable_dir / "result.txt").read_text(encoding="utf-8") == "beside executable"
+    assert not (source_dir / "result.txt").exists()
 
 
 def test_v2_fs_reports_missing_paths_as_language_errors(tmp_path: Path) -> None:

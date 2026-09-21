@@ -22,10 +22,10 @@ def test_v2_fs_module_reads_writes_appends_and_builds_a_tree(tmp_path: Path) -> 
 
 fn main() i32 {
     let args: List<str> = GET_ARGS__()
-    let root: str = args[0] catch err {
+    let root: str = args[1] catch err {
         recover ""
     }
-    let output: str = args[1] catch err {
+    let output: str = args[2] catch err {
         recover ""
     }
     let rendered: str = fs::tree(root) catch err {
@@ -87,7 +87,7 @@ def test_v2_run_passes_program_arguments_after_separator(tmp_path: Path) -> None
 
 fn main() i32 {
     let args: List<str> = GET_ARGS__()
-    let value: str = args[0] catch err {
+    let value: str = args[1] catch err {
         recover "missing"
     }
     io::print(value)
@@ -106,6 +106,62 @@ fn main() i32 {
 
     assert result.returncode == 0, result.stdout + result.stderr
     assert result.stdout.strip() == "hello from args"
+
+
+def test_v2_project_run_uses_project_root_as_working_directory(tmp_path: Path) -> None:
+    project = tmp_path / "relative-fs"
+    init_project(project, "relative-fs")
+    (project / "message.txt").write_text("from project root", encoding="utf-8")
+    (project / "src" / "main.zy").write_text(
+        """import std::fs as fs
+import std::io as io
+
+fn main() i32 {
+    let value = fs::read_text("message.txt") catch err {
+        io::eprint(err.message)
+        recover ""
+    }
+    io::print(value)
+    return 0
+}
+""",
+        encoding="utf-8",
+    )
+
+    result = subprocess.run(
+        [sys.executable, "-m", "zyenlang.v2", "run", "--project", str(project)],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert result.stdout.strip() == "from project root"
+
+
+def test_v2_single_file_run_uses_source_directory(tmp_path: Path) -> None:
+    source_dir = tmp_path / "single"
+    source_dir.mkdir()
+    (source_dir / "message.txt").write_text("beside source", encoding="utf-8")
+    source = source_dir / "main.zy"
+    source.write_text(
+        """import std::fs as fs
+
+fn main() i32 {
+    let value = fs::read_text("message.txt") catch err {
+        recover ""
+    }
+    if value == "beside source" {
+        return 0
+    }
+    return 1
+}
+""",
+        encoding="utf-8",
+    )
+
+    assert Compiler().run_file(source) == 0
 
 
 def test_v2_fs_reports_missing_paths_as_language_errors(tmp_path: Path) -> None:

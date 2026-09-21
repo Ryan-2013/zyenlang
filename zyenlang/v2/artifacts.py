@@ -446,7 +446,11 @@ class ArtifactBuilder:
         if target.kind != "bin":
             raise PackageError(f"target `{target.name}` is `{target.kind}`; only bin targets can run")
         result = self.build(target.name, out_dir=out_dir)
-        return subprocess.run([str(result.primary), *program_args], check=False).returncode
+        return subprocess.run(
+            [str(result.primary), *program_args],
+            cwd=self.manifest.root,
+            check=False,
+        ).returncode
 
     def metadata(self) -> dict[str, Any]:
         _ensure_lock(self.manifest)

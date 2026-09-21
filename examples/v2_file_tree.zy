@@ -5,17 +5,17 @@ fn main() i32 {
     let args: List<str> = GET_ARGS__()
     let target_folder: str = "."
     let out_file: str = ""
-    if LIST_LEN__(args) > 0 {
-        target_folder = args[0] catch err {
+    if LIST_LEN__(args) > 1 {
+        target_folder = args[1] catch err {
             recover "."
         }
     }
     if target_folder == "--help" || target_folder == "-h" {
-        io::print("usage: zy run examples/v2_file_tree.zy -- [folder] [output.txt]")
+        io::print("usage: zy run file-tree -- [folder] [output.txt]")
         return 0
     }
-    if LIST_LEN__(args) > 1 {
-        out_file = args[1] catch err {
+    if LIST_LEN__(args) > 2 {
+        out_file = args[2] catch err {
             recover ""
         }
     }

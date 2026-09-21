@@ -45,6 +45,7 @@ executable(value: str) str
 ```
 
 These wrappers normalize values from `GET_ARGS__()` and `GET_EXE__()`.
+`GET_ARGS__()[0]` is the program path and user arguments begin at index `1`.
 
 ## `std::path`
 
@@ -65,6 +66,8 @@ tree(path: str) str throws Error
 
 Text files are UTF-8. `tree` returns a deterministic printable directory tree
 and reports inaccessible paths through `Error`.
+Relative paths used by `zy run` resolve from the project root. Single-file and
+test execution resolves them from the entry `.zy` file's directory.
 
 ## `std::thread`
 

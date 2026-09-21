@@ -1260,7 +1260,7 @@ fn main() i32 {
 
     let arguments = GET_ARGS__()
     LIST_PUSH__(arguments, "local")
-    if arguments.len() != 2 {
+    if arguments.len() != 3 {
         return 6
     }
 
@@ -1929,7 +1929,10 @@ import std::process as process
 fn main() i32 {
     let args = process::args(GET_ARGS__())
     let executable = process::executable(GET_EXE__())
-    if list::length(args) == 2 && executable != "" {
+    let program = args[0] catch err {
+        recover ""
+    }
+    if list::length(args) == 3 && executable != "" && program == executable {
         return 0
     }
     return 1
@@ -1955,7 +1958,7 @@ def test_v2_list_get_is_typed_and_reads_process_arguments(tmp_path: Path) -> Non
     source.write_text(
         """fn main() i32 {
     let args: List<str> = GET_ARGS__()
-    let first: str = args.get(0) catch err {
+    let first: str = args.get(1) catch err {
         recover "missing"
     }
     if first == "alpha" {

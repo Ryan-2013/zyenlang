@@ -1821,9 +1821,9 @@ class CBackend:
             result = self.temp("process_args")
             index = self.temp("arg_index")
             prelude.append(
-                f"{list_name} {result} = {list_name}_new((uintptr_t)(zy2_process_argc > 1 ? zy2_process_argc - 1 : 0));"
+                f"{list_name} {result} = {list_name}_new((uintptr_t)(zy2_process_argc > 0 ? zy2_process_argc : 0));"
             )
-            prelude.append(f"for (int {index} = 1; {index} < zy2_process_argc; ++{index}) {{")
+            prelude.append(f"for (int {index} = 0; {index} < zy2_process_argc; ++{index}) {{")
             prelude.append(
                 f"    {list_name}_push_copy(&{result}, zl_string_borrow(zy2_process_argv[{index}]));"
             )

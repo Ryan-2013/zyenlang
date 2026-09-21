@@ -392,5 +392,6 @@ STR_TO_LIST__/LEN__/BYTE_LEN__/GET__/SLICE__
 PRINT_CMD__(text, "#RRGGBB") -> void
 ```
 
-`GET_ARGS__()` 與 `GET_EXE__()` 只能在 `main` 使用。`FILE__()` 可在任何 function
+`GET_ARGS__()` 與 `GET_EXE__()` 只能在 `main` 使用。`GET_ARGS__()[0]` 是程式自身
+路徑，使用者傳入的參數從索引 `1` 開始；`GET_EXE__()` 等同索引 `0`。`FILE__()` 可在任何 function
 使用，結果是寫下它的 `.zy` module 絕對路徑。

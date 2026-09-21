@@ -107,4 +107,8 @@ class Compiler:
                 cflags=program.native_cflags,
                 ldflags=program.native_ldflags,
             )
-            return subprocess.run([str(exe_path), *program_args], check=False).returncode
+            return subprocess.run(
+                [str(exe_path), *program_args],
+                cwd=path.resolve().parent,
+                check=False,
+            ).returncode

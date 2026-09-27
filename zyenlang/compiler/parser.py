@@ -690,14 +690,34 @@ class Parser:
 
         start = self.current.span
         value = self.parse_expression()
+        assignment_type = None
+        if isinstance(value, ast.TupleExpr) and self.match(":"):
+            assignment_type = self.parse_type()
+            if not isinstance(assignment_type, ast.TupleTypeNode):
+                raise CompileError(
+                    "destructuring assignment requires a tuple type annotation",
+                    assignment_type.span,
+                    self.source_name,
+                )
         if assignment := self.match("=", "+=", "-=", "*=", "/=", "%="):
-            if not isinstance(value, (ast.NameExpr, ast.FieldExpr)):
+            if isinstance(value, ast.TupleExpr):
+                if assignment.kind != "=":
+                    raise CompileError("destructuring assignment supports only `=`", assignment.span, self.source_name)
+                if len(value.items) < 2 or not all(isinstance(item, ast.NameExpr) for item in value.items):
+                    raise CompileError(
+                        "destructuring assignment targets must be local variables",
+                        value.span,
+                        self.source_name,
+                    )
+            elif not isinstance(value, (ast.NameExpr, ast.FieldExpr)):
                 raise CompileError("assignment target must be a local or struct field", value.span, self.source_name)
             assigned = self.parse_expression()
             if assignment.kind != "=":
                 assigned = ast.BinaryExpr(value.span, value, assignment.kind[0], assigned)
             self.require_statement_end()
-            return ast.AssignStmt(start, value, assigned)
+            return ast.AssignStmt(start, value, assigned, assignment_type)
+        if assignment_type is not None:
+            raise CompileError("destructuring type annotation must be followed by `=`", start, self.source_name)
         self.require_statement_end()
         return ast.ExprStmt(start, value)
 
@@ -724,7 +744,9 @@ class Parser:
 
     def parse_let(self, start: SourceSpan) -> ast.LetStmt:
         bindings: list[ast.Binding] = []
+        destructuring = False
         if self.match("("):
+            destructuring = True
             self.skip_newlines()
             while not self.at(")"):
                 bindings.append(self.parse_binding())
@@ -738,6 +760,31 @@ class Parser:
         else:
             bindings.append(self.parse_binding())
         self.skip_newlines()
+        if destructuring and self.match(":"):
+            shared_type = self.parse_type()
+            if not isinstance(shared_type, ast.TupleTypeNode):
+                raise CompileError(
+                    "destructuring declarations require a tuple type annotation",
+                    shared_type.span,
+                    self.source_name,
+                )
+            if len(shared_type.items) != len(bindings):
+                raise CompileError(
+                    f"destructuring annotation has {len(shared_type.items)} types for {len(bindings)} bindings",
+                    shared_type.span,
+                    self.source_name,
+                )
+            if any(binding.type_node is not None for binding in bindings):
+                raise CompileError(
+                    "use either per-binding types or one tuple type after the bindings, not both",
+                    shared_type.span,
+                    self.source_name,
+                )
+            bindings = [
+                ast.Binding(binding.name, item_type, binding.span)
+                for binding, item_type in zip(bindings, shared_type.items)
+            ]
+            self.skip_newlines()
         self.expect("=", "let declarations require an initializer")
         self.skip_newlines()
         return ast.LetStmt(start, tuple(bindings), self.parse_expression())

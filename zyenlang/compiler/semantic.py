@@ -1605,7 +1605,9 @@ class Lowerer:
             )
         raise self.error("unsupported statement", statement.span)
 
-    def lower_assignment(self, statement: ast.AssignStmt) -> ir.IRAssign:
+    def lower_assignment(self, statement: ast.AssignStmt) -> ir.IRStmt:
+        if isinstance(statement.target, ast.TupleExpr):
+            return self.lower_destructure_assignment(statement)
         assigned_name: str | None = None
         if isinstance(statement.target, ast.NameExpr):
             if statement.target.name in PROCESS_SPECIAL_VALUES:
@@ -1652,6 +1654,65 @@ class Lowerer:
         if assigned_name is not None and not isinstance(value, ir.IROptionalSome):
             self.invalidate_narrowing(assigned_name)
         return ir.IRAssign(statement.span, target, value)
+
+    def lower_destructure_assignment(self, statement: ast.AssignStmt) -> ir.IRDestructureAssign:
+        assert isinstance(statement.target, ast.TupleExpr)
+        names = [item.name for item in statement.target.items if isinstance(item, ast.NameExpr)]
+        if len(names) != len(statement.target.items):
+            raise self.error("destructuring assignment targets must be local variables", statement.target.span)
+        if len(set(names)) != len(names):
+            raise self.error("destructuring assignment cannot target the same local twice", statement.target.span)
+
+        targets: list[ir.IRExpr] = []
+        target_types: list[Type] = []
+        scope_indices: list[int] = []
+        for item, name in zip(statement.target.items, names):
+            if name in PROCESS_SPECIAL_VALUES:
+                raise self.error("process special values cannot be assigned", item.span)
+            target_type = self.lookup_local(name, item.span)
+            if self.is_captured_local(name):
+                raise self.error("closure captures are readonly snapshots", item.span)
+            if isinstance(target_type, ReferenceType):
+                raise self.error("reference bindings cannot be reassigned; borrow again after their last use", item.span)
+            readonly, mutable = self.active_borrows(name)
+            if readonly or mutable:
+                raise self.error(f"cannot assign `{name}` while it is borrowed", item.span)
+            if is_task(target_type):
+                raise self.error("Task<T> variables cannot be reassigned", item.span)
+            scope_index = self.find_local_scope_index(name)
+            assert scope_index is not None
+            targets.append(ir.IRName(target_type, item.span, self.local_names[scope_index][name]))
+            target_types.append(target_type)
+            scope_indices.append(scope_index)
+
+        expected = TupleType(tuple(target_types))
+        if statement.type_node is not None:
+            annotation = self.resolve_optional_annotation(statement.type_node)
+            if not isinstance(annotation, TupleType):
+                raise self.error("destructuring assignment requires a tuple type annotation", statement.type_node.span)
+            if annotation != expected:
+                raise self.error(
+                    f"destructuring assignment annotation `{annotation.display()}` does not match target types `{expected.display()}`",
+                    statement.type_node.span,
+                )
+
+        value = self.lower_expr(statement.value, expected)
+        if not isinstance(value.typ, TupleType):
+            raise self.error("destructuring assignment requires a tuple value", statement.value.span)
+        if len(value.typ.items) != len(targets):
+            raise self.error(
+                f"destructuring assignment expects {len(targets)} values, got {len(value.typ.items)}",
+                statement.value.span,
+            )
+        for name, target_type, actual, scope_index in zip(names, target_types, value.typ.items, scope_indices):
+            if not assignable(target_type, actual):
+                raise self.error(
+                    f"cannot assign `{actual.display()}` to `{name}: {target_type.display()}`",
+                    statement.value.span,
+                )
+            self.dropped_scopes[scope_index].discard(name)
+            self.invalidate_narrowing(name)
+        return ir.IRDestructureAssign(statement.span, tuple(targets), value)
 
     def lower_let(self, statement: ast.LetStmt) -> ir.IRLet:
         if len(statement.bindings) == 1:

@@ -9,4 +9,4 @@ from .diagnostics import CompileError
 
 __all__ = ["CompileError", "Compiler", "CompilerOptions"]
 
-__version__ = "0.3.5"
+__version__ = "0.3.6"

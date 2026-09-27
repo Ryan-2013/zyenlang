@@ -324,7 +324,7 @@ let answer: i32 = identity(42)
 泛型會對 reachable concrete call site 單態化。若函式內寫 `left + right`，每個
 實例化的 `T` 都必須真的支援 `+`；語言目前沒有 trait constraint。
 
-多回傳值使用 tuple：
+多回傳值使用固定長度的多結果值：
 
 ```zy
 fn window_size() (i32, i32) {
@@ -1009,7 +1009,7 @@ src/native/           引擎 C adapter 和 ABI v3 模板
 1. `fn main()`、`let`、if、while、function。
 2. module import 與 `::`/`.`。
 3. struct component 與 class manager。
-4. `List<T>`、nullable、tuple 和 Error。
+4. `List<T>`、nullable、多結果值和 Error。
 5. function value、closure 與 callback。
 6. `&T`、`&mut T`、ARC、`DROP__()` 和 defer。
 7. 專案 target、dependency 和 release build。

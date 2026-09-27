@@ -1,4 +1,4 @@
-# ZyenLang 0.3.5
+# ZyenLang 0.3.6
 
 [繁體中文](README.zh-TW.md) | **English**
 
@@ -12,7 +12,8 @@ and VS Code support all ship through the `zy` command.
 
 ## Status
 
-Version 0.3.5 adds ranked `List<T, Rank>`, runtime-shaped `LIST_FILLED__()`,
+Version 0.3.6 completes typed multiple-result destructuring and assignment.
+Version 0.3.5 added ranked `List<T, Rank>`, runtime-shaped `LIST_FILLED__()`,
 multiline postfix chains, and rectangular List shape introspection on top of
 the official package ecosystem and C Interop ABI v3.
 This delivery does not create a tag, GitHub Release, MSI, or portable archive;
@@ -93,7 +94,8 @@ The separators are fixed:
   `fn`, mutable `mut fn`, and `static fn`.
 - Generic functions and classes using reachable monomorphization.
 - Strong `List<T>` with an ARC backing buffer and copy-on-write mutation.
-- Tuples, multiple returns, destructuring, and narrowed `T | null` values.
+- Typed multiple-result values, declaration/assignment destructuring, and
+  narrowed `T | null` values.
 - Named functions, closures, callbacks, returned functions, and chained calls.
 - Local `&T` and unique `&mut T` references with `CLONE_REF__()` and
   `REF_SET__()`.

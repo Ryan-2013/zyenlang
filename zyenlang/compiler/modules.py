@@ -679,7 +679,12 @@ class ModuleLoader:
             if isinstance(node, ast.WhileStmt):
                 return replace(node, condition=expression(node.condition), body=block(node.body))
             if isinstance(node, ast.AssignStmt):
-                return replace(node, target=expression(node.target), value=expression(node.value))
+                return replace(
+                    node,
+                    target=expression(node.target),
+                    value=expression(node.value),
+                    type_node=reject_type(node.type_node) if node.type_node else None,
+                )
             if isinstance(node, ast.DeferStmt):
                 call = expression(node.call)
                 assert isinstance(call, ast.CallExpr)
@@ -961,7 +966,12 @@ def namespace_program(program: ast.Program, namespace: str, import_aliases: set[
         if isinstance(node, ast.WhileStmt):
             return ast.WhileStmt(node.span, expression(node.condition), block(node.body))
         if isinstance(node, ast.AssignStmt):
-            return ast.AssignStmt(node.span, expression(node.target), expression(node.value))
+            return ast.AssignStmt(
+                node.span,
+                expression(node.target),
+                expression(node.value),
+                type_node(node.type_node) if node.type_node else None,
+            )
         if isinstance(node, ast.DeferStmt):
             call = expression(node.call)
             assert isinstance(call, ast.CallExpr)

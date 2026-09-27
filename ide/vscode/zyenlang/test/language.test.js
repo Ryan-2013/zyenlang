@@ -31,7 +31,7 @@ fn pair() (i32, str) {
 
 fn main() i32 {
     let counter: Counter = Counter(40)
-    let (number: i32, text: str) = pair()
+    let (number, text): (i32, str) = pair()
     io::print(text)
     return counter.add(number)
 }`;

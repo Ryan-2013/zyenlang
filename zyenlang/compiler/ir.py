@@ -267,6 +267,12 @@ class IRAssign(IRStmt):
 
 
 @dataclass(frozen=True)
+class IRDestructureAssign(IRStmt):
+    targets: tuple[IRExpr, ...]
+    value: IRExpr
+
+
+@dataclass(frozen=True)
 class IRBreak(IRStmt):
     pass
 

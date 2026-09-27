@@ -305,6 +305,10 @@ class CBackend:
             elif isinstance(value, ir.IRAssign):
                 expression(value.target)
                 expression(value.value)
+            elif isinstance(value, ir.IRDestructureAssign):
+                for target in value.targets:
+                    expression(target)
+                expression(value.value)
             elif isinstance(value, ir.IRDefer):
                 expression(value.call)
             elif isinstance(value, ir.IRExprStmt):
@@ -441,6 +445,10 @@ class CBackend:
                 block(value.body)
             elif isinstance(value, ir.IRAssign):
                 expression(value.target)
+                expression(value.value)
+            elif isinstance(value, ir.IRDestructureAssign):
+                for target in value.targets:
+                    expression(target)
                 expression(value.value)
             elif isinstance(value, ir.IRDefer):
                 expression(value.call)
@@ -1201,6 +1209,26 @@ class CBackend:
                 lines.append(f"{pad}{target.code} = {temp};")
             else:
                 lines.append(f"{pad}{target.code} = {value.code};")
+            return lines
+        if isinstance(statement, ir.IRDestructureAssign):
+            value = self.emit_expr(statement.value)
+            lines = [pad + line for line in value.prelude]
+            tuple_temp = self.temp("destructure")
+            lines.append(f"{pad}{self.c_type(statement.value.typ)} {tuple_temp} = {value.code};")
+            assignments: list[tuple[CExpr, Type, str]] = []
+            for index, target_expr in enumerate(statement.targets):
+                target = self.emit_expr(target_expr)
+                lines.extend(pad + line for line in target.prelude)
+                typ = target_expr.typ
+                incoming = self.temp("destructure_item")
+                field = f"{tuple_temp}.item_{index}"
+                initializer = field if value.owned else self.retain_expr(field, typ)
+                lines.append(f"{pad}{self.c_type(typ)} {incoming} = {initializer};")
+                assignments.append((target, typ, incoming))
+            for target, typ, incoming in assignments:
+                if self.is_managed(typ):
+                    lines.append(f"{pad}{self.release_stmt(target.code, typ)}")
+                lines.append(f"{pad}{target.code} = {incoming};")
             return lines
         if isinstance(statement, ir.IRBreak):
             if not self.loop_scope_depths:

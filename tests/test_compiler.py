@@ -1029,6 +1029,36 @@ fn main() i32 {
     assert result.returncode == 0, result.stdout + result.stderr
 
 
+def test_shared_destructuring_type_and_reassignment_run(tmp_path: Path) -> None:
+    source = tmp_path / "destructure_assignment.zy"
+    source.write_text(
+        """fn ret_two()(i32, str) {
+    return 10, "dd"
+}
+
+fn main() i32 {
+    let pair: (i32, str) = ret_two()
+    let (number, text): (i32, str) = ret_two()
+    (number, text): (i32, str) = pair
+
+    let left: str = "left"
+    let right: str = "right"
+    (left, right): (str, str) = (right, left)
+    if number == 10 && text == "dd" && left == "right" && right == "left" {
+        return 0
+    }
+    return 1
+}
+""",
+        encoding="utf-8",
+    )
+    executable = tmp_path / ("destructure_assignment.exe" if sys.platform.startswith("win") else "destructure_assignment")
+    Compiler().build_file(source, executable)
+    result = subprocess.run([str(executable)], capture_output=True, text=True, check=False)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
 def test_struct_metadata_lists_attributes_and_methods(tmp_path: Path) -> None:
     source = tmp_path / "struct_metadata.zy"
     source.write_text(

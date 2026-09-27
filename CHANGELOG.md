@@ -1,5 +1,17 @@
 # Changelog
 
+## v0.3.6 - 2026-09-27
+
+### Added
+
+- Multiple-result destructuring accepts one shared type annotation:
+  `let (number, text): (i32, str) = pair()`.
+- Existing locals support typed destructuring assignment such as
+  `(number, text): (i32, str) = pair`, with one-time RHS evaluation and
+  ownership-safe managed-value replacement.
+- VS Code 0.3.10 indexes shared destructuring annotations and provides the
+  corresponding multiple-result snippet.
+
 ## v0.3.5 - 2026-09-27
 
 ### Added

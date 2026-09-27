@@ -70,7 +70,7 @@ Managed values are:
 - class handles;
 - `Box<T>`;
 - function values and closure environments;
-- tuples, optionals, or structs containing managed values.
+- fixed-length multiple-result values, optionals, or structs containing managed values.
 
 Class, Box, strings, Lists, and closure environments use C11 atomic reference
 counts. Structs retain value semantics and receive generated recursive

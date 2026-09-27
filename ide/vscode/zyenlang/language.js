@@ -767,17 +767,20 @@ function parseDocument(text, uri = '') {
       }
     }
 
-    const letTuple = line.match(/\blet\s*\(([^)]+)\)\s*=/);
+    const letTuple = line.match(/\blet\s*\(([^)]+)\)\s*(?::\s*(\([^=]+\)))?\s*=/);
     if (letTuple) {
       const tupleStart = original.indexOf(letTuple[1]);
-      for (const part of splitTopLevel(letTuple[1])) {
+      const parts = splitTopLevel(letTuple[1]);
+      const sharedTypes = letTuple[2] ? splitTopLevel(letTuple[2].slice(1, -1)) : [];
+      for (const [index, part] of parts.entries()) {
         const match = part.match(/^([A-Za-z_]\w*)\s*(?::\s*(.+))?$/);
         if (!match) continue;
         const column = original.indexOf(match[1], tupleStart);
+        const type = match[2] || sharedTypes[index] || '';
         result.symbols.push({
-          name: match[1], kind: 'variable', type: match[2] || '',
-          explicitType: Boolean(match[2]),
-          detail: match[2] ? `${match[1]}: ${match[2]}` : match[1],
+          name: match[1], kind: 'variable', type,
+          explicitType: Boolean(type),
+          detail: type ? `${match[1]}: ${type}` : match[1],
           line: lineNumber, column, endColumn: column + match[1].length,
           container: activeFunction && activeFunction.name
         });

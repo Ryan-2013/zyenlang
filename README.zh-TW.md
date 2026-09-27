@@ -1,4 +1,4 @@
-# ZyenLang 0.3.5
+# ZyenLang 0.3.6
 
 **繁體中文** | [English](README.md)
 
@@ -11,6 +11,7 @@ ZyenLang 是一門精簡、強型別並以 C11 為第一個後端的原生語言
 
 ## 版本狀態
 
+0.3.6 補完整體型別標註的多結果解構宣告與解構賦值。
 0.3.5 在官方套件、系統庫與 C Interop ABI v3 上加入 `List<T, Rank>`、
 執行期 shape 的 `LIST_FILLED__()`、跨行 postfix chain 與矩形 List shape
 查詢。本輪不建立 tag、GitHub Release、MSI 或 portable 壓縮包；安裝資產會在
@@ -89,7 +90,8 @@ fn main() i32 {
   唯讀 `fn`、可變 `mut fn` 與 `static fn`。
 - 泛型函式、泛型 class 與 reachable monomorphization。
 - 強型別 `List<T>`，backing buffer 使用 ARC 與 copy-on-write。
-- tuple、多回傳值、解構，以及 null check 後縮窄的 `T | null`。
+- 強型別多結果值、解構宣告與解構賦值，以及 null check 後縮窄的
+  `T | null`。
 - 具名函式、closure、callback、回傳函式與連續呼叫。
 - local/parameter 可用的 `&T` 與唯一 `&mut T` 安全引用。
 - 自動清理、`CLONE__()`、`CLONE_REF__()`、`REF_SET__()`、提早

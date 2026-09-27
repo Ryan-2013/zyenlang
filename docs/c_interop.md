@@ -85,7 +85,8 @@ C after the call. A mutable slice first detaches shared List storage using
 copy-on-write.
 
 `out<T>` is omitted from the ZyenLang argument list and appended to the return
-value. `inout<T>` is called with `&mut T`. Multiple results become a tuple.
+value. `inout<T>` is called with `&mut T`. Multiple `out<T>` values become one
+fixed-length multiple-result value that can be destructured in ZyenLang.
 Only fixed-layout ABI element types are accepted.
 
 ### Native failures

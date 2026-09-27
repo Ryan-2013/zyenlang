@@ -49,10 +49,10 @@
     "body": "defer ${1:resource}.${2:close}()",
     "description": "Register a non-throwing call for LIFO scope cleanup"
   },
-  "Tuple result": {
+  "Multiple result": {
     "prefix": "lettuple",
-    "body": "let (${1:value}: ${2:i32}, ${3:text}: ${4:str}) = ${5:call}()",
-    "description": "Destructure multiple return values"
+    "body": "let (${1:value}, ${2:text}): (${3:i32}, ${4:str}) = ${5:call}()",
+    "description": "Destructure a multiple-result value"
   },
   "If": {
     "prefix": "if",

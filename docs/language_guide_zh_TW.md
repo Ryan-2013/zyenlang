@@ -257,8 +257,15 @@ fn pair() (i32, str) {
     return 42, "answer"
 }
 
-let (number: i32, text: str) = pair()
+let result: (i32, str) = pair()
+let (number, text): (i32, str) = pair()
+(number, text): (i32, str) = result
 ```
+
+`(T, U)` 在公開語法中代表固定長度的多結果值，不是具有 methods 的 `Tuple`
+標準容器。解構可逐項標註型別，也可在 bindings 後標註一次完整型別；解構
+賦值會先對右側求值一次，因此可以安全交換兩個 local。若需要可變長度或索引
+操作，使用 `List<T>`。
 
 泛型會在 reachable concrete call site monomorphize。泛型運算仍需對 specialization
 成立；編譯器不假設任意 `T` 一定支援 `+` 或 `==`。

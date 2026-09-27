@@ -253,6 +253,7 @@ class WhileStmt(Stmt):
 class AssignStmt(Stmt):
     target: Expr
     value: Expr
+    type_node: TypeNode | None = None
 
 
 @dataclass(frozen=True)

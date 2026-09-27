@@ -74,6 +74,11 @@ require a full 40- or 64-hex commit in `rev`; branches, abbreviated hashes, and
 floating tags are rejected. `zy.lock` records source, resolved commit,
 content digest, and transitive edges.
 
+The package `zyen` field is enforced for roots and dependencies. It accepts an
+exact semantic version or comma-separated comparisons such as
+`zyen = ">=0.3.2,<0.4.0"`; an incompatible compiler stops installation and
+build before native code is executed.
+
 `zy install` without a package resolves the manifest and writes the lock.
 `--locked` installs exactly the existing lock without changing it. `zy add`,
 `zy remove`, and `zy fetch` remain compatible lower-level aliases. Build/check
@@ -90,6 +95,24 @@ Registry schema 1 intentionally has no dependency install hook, floating Git
 reference, semver range solver, account, or upload protocol. Publishing is an
 index review that points at an immutable source commit; the resolved source is
 then content-addressed in `zy.lock`.
+
+## Official packages
+
+```powershell
+zy install numpy
+zy install opencv
+```
+
+- `numpy` provides dependency-free, ARC-owned `f64` arrays, indexing,
+  reductions, element-wise addition, scaling, and matrix multiplication.
+- `opencv` provides ARC-owned OpenCV 4 image handles, file I/O, resizing,
+  grayscale conversion, Gaussian blur, crop, and byte-buffer conversion.
+  Installing the source package is platform-independent; building a program
+  that imports it requires compatible OpenCV development headers and libraries.
+
+Registry packages do not run install scripts. Native dependencies are declared
+as build metadata and are compiled only by an explicit `zy build`, `zy run`, or
+`zy test`.
 
 Importing the dependency alias alone loads its `[package] entry`, which defaults
 to `src/lib.zy`. `as` is optional and changes only the local namespace:
@@ -155,13 +178,20 @@ This also protects an external `out-dir` containing unrelated files.
 
 ## C and C++ consumers
 
-Only `export fn` enters generated headers:
+Use `#name` to emit a stable C wrapper and place it in generated headers:
 
 ```zy
-export fn add(left: i32, right: i32) i32 {
+#add
+fn add(left: i32, right: i32) i32 {
     return left + right
 }
 ```
+
+The ZyenLang body keeps its mangled internal name. The generated
+`ZYENLANG_API int32_t add(...)` wrapper forwards to that body. The marker does
+not make the function public to other ZyenLang modules and is not a general
+preprocessor facility. Legacy `export fn` remains supported as a direct-symbol
+export.
 
 The header is valid C11 and C++, with `extern "C"` in C++ mode. v0.3 direct
 exports support fixed-width numbers, bool, void, and `ZL_String`. Generic,

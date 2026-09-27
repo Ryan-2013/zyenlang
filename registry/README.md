@@ -29,3 +29,9 @@ trusted code and must be reviewed before an entry is accepted.
 
 Set `ZYEN_REGISTRY` to another HTTPS URL or an absolute local JSON path to use
 a private or offline registry.
+
+## Official packages
+
+- `numpy`: dependency-free contiguous `f64` arrays and matrix operations.
+- `opencv`: ARC-safe OpenCV 4 image handles and common image transforms. The
+  build machine must provide compatible OpenCV development files.

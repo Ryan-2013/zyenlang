@@ -48,7 +48,7 @@ def check_python_version() -> CheckResult:
 
 def check_cc() -> CheckResult:
     try:
-        from zyenlang.v2.toolchain import find_c_compiler
+        from zyenlang.compiler.toolchain import find_c_compiler
 
         command = find_c_compiler()
     except (FileNotFoundError, ValueError) as exc:
@@ -62,8 +62,66 @@ def check_cc() -> CheckResult:
     return CheckResult("cc", "environment", STATUS_PASS, " ".join(command))
 
 
+def check_cxx() -> CheckResult:
+    try:
+        from zyenlang.compiler.toolchain import find_cxx_compiler
+
+        command = find_cxx_compiler()
+    except (FileNotFoundError, ValueError) as exc:
+        return CheckResult(
+            "cxx",
+            "environment",
+            STATUS_WARNING,
+            str(exc),
+            "Install g++/clang++, use a portable release, or set ZY_CXX for native C++ packages.",
+        )
+    return CheckResult("cxx", "environment", STATUS_PASS, " ".join(command))
+
+
+def check_bindgen_parser() -> CheckResult:
+    try:
+        from zyenlang.compiler.bindgen import find_bindgen_parser
+
+        command = find_bindgen_parser()
+    except Exception as exc:
+        return CheckResult(
+            "bindgen_parser",
+            "environment",
+            STATUS_WARNING,
+            str(exc),
+            "Set ZY_BINDGEN_CLANG, use a portable Zig release, or install Clang.",
+        )
+    try:
+        completed = subprocess.run(
+            [*command, "--version"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        return CheckResult(
+            "bindgen_parser",
+            "environment",
+            STATUS_WARNING,
+            f"{' '.join(command)} could not run: {exc}",
+            "Set ZY_BINDGEN_CLANG to a working Clang command or use bundled Zig.",
+        )
+    output = (completed.stdout or completed.stderr).strip().splitlines()
+    if completed.returncode != 0:
+        return CheckResult(
+            "bindgen_parser",
+            "environment",
+            STATUS_WARNING,
+            f"{' '.join(command)} exited with {completed.returncode}",
+            "Set ZY_BINDGEN_CLANG to a working Clang command or use bundled Zig.",
+        )
+    version = output[0][:300] if output else "version probe succeeded"
+    return CheckResult("bindgen_parser", "environment", STATUS_PASS, f"{' '.join(command)} ({version})")
+
+
 def check_cc_compiles() -> CheckResult:
-    from zyenlang.v2.toolchain import compile_c
+    from zyenlang.compiler.toolchain import compile_c
 
     with tempfile.TemporaryDirectory(prefix="zyen_doctor_cc_") as temp:
         root = Path(temp)
@@ -129,7 +187,7 @@ def check_package_version() -> CheckResult:
 
 def check_compiler_importable() -> CheckResult:
     try:
-        from zyenlang.v2.compiler import Compiler  # noqa: F401
+        from zyenlang.compiler.compiler import Compiler  # noqa: F401
     except Exception as exc:
         return CheckResult(
             "compiler_importable",
@@ -145,7 +203,7 @@ def _std_dir() -> Path | None:
     try:
         import zyenlang
 
-        directory = Path(zyenlang.__file__).resolve().parent / "v2" / "std"
+        directory = Path(zyenlang.__file__).resolve().parent / "compiler" / "std"
     except Exception:
         return None
     return directory if directory.is_dir() else None
@@ -158,7 +216,7 @@ def check_std_modules_count() -> CheckResult:
             "std_modules_count",
             "installation",
             STATUS_ERROR,
-            "zyenlang/v2/std was not found",
+            "zyenlang/compiler/std was not found",
             "Reinstall the package from a complete release.",
         )
     count = len(list(directory.glob("*.zy")))
@@ -215,7 +273,7 @@ fn main() i32 {
 
 
 def run_smoke_trio() -> tuple[CheckResult, CheckResult, CheckResult]:
-    from zyenlang.v2.compiler import Compiler
+    from zyenlang.compiler.compiler import Compiler
 
     with tempfile.TemporaryDirectory(prefix="zyen_doctor_runtime_") as temp:
         root = Path(temp)
@@ -263,6 +321,8 @@ def run_all(with_runtime: bool = True) -> list[CheckResult]:
     results = [
         check_python_version(),
         check_cc(),
+        check_cxx(),
+        check_bindgen_parser(),
         check_cc_compiles(),
         check_zy_on_path(),
         check_package_installed(),

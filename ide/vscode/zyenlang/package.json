@@ -2,7 +2,7 @@
   "name": "zyenlang",
   "displayName": "ZyenLang",
   "description": "Project-aware language support for ZyenLang: completion, navigation, refactoring, diagnostics, run, build, and test.",
-  "version": "0.3.4",
+  "version": "0.3.6",
   "publisher": "zyenlang",
   "license": "MIT",
   "repository": {
@@ -34,7 +34,8 @@
       "supported": "limited",
       "description": "Editing and highlighting remain available. Compiler execution, diagnostics, Run, and Build require workspace trust.",
       "restrictedConfigurations": [
-        "zyenlang.compilerPath"
+        "zyenlang.compilerPath",
+        "zyenlang.stdlibPath"
       ]
     }
   },
@@ -129,6 +130,11 @@
           "default": "zy",
           "description": "Path to the ZyenLang compiler executable."
         },
+        "zyenlang.stdlibPath": {
+          "type": "string",
+          "default": "",
+          "description": "Optional path to the ZyenLang standard-library source directory. Normally discovered from the compiler automatically."
+        },
         "zyenlang.diagnostics.enable": {
           "type": "boolean",
           "default": true,
@@ -191,7 +197,7 @@
     ]
   },
   "scripts": {
-    "test": "node test/language.test.js && node test/project.test.js",
+    "test": "node test/language.test.js && node test/project.test.js && node test/index.test.js",
     "package": "vsce package --no-dependencies"
   },
   "devDependencies": {

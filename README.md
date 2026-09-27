@@ -1,4 +1,4 @@
-# ZyenLang 0.3.0
+# ZyenLang 0.3.2
 
 [繁體中文](README.zh-TW.md) | **English**
 
@@ -12,9 +12,10 @@ and VS Code support all ship through the `zy` command.
 
 ## Status
 
-The `v0.3.0` tag is a source release. This delivery does not publish a GitHub
-Release, MSI, or portable archives; binary packaging follows only after those
-artifacts are independently verified on each platform.
+Version 0.3.2 adds the first official package ecosystem, system libraries, and
+C++17 native adapters on top of C Interop ABI v3. This delivery does not
+create a tag, GitHub Release, MSI, or portable archive; binary packaging follows
+only after those artifacts are independently verified on each platform.
 
 ZyenLang remains experimental. It is ready for testing the design and building
 small native programs, but compatibility and Rust-equivalent safety are not
@@ -103,9 +104,11 @@ The separators are fixed:
 Every intrinsic uses parentheses: `TYPEOF__()`, `FILE__()`, `GET_ARGS__()`,
 `LIST_LEN__()`, `STR_SLICE__()`, `CLONE__()`, and `DROP__()` are examples.
 
-See the [language guide](docs/v3_language_guide_zh_TW.md),
-[architecture](docs/v3_architecture.md), [standard library](docs/v3_stdlib.md),
+See the [language guide](docs/language_guide_zh_TW.md),
+[architecture](docs/architecture.md), [standard library](docs/standard_library.md),
 and [0.2 migration guide](docs/migration_v0_3.md).
+The [documentation index](docs/README.md) and
+[repository structure](PROJECT_STRUCTURE.md) list the canonical current paths.
 
 ## Project manager
 
@@ -144,27 +147,39 @@ workflow. `zy.lock` records commits, digests, and the transitive graph. The
 first registry protocol is an immutable Git index; it has no install hooks or
 automatic code execution.
 
+The official starter ecosystem is available immediately:
+
+```powershell
+zy install numpy
+zy install opencv
+```
+
+GUI, HTTP client/server, filesystem, OS, time, threading, and process APIs ship
+as `std::*` modules. Numeric arrays and OpenCV live as independently versioned
+registry packages; OpenCV compilation requires system OpenCV development files.
+
 Targets can be `bin`, `c-source`, `staticlib`, or `sharedlib`. A `c-source`
 target emits C11 source, a C/C++ compatible header, the runtime/native source
-bundle, and build metadata. Only `export fn` enters the public C header.
+bundle, and build metadata. Put `#symbol_name` on the line above a function to
+generate a stable public C wrapper while keeping the ZyenLang body mangled.
+Legacy `export fn` remains supported as a direct-symbol export.
 
 ## Native modules
 
 ```zy
-import std::c_module as c_module
+import std::c_module as c
 
-fn main() i32 {
-    let math: c_module::Module = c_module::load("math.zlcm.h")
-    return math.add(20, 22) - 42
-}
+native module math = c::load("native/math.zlcm.h")
+
+fn main() i32 { return math::add(20, 22) - 42 }
 ```
 
-`c_module::load()` is compile-time only. The validated template becomes a
-path-hashed hidden type, and its C sources, headers, libraries, and flags join
-the same native build. No Python subprocess or runtime dynamic loader is used.
-Fixed-width scalars, strings, `ZLC_STRUCT` values, and `ZL_Function` callbacks
-are supported. Raw pointers and `List<T>` are not stable ABI values in 0.3;
-wrap them behind an opaque native handle. See [c_module](docs/c_module.md).
+`c::load()` is compile-time only. ABI v3 exposes path-hashed ARC handles,
+synchronous List slices, enums, flags, constants, out/inout parameters, error
+policies, strings, POD structs, and callbacks. `zy bindgen` creates a reviewed
+template and C adapter from a Clang JSON AST; ambiguous pointers stay disabled
+until ownership is configured. No Python subprocess or runtime dynamic loader
+is used. Native adapters may be C11 or C++17. See [c_module](docs/c_interop.md).
 
 ## VS Code
 

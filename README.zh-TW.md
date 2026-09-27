@@ -1,4 +1,4 @@
-# ZyenLang 0.3.0
+# ZyenLang 0.3.2
 
 **繁體中文** | [English](README.md)
 
@@ -11,8 +11,9 @@ ZyenLang 是一門精簡、強型別並以 C11 為第一個後端的原生語言
 
 ## 版本狀態
 
-`v0.3.0` 是原始碼版本。本輪不建立 GitHub Release，也不發布 MSI 或 portable
-壓縮包；安裝資產會在各平台個別驗證後再發布。
+0.3.2 在 C Interop ABI v3 上加入第一批官方套件、系統庫與 C++17 native
+adapter。本輪不建立 tag、GitHub Release、MSI 或
+portable 壓縮包；安裝資產會在各平台個別驗證後再發布。
 
 ZyenLang 仍是實驗性語言，適合驗證語言設計與撰寫小型原生程式，但目前不承諾
 長期語法相容或 Rust 等級的安全性。
@@ -99,9 +100,11 @@ fn main() i32 {
 所有 intrinsic 都有括號，例如 `TYPEOF__()`、`FILE__()`、`GET_ARGS__()`、
 `LIST_LEN__()`、`STR_SLICE__()`、`CLONE__()` 與 `DROP__()`。
 
-完整說明請看[語言指南](docs/v3_language_guide_zh_TW.md)、
-[編譯器架構](docs/v3_architecture.md)、[標準庫](docs/v3_stdlib.md)與
+完整說明請看[語言指南](docs/language_guide_zh_TW.md)、
+[編譯器架構](docs/architecture.md)、[標準庫](docs/standard_library.md)與
 [0.2 遷移指南](docs/migration_v0_3.md)。
+全部入口整理在[文件索引](docs/README.md)；原始碼目錄分工請看
+[專案結構](PROJECT_STRUCTURE.md)。
 
 ## 專案與產物
 
@@ -122,29 +125,46 @@ kind = "bin"
 entry = "src/main.zy"
 ```
 
-主要命令為 `zy new/init/add/remove/fetch/check/build/run/test/clean/metadata/emit`。
-第一版相依來源是本機 path 或固定 revision 的 Git；`zy.lock` 記錄 commit、digest
-與 transitive graph。目前沒有 registry 或 build script hook。
+主要命令為 `zy new/init/install/uninstall/list/show/check/build/run/test/clean/metadata/emit`。
+相依來源支援 registry、本機 path 或固定 revision 的 Git；`zy.lock` 記錄 commit、
+digest 與 transitive graph。package 安裝不執行 build script 或 install hook。
+
+第一批官方套件可直接安裝：
+
+```powershell
+zy install numpy
+zy install opencv
+```
+
+GUI、HTTP client/server、fs、os、time、thread 與 process 屬於 `std::*`；數值
+Array 與 OpenCV 則獨立版本化。編譯 OpenCV 程式時仍需安裝系統 OpenCV 開發檔。
 
 `c-source` target 會產生 C11 source、C/C++ header、runtime/native source bundle
-與 JSON build metadata。只有 `export fn` 進入公開 C header。
+與 JSON build metadata。在函式上一行寫 `#symbol_name`，即可產生名稱穩定的
+公開 C wrapper 並進入 header；ZyenLang 函式本體仍使用內部 mangled 名稱。
+`export fn` 仍作為直接 symbol 匯出的相容語法。
 
 ## C 模組
 
 ```zy
-import std::c_module as c_module
+import std::c_module as c
 
-fn main() i32 {
-    let math: c_module::Module = c_module::load("math.zlcm.h")
-    return math.add(20, 22) - 42
-}
+native module math = c::load("native/math.zlcm.h")
+
+fn main() i32 { return math::add(20, 22) - 42 }
 ```
 
-`c_module::load()` 只存在於編譯期。模板會成為按絕對路徑雜湊的隱藏強型別，
-並把 C source、header、library 與 flags 交給同一次 native build；不執行 Python
-CLI，也沒有 runtime dynamic loader。0.3 ABI 支援固定寬度數字、字串、
-`ZLC_STRUCT` 與 `ZL_Function` callback。裸指標與 `List<T>` 不屬於穩定 C ABI，
-應由相容層封裝成 opaque handle。詳見 [c_module](docs/c_module.md)。
+`c::load()` 只存在於編譯期。ABI v3 支援路徑雜湊 ARC Handle、同步 List Slice、
+enum、flags、constant、out/inout、錯誤策略、字串、POD struct 與 callback。
+`zy bindgen` 透過 Clang JSON AST 產生可審查模板及 C adapter；模糊 pointer 在
+ownership 被明確設定前不會成為可呼叫函式。不執行 Python CLI，也沒有 runtime
+dynamic loader。native adapter 可使用 C11 或 C++17。詳見
+[c_module](docs/c_interop.zh_TW.md)。
+
+若要用 ZyenLang 開發自製遊戲引擎，先閱讀
+[遊戲引擎開發者語言手冊](docs/game_engine_language_handoff_zh_TW.md)，再使用
+[遊戲引擎整合規格](docs/game_engine_integration_zh_TW.md)完成 C11 façade、ABI v3
+Handle/Slice/callback、static/shared library、執行緒與資源生命週期。
 
 ## VS Code 與安全邊界
 

@@ -1,0 +1,59 @@
+native source "os_native.c"
+
+private native fn current_dir_native() str = "zy3_os_current_dir"
+private native fn home_dir_native() str = "zy3_os_home_dir"
+private native fn temp_dir_native() str = "zy3_os_temp_dir"
+private native fn hostname_native() str = "zy3_os_hostname"
+private native fn env_native(name: str) str = "zy3_os_env"
+private native fn has_env_native(name: str) bool = "zy3_os_has_env"
+private native fn set_env_native(name: str, value: str) i32 = "zy3_os_set_env"
+private native fn unset_env_native(name: str) i32 = "zy3_os_unset_env"
+private native fn last_error_native() str = "zy3_os_error"
+
+public native fn name() str = "zy3_os_name"
+public native fn architecture() str = "zy3_os_architecture"
+public native fn process_id() i64 = "zy3_os_process_id"
+
+public fn current_dir() str throws Error {
+    let value = current_dir_native()
+    let message = last_error_native()
+    if message != "" { stop message }
+    return value
+}
+
+public fn home_dir() str throws Error {
+    let value = home_dir_native()
+    let message = last_error_native()
+    if message != "" { stop message }
+    return value
+}
+
+public fn temp_dir() str throws Error {
+    let value = temp_dir_native()
+    let message = last_error_native()
+    if message != "" { stop message }
+    return value
+}
+
+public fn hostname() str throws Error {
+    let value = hostname_native()
+    let message = last_error_native()
+    if message != "" { stop message }
+    return value
+}
+
+public fn env(name: str) str {
+    return env_native(name)
+}
+
+public fn has_env(name: str) bool {
+    return has_env_native(name)
+}
+
+public fn set_env(name: str, value: str) void throws Error {
+    if set_env_native(name, value) != 0 { stop last_error_native() }
+}
+
+public fn unset_env(name: str) void throws Error {
+    if unset_env_native(name) != 0 { stop last_error_native() }
+}

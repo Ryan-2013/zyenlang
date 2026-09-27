@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import sys
 
-from zyenlang.v2.__main__ import main as compiler_main
+from zyenlang.compiler.__main__ import main as compiler_main
 
 
 def main(argv: list[str] | None = None) -> int:

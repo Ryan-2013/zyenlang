@@ -1,5 +1,63 @@
 # Changelog
 
+## v0.3.2 - 2026-09-27
+
+### Added
+
+- Cross-platform `std::time` and `std::os` modules.
+- Filesystem directory, copy, rename, remove, and file-size operations.
+- Function-value HTTP server routing with method, path, and body arguments.
+- Native `.cc`/`.cpp`/`.cxx` compilation through C++17 and mixed C/C++ linking.
+- Official immutable package registry entries for `numpy` and `opencv`.
+- Dependency-free ARC numeric arrays and an ARC-safe OpenCV 4 C++ adapter.
+
+### Changed
+
+- VS Code completion and hover metadata now cover the expanded filesystem,
+  server, request, time, and OS modules.
+- C-source metadata identifies C++17 bundles when native C++ sources exist.
+
+### Compatibility
+
+- OpenCV builds require compatible system OpenCV development headers and
+  libraries. Package installation and `zy check` do not execute the C++
+  compiler.
+- ABI v3 remains unchanged; C++ adapters export C linkage at the boundary.
+
+## v0.3.1 - 2026-09-25
+
+### Added
+
+- Top-level `#symbol_name` C export markers. They preserve the mangled
+  ZyenLang implementation and emit a stable, ABI-checked public C wrapper,
+  header declaration, and metadata export.
+- ABI v3 `native module` namespaces with ARC `ZL_Handle`, synchronous
+  `ZL_Slice`/`ZL_MutSlice`, enums, flags, constants, nullable ownership,
+  out/inout parameters, and native failure policies.
+- `zy bindgen` using Clang JSON AST, reviewable TOML rules, generated C
+  adapters, pointer TODOs, overwrite protection, and bounded parser execution.
+- VS Code completion, hover, signature help, template navigation, highlighting,
+  and diagnostics for ABI v3 native modules.
+- ZEP-0023, bilingual c_module documentation, and an executable ABI v3 example.
+
+### Changed
+
+- The active implementation now lives under `zyenlang/compiler`; current
+  documentation, examples, tests, native samples, and Windows helper scripts
+  use stable purpose-based paths while 0.2 material is isolated under
+  `docs/history/v0.2`.
+- The public native header reports ABI version 3 while preserving the existing
+  `ZL_String` and `ZL_Function` layouts.
+- ABI v2 `c::Module` remains available with one deprecation warning per
+  compilation.
+- `zy doctor` now probes whether the selected bindgen parser can run.
+
+### Compatibility
+
+- ZyenLang source remains in the 0.3 language series. Existing ABI v2 wrappers
+  compile during the deprecation window; new wrappers should use ABI v3.
+- This source update does not create a tag, GitHub Release, or installer.
+
 ## v0.3.0 - 2026-09-18
 
 ### Added

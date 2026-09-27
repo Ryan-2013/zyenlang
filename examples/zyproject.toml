@@ -9,39 +9,47 @@ target-dir = "target"
 
 [targets.tour]
 kind = "bin"
-entry = "v2_language_tour.zy"
+entry = "language_tour.zy"
 output-name = "zyenlang-tour"
 
 [targets.language-guide]
 kind = "bin"
-entry = "v2_current_language_guide.zy"
+entry = "language_reference.zy"
 
 [targets.file-tree]
 kind = "bin"
-entry = "v2_file_tree.zy"
+entry = "file_tree.zy"
 
 [targets.gui-basic]
 kind = "bin"
-entry = "v2_gui_basic.zy"
+entry = "gui_basic.zy"
 
 [targets.gui-button]
 kind = "bin"
-entry = "v2_gui_button.zy"
+entry = "gui_widgets.zy"
 
 [targets.path]
 kind = "bin"
-entry = "v2_path_basic.zy"
+entry = "path_basic.zy"
 
 [targets.struct-list]
 kind = "bin"
-entry = "v2_struct_list.zy"
+entry = "struct_list.zy"
 
 [targets.task]
 kind = "bin"
-entry = "v2_task_basic.zy"
+entry = "task_basic.zy"
 
 [targets.thread]
 kind = "bin"
-entry = "v2_thread_basic.zy"
+entry = "thread_basic.zy"
+
+[targets.system-info]
+kind = "bin"
+entry = "system_info.zy"
+
+[targets.http-server]
+kind = "bin"
+entry = "http_server.zy"
 
 [dependencies]

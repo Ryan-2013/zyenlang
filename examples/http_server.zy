@@ -1,0 +1,14 @@
+import std::io as io
+import std::server as server
+
+fn route(method: str, path: str, body: str) str {
+    if path == "/health" {
+        return "ok"
+    }
+    return f"{method} {path} {body}"
+}
+
+fn main() i32 throws Error {
+    io::print("Listening on http://127.0.0.1:8080")
+    return server::serve_handler("127.0.0.1", 8080, 100, route) - 100
+}

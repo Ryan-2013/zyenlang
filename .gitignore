@@ -11,6 +11,9 @@
 
 # Native sources that are part of the v0.2 runtime.
 !zyenlang/v2/std/*.c
+!zyenlang/compiler/std/*.c
+!tests/fixtures/**/*.c
+!tests/fixtures/**/*.cpp
 
 # Python package artefacts
 __pycache__/
@@ -22,8 +25,13 @@ zyenlang.egg-info/
 build/
 dist/
 .portable/
+target/
+.venv/
 *.whl
 *.vsix
+.coverage
+.mypy_cache/
+.ruff_cache/
 
 # IDE session state / transient files
 ide_session/

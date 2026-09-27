@@ -1,0 +1,239 @@
+from __future__ import annotations
+
+import subprocess
+import sys
+from pathlib import Path
+
+from zyenlang.compiler.compiler import Compiler
+from zyenlang.compiler.package_manager import init_project
+
+
+def test_fs_module_reads_writes_appends_and_builds_a_tree(tmp_path: Path) -> None:
+    root = tmp_path / "tree-root"
+    child = root / "a-dir"
+    child.mkdir(parents=True)
+    (child / "nested.txt").write_text("nested", encoding="utf-8")
+    (root / "z.txt").write_text("last", encoding="utf-8")
+    (root / "資料.zy").write_text("utf-8", encoding="utf-8")
+    output = tmp_path / "tree.txt"
+    source = tmp_path / "fs_module.zy"
+    source.write_text(
+        """import std::fs as fs
+
+fn main() i32 {
+    let args: List<str> = GET_ARGS__()
+    let root: str = args[1] catch err {
+        recover ""
+    }
+    let output: str = args[2] catch err {
+        recover ""
+    }
+    let rendered: str = fs::tree(root) catch err {
+        recover ""
+    }
+    if rendered == "" {
+        return 10
+    }
+    let wrote: i32 = fs::write_text(output, rendered) catch err {
+        recover -1
+    }
+    if wrote != 0 {
+        return 11
+    }
+    let loaded: str = fs::read_text(output) catch err {
+        recover ""
+    }
+    if loaded != rendered {
+        return 12
+    }
+    let appended: i32 = fs::append_text(output, "\\nDONE") catch err {
+        recover -1
+    }
+    return appended
+}
+""",
+        encoding="utf-8",
+    )
+
+    compiler = Compiler()
+    program = compiler.check_file(source)
+    executable = tmp_path / ("fs-module.exe" if sys.platform.startswith("win") else "fs-module")
+    compiler.build_file(source, executable)
+    result = subprocess.run(
+        [str(executable), str(root), str(output)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    expected = (
+        f"{root}/\n"
+        "|-- a-dir/\n"
+        "|   `-- nested.txt\n"
+        "|-- z.txt\n"
+        "`-- 資料.zy\n"
+        "DONE"
+    )
+    assert any(path.endswith("fs_native.c") for path in program.native_sources)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert output.read_text(encoding="utf-8") == expected
+
+
+def test_run_passes_program_arguments_after_separator(tmp_path: Path) -> None:
+    init_project(tmp_path, "run-args")
+    source = tmp_path / "src" / "main.zy"
+    source.write_text(
+        """import std::io as io
+
+fn main() i32 {
+    let args: List<str> = GET_ARGS__()
+    let value: str = args[1] catch err {
+        recover "missing"
+    }
+    io::print(value)
+    return 0
+}
+""",
+        encoding="utf-8",
+    )
+
+    result = subprocess.run(
+        [sys.executable, "-m", "zyenlang.compiler", "run", "--project", str(tmp_path), "--", "hello from args"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert result.stdout.strip() == "hello from args"
+
+
+def test_project_run_resolves_relative_fs_from_executable_directory(tmp_path: Path) -> None:
+    project = tmp_path / "relative-fs"
+    init_project(project, "relative-fs")
+    executable_dir = project / "target" / "debug" / "app"
+    executable_dir.mkdir(parents=True)
+    (executable_dir / "message.txt").write_text("beside executable", encoding="utf-8")
+    (project / "src" / "main.zy").write_text(
+        """import std::fs as fs
+import std::io as io
+
+fn main() i32 {
+    let value = fs::read_text("message.txt") catch err {
+        io::eprint(err.message)
+        recover ""
+    }
+    io::print(value)
+    return 0
+}
+""",
+        encoding="utf-8",
+    )
+
+    result = subprocess.run(
+        [sys.executable, "-m", "zyenlang.compiler", "run", "--project", str(project)],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert result.stdout.strip() == "beside executable"
+
+
+def test_built_executable_resolves_relative_fs_independent_of_cwd(tmp_path: Path) -> None:
+    source_dir = tmp_path / "source"
+    source_dir.mkdir()
+    source = source_dir / "main.zy"
+    source.write_text(
+        """import std::fs as fs
+
+fn main() i32 {
+    let value = fs::read_text("message.txt") catch err {
+        recover ""
+    }
+    let status = fs::write_text("result.txt", value) catch err {
+        recover -1
+    }
+    if value == "beside executable" && status == 0 {
+        return 0
+    }
+    return 1
+}
+""",
+        encoding="utf-8",
+    )
+
+    executable_dir = tmp_path / "build"
+    executable_dir.mkdir()
+    executable = executable_dir / ("reader.exe" if sys.platform.startswith("win") else "reader")
+    (executable_dir / "message.txt").write_text("beside executable", encoding="utf-8")
+    Compiler().build_file(source, executable)
+
+    result = subprocess.run([str(executable)], cwd=source_dir, check=False)
+
+    assert result.returncode == 0
+    assert (executable_dir / "result.txt").read_text(encoding="utf-8") == "beside executable"
+    assert not (source_dir / "result.txt").exists()
+
+
+def test_fs_reports_missing_paths_as_language_errors(tmp_path: Path) -> None:
+    source = tmp_path / "fs_error.zy"
+    missing = (tmp_path / "missing.txt").as_posix().replace('"', '\\"')
+    source.write_text(
+        f"""import std::fs as fs
+
+fn main() i32 {{
+    let value: str = fs::read_text("{missing}") catch err {{
+        recover err.message
+    }}
+    if value == "" {{
+        return 1
+    }}
+    return 0
+}}
+""",
+        encoding="utf-8",
+    )
+
+    executable = tmp_path / ("fs-error.exe" if sys.platform.startswith("win") else "fs-error")
+    Compiler().build_file(source, executable)
+    result = subprocess.run([str(executable)], capture_output=True, text=True, check=False)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_fs_module_manages_directories_and_files_beside_executable(tmp_path: Path) -> None:
+    source = tmp_path / "fs_manage.zy"
+    source.write_text(
+        """import std::fs as fs
+
+fn main() i32 throws Error {
+    fs::create_dirs("data/nested")
+    fs::write_text("data/nested/value.txt", "hello")
+    if fs::file_size("data/nested/value.txt") != 5 {
+        return 1
+    }
+    fs::copy_file("data/nested/value.txt", "data/copy.txt")
+    fs::rename("data/copy.txt", "data/renamed.txt")
+    if fs::list_dir("data") != "nested/\\nrenamed.txt" {
+        return 2
+    }
+    fs::remove_file("data/nested/value.txt")
+    fs::remove_dir("data/nested")
+    fs::remove_file("data/renamed.txt")
+    fs::remove_dir("data")
+    return 0
+}
+""",
+        encoding="utf-8",
+    )
+
+    build = tmp_path / "build"
+    executable = build / ("fs-manage.exe" if sys.platform.startswith("win") else "fs-manage")
+    Compiler().build_file(source, executable)
+    result = subprocess.run([str(executable)], cwd=tmp_path, capture_output=True, text=True, check=False)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert not (build / "data").exists()

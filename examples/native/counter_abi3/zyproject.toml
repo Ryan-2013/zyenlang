@@ -1,0 +1,15 @@
+[package]
+name = "native-abi3-example"
+version = "0.1.0"
+zyen = ">=0.3.1"
+
+[build]
+default-target = "app"
+target-dir = "target"
+
+[targets.app]
+kind = "bin"
+entry = "main.zy"
+output-name = "native-abi3-example"
+
+[dependencies]

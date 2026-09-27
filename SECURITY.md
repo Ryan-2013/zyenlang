@@ -23,8 +23,11 @@ timeline will be coordinated after the report is reproduced.
   sandbox them.
 - `zy check` does not invoke a C compiler, but `zy build`, `zy run`, and
   library targets compile every declared native source.
+- `zy bindgen` executes the configured Clang-compatible parser on an untrusted
+  header with time and output limits. Generated adapters are review material,
+  not a sandbox or a declaration that the source library is safe.
 - Git revisions and content digests provide reproducibility, not trust. Review
   dependency source and lockfile changes.
 - The VS Code extension does not run the compiler in an untrusted workspace.
-- v0.3.0 is a source-only tag. No official v0.3 installer or archive is part
-  of this delivery; do not treat third-party binaries as project releases.
+- The 0.3.1 source update does not publish an official installer or archive;
+  do not treat third-party binaries as project releases.

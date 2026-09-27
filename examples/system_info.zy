@@ -1,0 +1,12 @@
+import std::io as io
+import std::os as os
+import std::time as time
+
+fn main() i32 throws Error {
+    io::print(f"OS: {os::name()} {os::architecture()}")
+    io::print(f"Host: {os::hostname()}")
+    io::print(f"Home: {os::home_dir()}")
+    io::print(f"UTC: {time::utc_iso8601()}")
+    io::print(f"Unix milliseconds: {time::unix_milliseconds()}")
+    return 0
+}

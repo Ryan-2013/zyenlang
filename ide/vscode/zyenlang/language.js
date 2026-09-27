@@ -143,7 +143,36 @@ const BUILTINS = {
     ['read_text', 'fn read_text(path: str) str throws Error'],
     ['write_text', 'fn write_text(path: str, value: str) i32 throws Error'],
     ['append_text', 'fn append_text(path: str, value: str) i32 throws Error'],
-    ['tree', 'fn tree(path: str) str throws Error']
+    ['tree', 'fn tree(path: str) str throws Error'],
+    ['list_dir', 'fn list_dir(path: str) str throws Error'],
+    ['create_dir', 'fn create_dir(path: str) void throws Error'],
+    ['create_dirs', 'fn create_dirs(path: str) void throws Error'],
+    ['copy_file', 'fn copy_file(source: str, destination: str) void throws Error'],
+    ['rename', 'fn rename(source: str, destination: str) void throws Error'],
+    ['remove_file', 'fn remove_file(path: str) void throws Error'],
+    ['remove_dir', 'fn remove_dir(path: str) void throws Error'],
+    ['file_size', 'fn file_size(path: str) i64 throws Error']
+  ],
+  time: [
+    ['unix_seconds', 'fn unix_seconds() i64'],
+    ['unix_milliseconds', 'fn unix_milliseconds() i64'],
+    ['monotonic_milliseconds', 'fn monotonic_milliseconds() i64'],
+    ['utc_iso8601', 'fn utc_iso8601() str'],
+    ['local_iso8601', 'fn local_iso8601() str'],
+    ['sleep_ms', 'fn sleep_ms(milliseconds: i32) i32']
+  ],
+  os: [
+    ['name', 'fn name() str'],
+    ['architecture', 'fn architecture() str'],
+    ['process_id', 'fn process_id() i64'],
+    ['current_dir', 'fn current_dir() str throws Error'],
+    ['home_dir', 'fn home_dir() str throws Error'],
+    ['temp_dir', 'fn temp_dir() str throws Error'],
+    ['hostname', 'fn hostname() str throws Error'],
+    ['env', 'fn env(name: str) str'],
+    ['has_env', 'fn has_env(name: str) bool'],
+    ['set_env', 'fn set_env(name: str, value: str) void throws Error'],
+    ['unset_env', 'fn unset_env(name: str) void throws Error']
   ],
   thread: [
     ['sleep_ms', 'fn sleep_ms(milliseconds: i32) i32'],
@@ -151,6 +180,7 @@ const BUILTINS = {
     ['cpu_count', 'fn cpu_count() i32']
   ],
   request: [
+    ['response_ok', 'fn response_ok(response: Response) bool'],
     ['get', 'fn get(url: str) Response'],
     ['get_with_timeout', 'fn get_with_timeout(url: str, timeout_ms: i32) Response'],
     ['post', 'fn post(url: str, body: str) Response'],
@@ -165,7 +195,9 @@ const BUILTINS = {
   ],
   server: [
     ['serve_once', 'fn serve_once(host: str, port: i32, body: str) i32 throws Error'],
-    ['serve', 'fn serve(host: str, port: i32, body: str, max_requests: i32) i32 throws Error']
+    ['serve', 'fn serve(host: str, port: i32, body: str, max_requests: i32) i32 throws Error'],
+    ['serve_handler', 'fn serve_handler(host: str, port: i32, max_requests: i32, handler: fn(str, str, str) str) i32 throws Error'],
+    ['serve_once_handler', 'fn serve_once_handler(host: str, port: i32, handler: fn(str, str, str) str) i32 throws Error']
   ],
   gui: [
     ['application', 'fn application(title: str, width: i32, height: i32) Application'],
@@ -186,6 +218,9 @@ const BUILTINS = {
 const BUILTIN_TYPES = {
   c_module: [
     ['Module', 'c_module::Module (template-dependent native module)']
+  ],
+  request: [
+    ['Response', 'struct Response { status: i32, body: str, error: str }']
   ]
 };
 
@@ -391,18 +426,161 @@ function addSymbol(result, symbol) {
   }
 }
 
+function stripTemplateComments(text) {
+  return text
+    .replace(/\/\*[\s\S]*?\*\//g, (value) => value.replace(/[^\n]/g, ' '))
+    .replace(/\/\/[^\n]*/g, (value) => ' '.repeat(value.length));
+}
+
+function templateMacroCalls(text, macroName) {
+  const source = stripTemplateComments(text);
+  const calls = [];
+  const pattern = new RegExp(`\\b${macroName}\\s*\\(`, 'g');
+  let match;
+  while ((match = pattern.exec(source)) !== null) {
+    const open = source.indexOf('(', match.index);
+    let depth = 1;
+    let quote = false;
+    let escaped = false;
+    let cursor = open + 1;
+    for (; cursor < source.length && depth > 0; cursor += 1) {
+      const char = source[cursor];
+      if (quote) {
+        if (escaped) escaped = false;
+        else if (char === '\\') escaped = true;
+        else if (char === '"') quote = false;
+      } else if (char === '"') quote = true;
+      else if (char === '(') depth += 1;
+      else if (char === ')') depth -= 1;
+    }
+    if (depth !== 0) continue;
+    const before = source.slice(0, match.index);
+    const line = before.split('\n').length - 1;
+    const lineStart = before.lastIndexOf('\n') + 1;
+    calls.push({
+      args: splitTopLevel(source.slice(open + 1, cursor - 1)),
+      line,
+      column: match.index - lineStart,
+      endColumn: match.index - lineStart + macroName.length
+    });
+    pattern.lastIndex = cursor;
+  }
+  return calls;
+}
+
+function unwrapTemplateType(value) {
+  const input = String(value || '').trim();
+  const wrapper = input.match(/^(optional|owned|borrowed|borrowed_static|consumed|out|inout)\s*<([\s\S]+)>$/);
+  if (!wrapper) return input;
+  const inner = splitTopLevel(wrapper[2])[0] || '';
+  const type = unwrapTemplateType(inner);
+  if (wrapper[1] === 'optional') return `${type} | null`;
+  if (wrapper[1] === 'inout') return `&mut ${type}`;
+  return type;
+}
+
+function templateFunctionSymbol(call) {
+  if (call.args.length < 3) return null;
+  const [name, , rawReturn, ...entries] = call.args;
+  if (!/^[A-Za-z_]\w*$/.test(name)) return null;
+  const parameters = [];
+  const outTypes = [];
+  let throws = false;
+  for (const entry of entries) {
+    if (/^ZLC_FAIL\s*\(/.test(entry)) {
+      throws = true;
+      continue;
+    }
+    const param = entry.match(/^ZLC_PARAM\s*\(([\s\S]*)\)$/);
+    if (!param) continue;
+    const parts = splitTopLevel(param[1]);
+    if (parts.length < 2) continue;
+    const rawType = parts.slice(1).join(',').trim();
+    const out = /^out\s*</.test(rawType);
+    if (out) outTypes.push(unwrapTemplateType(rawType));
+    else parameters.push(`${parts[0]}: ${unwrapTemplateType(rawType)}`);
+  }
+  let returnType = unwrapTemplateType(rawReturn);
+  if (returnType === 'void' && outTypes.length === 1) returnType = outTypes[0];
+  else if (outTypes.length) {
+    const values = returnType === 'void' ? outTypes : [returnType, ...outTypes];
+    returnType = `(${values.join(', ')})`;
+  }
+  return {
+    name,
+    kind: 'native',
+    visibility: 'public',
+    parameters: parameters.join(', '),
+    returnType,
+    throws,
+    detail: `fn ${name}(${parameters.join(', ')}) ${returnType}${throws ? ' throws Error' : ''}`,
+    line: call.line,
+    column: call.column,
+    endColumn: call.endColumn
+  };
+}
+
+function parseNativeTemplate(text, uri = '') {
+  const symbols = [];
+  const todos = [];
+  const abiCall = templateMacroCalls(text, 'ZLC_ABI')[0];
+  const abi = abiCall ? Number(abiCall.args[0]) : 2;
+  for (const call of templateMacroCalls(text, 'ZLC_HANDLE')) {
+    const name = call.args[0];
+    if (!/^[A-Za-z_]\w*$/.test(name || '')) continue;
+    symbols.push({ name, kind: 'nativeHandle', visibility: 'public', detail: `native handle ${name}`, ...call });
+  }
+  for (const macroName of ['ZLC_ENUM', 'ZLC_FLAGS']) {
+    for (const call of templateMacroCalls(text, macroName)) {
+      const [name, storage, ...cases] = call.args;
+      if (!/^[A-Za-z_]\w*$/.test(name || '')) continue;
+      symbols.push({ name, kind: 'nativeEnum', visibility: 'public', detail: `${macroName === 'ZLC_FLAGS' ? 'flags' : 'enum'} ${name}: ${storage}`, ...call });
+      for (const entry of cases) {
+        const found = entry.match(/^ZLC_CASE\s*\(([\s\S]*)\)$/);
+        if (!found) continue;
+        const parts = splitTopLevel(found[1]);
+        if (!/^[A-Za-z_]\w*$/.test(parts[0] || '')) continue;
+        symbols.push({ name: parts[0], kind: 'constant', type: name, returnType: name, container: name, static: true, visibility: 'public', detail: `${name}::${parts[0]} = ${parts.slice(1).join(', ')}`, ...call });
+      }
+    }
+  }
+  for (const call of templateMacroCalls(text, 'ZLC_CONST')) {
+    const [name, type, ...value] = call.args;
+    if (!/^[A-Za-z_]\w*$/.test(name || '')) continue;
+    symbols.push({ name, kind: 'constant', type: unwrapTemplateType(type), returnType: unwrapTemplateType(type), visibility: 'public', detail: `${name}: ${unwrapTemplateType(type)} = ${value.join(', ')}`, ...call });
+  }
+  for (const call of templateMacroCalls(text, 'ZLC_STRUCT')) {
+    const name = call.args[0];
+    if (/^[A-Za-z_]\w*$/.test(name || '')) symbols.push({ name, kind: 'struct', visibility: 'public', detail: `native struct ${name}`, ...call });
+  }
+  for (const call of templateMacroCalls(text, 'ZLC_FN')) {
+    const symbol = templateFunctionSymbol(call);
+    if (symbol) symbols.push(symbol);
+  }
+  text.split(/\r?\n/).forEach((line, lineNumber) => {
+    const column = line.indexOf('TODO');
+    if (column >= 0) todos.push({ line: lineNumber, column, message: line.trim() });
+  });
+  return { uri, abi, symbols, todos };
+}
+
 function parseDocument(text, uri = '') {
   const lines = text.split(/\r?\n/);
   const maskedLines = lines.map(maskLine);
-  const result = { uri, imports: [], symbols: [], exports: [], lines, maskedLines, functions: [] };
+  const result = { uri, imports: [], nativeModules: [], symbols: [], exports: [], lines, maskedLines, functions: [] };
   let depth = 0;
   let activeType = null;
   let activeFunction = null;
+  let pendingCExport = null;
 
   for (let lineNumber = 0; lineNumber < lines.length; lineNumber += 1) {
     const original = lines[lineNumber];
     const line = maskedLines[lineNumber];
     const trimmed = line.trim();
+    const cExportMatch = original.match(/^\s*#([A-Za-z_]\w*)\s*$/);
+    if (depth === 0 && cExportMatch) {
+      pendingCExport = cExportMatch[1];
+    }
 
     const importMatch = original.match(/^\s*import\s+([A-Za-z_]\w*(?:::[A-Za-z_]\w*)*)(?:\s+as\s+([A-Za-z_]\w*))?/);
     if (importMatch) {
@@ -419,6 +597,24 @@ function parseDocument(text, uri = '') {
         endColumn: Math.max(0, column) + alias.length
       };
       result.imports.push(symbol);
+      result.symbols.push(symbol);
+    }
+
+    const nativeModuleMatch = original.match(/^\s*native\s+module\s+([A-Za-z_]\w*)\s*=\s*([A-Za-z_]\w*)::load\s*\(\s*"([^"]+)"\s*\)/);
+    if (nativeModuleMatch) {
+      const name = nativeModuleMatch[1];
+      const column = original.indexOf(name);
+      const symbol = {
+        name,
+        kind: 'nativeModule',
+        loader: nativeModuleMatch[2],
+        templatePath: nativeModuleMatch[3],
+        detail: `native module ${name} = ${nativeModuleMatch[2]}::load("${nativeModuleMatch[3]}")`,
+        line: lineNumber,
+        column,
+        endColumn: column + name.length
+      };
+      result.nativeModules.push(symbol);
       result.symbols.push(symbol);
     }
 
@@ -463,9 +659,11 @@ function parseDocument(text, uri = '') {
         container: classMethod ? activeType.name : receiverType || undefined,
         static: functionMatch.modifier === 'static',
         mutable: functionMatch.modifier === 'mut',
-        exported: functionMatch.exported
+        exported: functionMatch.exported,
+        cExportName: depth === 0 ? pendingCExport : null
       };
       addSymbol(result, symbol);
+      pendingCExport = null;
       activeFunction = line.includes('{') ? { name, depth: depth + 1, startLine: lineNumber } : null;
       if (activeFunction) result.functions.push(activeFunction);
       if (receiverName) {
@@ -544,6 +742,9 @@ function parseDocument(text, uri = '') {
       activeFunction = null;
     }
     if (activeType && depth < activeType.depth) activeType = null;
+    if (depth === 0 && trimmed && !cExportMatch && !functionMatch && !trimmed.startsWith('//')) {
+      pendingCExport = null;
+    }
   }
   for (const fn of result.functions) {
     if (fn.endLine === undefined) fn.endLine = lines.length - 1;
@@ -751,6 +952,7 @@ module.exports = {
   maskLine,
   normalizeType,
   parseDocument,
+  parseNativeTemplate,
   qualifierAt,
   returnTypeFromDetail,
   splitTopLevel,

@@ -1,0 +1,86 @@
+native source "fs_native.c"
+
+private native fn read_text_native(path: str) str = "zy2_fs_read_text"
+private native fn write_text_native(path: str, value: str) i32 = "zy2_fs_write_text"
+private native fn append_text_native(path: str, value: str) i32 = "zy2_fs_append_text"
+private native fn tree_native(path: str) str = "zy2_fs_tree"
+private native fn list_dir_native(path: str) str = "zy3_fs_list_dir"
+private native fn create_dir_native(path: str) i32 = "zy3_fs_create_dir"
+private native fn create_dirs_native(path: str) i32 = "zy3_fs_create_dirs"
+private native fn remove_file_native(path: str) i32 = "zy3_fs_remove_file"
+private native fn remove_dir_native(path: str) i32 = "zy3_fs_remove_dir"
+private native fn rename_native(source: str, destination: str) i32 = "zy3_fs_rename"
+private native fn copy_file_native(source: str, destination: str) i32 = "zy3_fs_copy_file"
+private native fn file_size_native(path: str) i64 = "zy3_fs_file_size"
+private native fn last_error_native() str = "zy2_fs_error"
+
+public fn read_text(path: str) str throws Error {
+    let value: str = read_text_native(path)
+    let message: str = last_error_native()
+    if message != "" {
+        stop message
+    }
+    return value
+}
+
+public fn write_text(path: str, value: str) i32 throws Error {
+    let status: i32 = write_text_native(path, value)
+    if status != 0 {
+        stop last_error_native()
+    }
+    return status
+}
+
+public fn append_text(path: str, value: str) i32 throws Error {
+    let status: i32 = append_text_native(path, value)
+    if status != 0 {
+        stop last_error_native()
+    }
+    return status
+}
+
+public fn tree(path: str) str throws Error {
+    let value: str = tree_native(path)
+    let message: str = last_error_native()
+    if message != "" {
+        stop message
+    }
+    return value
+}
+
+public fn list_dir(path: str) str throws Error {
+    let value = list_dir_native(path)
+    let message = last_error_native()
+    if message != "" { stop message }
+    return value
+}
+
+public fn create_dir(path: str) void throws Error {
+    if create_dir_native(path) != 0 { stop last_error_native() }
+}
+
+public fn create_dirs(path: str) void throws Error {
+    if create_dirs_native(path) != 0 { stop last_error_native() }
+}
+
+public fn remove_file(path: str) void throws Error {
+    if remove_file_native(path) != 0 { stop last_error_native() }
+}
+
+public fn remove_dir(path: str) void throws Error {
+    if remove_dir_native(path) != 0 { stop last_error_native() }
+}
+
+public fn rename(source: str, destination: str) void throws Error {
+    if rename_native(source, destination) != 0 { stop last_error_native() }
+}
+
+public fn copy_file(source: str, destination: str) void throws Error {
+    if copy_file_native(source, destination) != 0 { stop last_error_native() }
+}
+
+public fn file_size(path: str) i64 throws Error {
+    let value = file_size_native(path)
+    if value < 0 { stop last_error_native() }
+    return value
+}

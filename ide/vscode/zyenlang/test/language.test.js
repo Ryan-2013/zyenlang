@@ -89,12 +89,20 @@ assert.strictEqual(language.importPathAt('let value = 1', 13), null);
 assert(language.BUILTINS.path.some(([name]) => name === 'join'));
 assert(language.BUILTINS.fs.some(([name]) => name === 'tree'));
 assert(language.BUILTINS.fs.some(([name]) => name === 'write_text'));
+assert(language.BUILTINS.fs.some(([name]) => name === 'list_dir'));
+assert(language.BUILTINS.time.some(([name]) => name === 'monotonic_milliseconds'));
+assert(language.BUILTINS.os.some(([name]) => name === 'current_dir'));
+assert(language.BUILTINS.server.some(([name]) => name === 'serve_handler'));
+assert(language.BUILTINS.request.some(([name]) => name === 'response_ok'));
 assert(!language.BUILTINS.gui.some(([name]) => name === 'button'));
 assert(language.BUILTIN_MEMBERS.Application.some((item) => item.name === 'button'));
 assert(language.BUILTIN_MEMBERS.Application.some((item) => item.name === 'button_group'));
 assert(language.STANDARD_MODULES.includes('c_module'));
 assert(language.STANDARD_MODULES.includes('editor'));
+assert(language.STANDARD_MODULES.includes('time'));
+assert(language.STANDARD_MODULES.includes('os'));
 assert(language.BUILTIN_TYPES.c_module.some(([name]) => name === 'Module'));
+assert(language.BUILTIN_TYPES.request.some(([name]) => name === 'Response'));
 
 const inferred = language.parseDocument(`import std::gui as gui
 fn clicked() void {}
@@ -146,6 +154,30 @@ private native fn editor_open(path: str) i32 = "zy2_editor_open"`;
 const nativeParsed = language.parseDocument(nativeSource, 'native.zy');
 assert(nativeParsed.exports.some((item) => item.kind === 'native' && item.name === 'editor_open' && item.returnType === 'i32'));
 
+const nativeModuleParsed = language.parseDocument(`import std::c_module as c
+native module graphics = c::load("native/graphics.zlcm.h")
+fn main() i32 { return 0 }`, 'native-module.zy');
+assert.deepStrictEqual(nativeModuleParsed.nativeModules.map((item) => [item.name, item.loader, item.templatePath]), [
+  ['graphics', 'c', 'native/graphics.zlcm.h']
+]);
+const nativeTemplate = language.parseNativeTemplate(`ZLC_ABI(3)
+ZLC_HANDLE(Window, ZLC_DROP(zy_window_drop))
+ZLC_ENUM(WindowMode, i32, ZLC_CASE(windowed, 0), ZLC_CASE(fullscreen, 1))
+ZLC_FLAGS(WindowFlags, u32, ZLC_CASE(resizable, 4), ZLC_CASE(high_dpi, 8))
+ZLC_CONST(DEFAULT_WIDTH, i32, 800)
+ZLC_FN(open, zy_window_open, optional<owned<Window>>, ZLC_PARAM(title, str), ZLC_PARAM(width, i32), ZLC_FAIL(null, zy_window_last_error))
+ZLC_FN(split, zy_split, void, ZLC_PARAM(value, i32), ZLC_PARAM(left, out<i32>), ZLC_PARAM(right, out<i32>))
+// TODO: review void * ownership
+`, 'graphics.zlcm.h');
+assert.strictEqual(nativeTemplate.abi, 3);
+assert(nativeTemplate.symbols.some((item) => item.kind === 'nativeHandle' && item.name === 'Window'));
+assert(nativeTemplate.symbols.some((item) => item.kind === 'nativeEnum' && item.name === 'WindowMode'));
+assert(nativeTemplate.symbols.some((item) => item.container === 'WindowMode' && item.name === 'fullscreen'));
+assert(nativeTemplate.symbols.some((item) => item.kind === 'constant' && item.name === 'DEFAULT_WIDTH'));
+assert(nativeTemplate.symbols.some((item) => item.name === 'open' && item.returnType === 'Window | null' && item.throws));
+assert(nativeTemplate.symbols.some((item) => item.name === 'split' && item.returnType === '(i32, i32)'));
+assert.strictEqual(nativeTemplate.todos.length, 1);
+
 const mutableParsed = language.parseDocument('fn update(mut value: i32) i32 { return value }', 'mut.zy');
 assert(mutableParsed.symbols.some((item) => item.kind === 'parameter' && item.name === 'value' && item.detail === 'mut value: i32'));
 
@@ -166,12 +198,21 @@ assert(callbackParsed.exports.some((item) => item.kind === 'function' && item.na
 assert(callbackParsed.symbols.some((item) => item.kind === 'parameter' && item.name === 'callback' && item.type === 'fn(i32, i32) i32'));
 assert(callbackParsed.exports.some((item) => item.kind === 'function' && item.name === 'pick' && item.returnType === 'fn(i32, i32) i32'));
 
+const cExportParsed = language.parseDocument(`#engine_add
+fn add(left: i32, right: i32) i32 { return left + right }
+`, 'c-export.zy');
+assert(cExportParsed.exports.some((item) => item.name === 'add' && item.cExportName === 'engine_add'));
+const grammar = fs.readFileSync(path.join(__dirname, '..', 'syntaxes', 'zyen.tmLanguage.json'), 'utf8');
+assert(grammar.includes('meta.function.c-export.zyen'));
+
 const crateAlias = language.parseDocument('import crate::tools as tools', 'alias.zy');
 assert.strictEqual(crateAlias.imports[0].name, 'tools');
 
 const manifest = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'package.json'), 'utf8'));
 assert.strictEqual(manifest.capabilities.untrustedWorkspaces.supported, 'limited');
 assert(manifest.capabilities.untrustedWorkspaces.restrictedConfigurations.includes('zyenlang.compilerPath'));
+assert(manifest.capabilities.untrustedWorkspaces.restrictedConfigurations.includes('zyenlang.stdlibPath'));
+assert(manifest.contributes.configuration.properties['zyenlang.stdlibPath']);
 const extensionSource = fs.readFileSync(path.join(__dirname, '..', 'extension.js'), 'utf8');
 assert(extensionSource.includes('new vscode.ProcessExecution'));
 assert(!extensionSource.includes('.sendText('));
@@ -181,6 +222,9 @@ assert(extensionSource.includes('registerTypeDefinitionProvider'));
 assert(extensionSource.includes('registerDocumentLinkProvider'));
 assert(!extensionSource.includes('registerInlayHintsProvider'));
 assert(extensionSource.includes('registerHoverProvider'));
+assert(extensionSource.includes('hoverMarkdownFor'));
+assert(extensionSource.includes('referencesFor'));
+assert(extensionSource.includes("['paths', '--json']"));
 assert(extensionSource.includes("['$zyenlang']"));
 assert(extensionSource.includes('parsed.maskedLines'));
 

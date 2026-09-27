@@ -1,0 +1,28 @@
+native source "server_native.c"
+native link windows "ws2_32"
+
+private native fn serve_native(host: str, port: i32, body: str, max_requests: i32) i32 = "zy2_server_serve"
+private native fn serve_handler_native(host: str, port: i32, max_requests: i32, handler: fn(str, str, str) str) i32 = "zy3_server_serve_handler"
+private native fn last_error() str = "zy2_server_error"
+
+public fn serve(host: str, port: i32, body: str, max_requests: i32) i32 throws Error {
+    let handled: i32 = serve_native(host, port, body, max_requests)
+    if handled < 0 {
+        stop last_error()
+    }
+    return handled
+}
+
+public fn serve_once(host: str, port: i32, body: str) i32 throws Error {
+    return serve(host, port, body, 1)
+}
+
+public fn serve_handler(host: str, port: i32, max_requests: i32, handler: fn(str, str, str) str) i32 throws Error {
+    let handled = serve_handler_native(host, port, max_requests, handler)
+    if handled < 0 { stop last_error() }
+    return handled
+}
+
+public fn serve_once_handler(host: str, port: i32, handler: fn(str, str, str) str) i32 throws Error {
+    return serve_handler(host, port, 1, handler)
+}

@@ -8,7 +8,10 @@ The official project-aware editor extension for ZyenLang 0.3.
 - project-aware completion for `std::`, `crate::`, locked path/Git dependencies, package entry imports, imported module symbols, static functions, class methods, and fields
 - inferred-type completion for locals such as `let app = gui::application(...)`,
   `let item = &values[0]`, and `let field = &object.value`
-- hover, parameter hints, Go to Definition, Go to Type Definition, safe local Rename, Find References, import/native-source links, outline, folding, and workspace symbols
+- cross-file Go to Definition and Find References across `crate::`, dependency, and `std::` imports
+- direct navigation into the installed standard-library `.zy` implementation
+- rich hover with function parameters, return type, visibility, throws state, class/struct properties, and methods
+- parameter hints, Go to Type Definition, safe local Rename, import/native-source links, outline, folding, and workspace symbols
 - inferred variable types on hover without always-visible editor annotations
 - live `zy check` diagnostics for the current unsaved buffer
 - migration quick fixes for old imports, module `.` access, and `FREE__()`
@@ -28,6 +31,8 @@ time, file-size, and output limits.
 
 Install ZyenLang and make sure `zy --version` works in a new terminal. If the
 compiler is elsewhere, set `zyenlang.compilerPath` to its executable path.
+The extension asks the compiler for its source paths with `zy paths --json`, so
+standard-library definitions stay aligned with the compiler actually in use.
 
 ## Commands
 
@@ -46,6 +51,7 @@ The editor title also shows Run and Check buttons for `.zy` files.
 ## Settings
 
 - `zyenlang.compilerPath`: compiler executable, default `zy`
+- `zyenlang.stdlibPath`: optional std source override; normally auto-discovered
 - `zyenlang.diagnostics.enable`: live checking, default `true`
 - `zyenlang.diagnostics.delay`: typing debounce in milliseconds, default `300`
 - `zyenlang.diagnostics.timeout`: check timeout in milliseconds, default `15000`
@@ -57,10 +63,10 @@ The editor title also shows Run and Check buttons for `.zy` files.
 ## Install a VSIX
 
 In VS Code, choose **Extensions: Install from VSIX...** and select the packaged
-`zyenlang-0.3.4.vsix`, or run:
+`zyenlang-0.3.6.vsix`, or run:
 
 ```powershell
-code --install-extension zyenlang-0.3.4.vsix --force
+code --install-extension zyenlang-0.3.6.vsix --force
 ```
 
 From a ZyenLang source checkout, the preferred command is:

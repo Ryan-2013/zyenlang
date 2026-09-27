@@ -4,7 +4,7 @@ from pathlib import Path
 
 root = Path(__file__).resolve().parents[1]
 print(f"ZyenLang root: {root}")
-needed = [root / "pyproject.toml", root / "zyen.py", root / "zyenlang" / "v2" / "compiler.py"]
+needed = [root / "pyproject.toml", root / "zyen.py", root / "zyenlang" / "compiler" / "compiler.py"]
 missing = [str(p) for p in needed if not p.exists()]
 if missing:
     print("Missing required files:")

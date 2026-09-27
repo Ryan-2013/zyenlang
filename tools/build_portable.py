@@ -194,9 +194,9 @@ def main() -> int:
     gui_demo = stage / f"zyenlang-gui-demo{executable_suffix}"
     language_demo = stage / f"zyenlang-tour{executable_suffix}"
     run([str(zy), "version"], cwd=stage)
-    run([str(zy), "check", "--file", "examples/v2_language_tour.zy"], cwd=stage)
+    run([str(zy), "check", "--file", "examples/language_tour.zy"], cwd=stage)
     run(
-        [str(zy), "emit", "--file", "examples/v2_language_tour.zy", "--kind", "c", "--out-dir", "emit-smoke"],
+        [str(zy), "emit", "--file", "examples/language_tour.zy", "--kind", "c", "--out-dir", "emit-smoke"],
         cwd=stage,
     )
     shutil.rmtree(stage / "emit-smoke")
@@ -204,7 +204,7 @@ def main() -> int:
         smoke_root = Path(temporary)
         tour_project = smoke_root / "tour"
         run([str(zy), "init", str(tour_project), "--name", "portable-tour"], cwd=stage)
-        shutil.copy2(stage / "examples/v2_language_tour.zy", tour_project / "src/main.zy")
+        shutil.copy2(stage / "examples/language_tour.zy", tour_project / "src/main.zy")
         run([str(zy), "check", "--project", str(tour_project)], cwd=stage)
         run([str(zy), "run", "--project", str(tour_project), "--release"], cwd=stage)
         run(
@@ -215,7 +215,7 @@ def main() -> int:
 
         gui_project = smoke_root / "gui"
         run([str(zy), "init", str(gui_project), "--name", "portable-gui"], cwd=stage)
-        shutil.copy2(stage / "examples/v2_gui_basic.zy", gui_project / "src/main.zy")
+        shutil.copy2(stage / "examples/gui_basic.zy", gui_project / "src/main.zy")
         run([str(zy), "check", "--project", str(gui_project)], cwd=stage)
         run(
             [str(zy), "build", "--project", str(gui_project), "--release", "--out-dir", str(stage)],

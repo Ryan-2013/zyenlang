@@ -5,6 +5,7 @@
   "patterns": [
     { "include": "#comments" },
     { "include": "#strings" },
+    { "include": "#cExports" },
     { "include": "#nativeDirectives" },
     { "include": "#imports" },
     { "include": "#structs" },
@@ -22,6 +23,18 @@
     { "include": "#operators" }
   ],
   "repository": {
+    "cExports": {
+      "patterns": [
+        {
+          "name": "meta.function.c-export.zyen",
+          "match": "^\\s*(#)([A-Za-z_]\\w*)\\s*$",
+          "captures": {
+            "1": { "name": "punctuation.definition.annotation.zyen" },
+            "2": { "name": "entity.name.function.zyen" }
+          }
+        }
+      ]
+    },
     "comments": {
       "patterns": [
         { "name": "comment.line.double-slash.zyen", "match": "//.*$" }
@@ -68,6 +81,20 @@
     },
     "nativeDirectives": {
       "patterns": [
+        {
+          "name": "meta.native.module.zyen",
+          "match": "\\b(native)\\s+(module)\\s+([A-Za-z_]\\w*)\\s*(=)\\s*([A-Za-z_]\\w*)(::)(load)\\s*\\(\\s*(\"[^\"]+\")\\s*\\)",
+          "captures": {
+            "1": { "name": "storage.modifier.native.zyen" },
+            "2": { "name": "keyword.declaration.module.zyen" },
+            "3": { "name": "entity.name.namespace.zyen" },
+            "4": { "name": "keyword.operator.assignment.zyen" },
+            "5": { "name": "entity.name.namespace.zyen" },
+            "6": { "name": "punctuation.accessor.double-colon.zyen" },
+            "7": { "name": "support.function.native.zyen" },
+            "8": { "name": "string.quoted.double.zyen" }
+          }
+        },
         {
           "name": "meta.native.source.zyen",
           "match": "\\b(native)\\s+(source)\\s+(\"[^\"]+\")",

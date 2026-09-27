@@ -1,4 +1,23 @@
 {
   "schema": 1,
-  "packages": {}
+  "packages": {
+    "numpy": {
+      "latest": "0.1.0",
+      "versions": {
+        "0.1.0": {
+          "git": "https://github.com/Ryan-2013/zyenlang-numpy.git",
+          "rev": "b69e2db8650592c6a29221287c403c6ba9f669de"
+        }
+      }
+    },
+    "opencv": {
+      "latest": "0.1.0",
+      "versions": {
+        "0.1.0": {
+          "git": "https://github.com/Ryan-2013/zyenlang-opencv.git",
+          "rev": "c1739c91c09bea08bf549e6a39d1784beaee12c9"
+        }
+      }
+    }
+  }
 }

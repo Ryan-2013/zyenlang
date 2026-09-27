@@ -9,6 +9,7 @@ const projectTools = require('./project');
 const selector = { language: 'zyen' };
 const MAX_INDEX_FILE_BYTES = 2 * 1024 * 1024;
 const MAX_DIAGNOSTIC_OUTPUT_BYTES = 1024 * 1024;
+const MAX_PATH_OUTPUT_BYTES = 64 * 1024;
 
 function symbolKind(kind) {
   return {
@@ -20,7 +21,11 @@ function symbolKind(kind) {
     field: vscode.SymbolKind.Field,
     variable: vscode.SymbolKind.Variable,
     parameter: vscode.SymbolKind.Variable,
-    import: vscode.SymbolKind.Namespace
+    import: vscode.SymbolKind.Namespace,
+    nativeModule: vscode.SymbolKind.Namespace,
+    nativeHandle: vscode.SymbolKind.Class,
+    nativeEnum: vscode.SymbolKind.Enum,
+    constant: vscode.SymbolKind.Constant
   }[kind] || vscode.SymbolKind.Variable;
 }
 
@@ -34,7 +39,11 @@ function completionKind(kind) {
     field: vscode.CompletionItemKind.Field,
     variable: vscode.CompletionItemKind.Variable,
     parameter: vscode.CompletionItemKind.Variable,
-    import: vscode.CompletionItemKind.Module
+    import: vscode.CompletionItemKind.Module,
+    nativeModule: vscode.CompletionItemKind.Module,
+    nativeHandle: vscode.CompletionItemKind.Class,
+    nativeEnum: vscode.CompletionItemKind.Enum,
+    constant: vscode.CompletionItemKind.Constant
   }[kind] || vscode.CompletionItemKind.Variable;
 }
 
@@ -50,10 +59,142 @@ function markdownFor(symbol) {
   return result;
 }
 
+function symbolAttributes(symbol) {
+  return [
+    symbol.visibility,
+    symbol.static ? 'static' : '',
+    symbol.mutable ? 'mutating' : '',
+    symbol.throws ? 'throws Error' : ''
+  ].filter(Boolean);
+}
+
+function signatureParameters(symbol) {
+  if (symbol.parameters) return language.splitTopLevel(symbol.parameters);
+  const detail = String(symbol.detail || '');
+  const open = detail.indexOf('(');
+  if (open < 0) return [];
+  let depth = 0;
+  for (let index = open; index < detail.length; index += 1) {
+    if (detail[index] === '(') depth += 1;
+    else if (detail[index] === ')') {
+      depth -= 1;
+      if (depth === 0) return language.splitTopLevel(detail.slice(open + 1, index));
+    }
+  }
+  return [];
+}
+
+async function hoverMarkdownFor(resolved, index, document) {
+  const symbol = resolved.symbol;
+  const result = new vscode.MarkdownString();
+  result.appendCodeblock(symbol.detail || symbol.name, 'zyen');
+
+  const attributes = symbolAttributes(symbol);
+  if (attributes.length) result.appendMarkdown(`\n${attributes.map((item) => `\`${item}\``).join('  ')}`);
+
+  if (['function', 'native', 'method'].includes(symbol.kind)) {
+    const parameters = signatureParameters(symbol);
+    if (parameters.length) {
+      result.appendMarkdown('\n\n**Parameters**\n');
+      for (const parameter of parameters) result.appendMarkdown(`\n- \`${parameter}\``);
+    }
+    const returnType = symbol.returnType || language.returnTypeFromDetail(symbol.detail);
+    if (returnType) result.appendMarkdown(`\n\n**Returns:** \`${returnType}\``);
+  } else if (symbol.type) {
+    result.appendMarkdown(`\n\n**Type:** \`${symbol.type}\``);
+  }
+
+  let members = [];
+  if (['class', 'struct'].includes(symbol.kind) && resolved.uri && !symbol.builtin) {
+    const source = index.documents.get(resolved.uri.toString());
+    members = (source?.parsed.exports || [])
+      .filter((item) => (item.container === symbol.name || item.receiverType === symbol.name) &&
+        (sameFile(resolved.uri, document.uri) || item.visibility !== 'private'))
+      .map((item) => ({ symbol: item, uri: source.uri }));
+  } else if (symbol.type) {
+    members = await index.membersOf(symbol.type, document);
+  }
+  const fields = members.filter((item) => item.symbol.kind === 'field').slice(0, 20);
+  const methods = members.filter((item) => item.symbol.kind === 'method').slice(0, 20);
+  if (fields.length) {
+    result.appendMarkdown('\n\n**Properties**\n');
+    for (const item of fields) result.appendMarkdown(`\n- \`${item.symbol.detail || `${item.symbol.name}: ${item.symbol.type || '?'}`}\``);
+  }
+  if (methods.length) {
+    result.appendMarkdown('\n\n**Methods**\n');
+    for (const item of methods) result.appendMarkdown(`\n- \`${item.symbol.detail || item.symbol.name}\``);
+  }
+
+  if (symbol.documentation) result.appendMarkdown(`\n\n${symbol.documentation}`);
+  if (resolved.uri && !symbol.builtin) {
+    const source = vscode.workspace.asRelativePath(resolved.uri, false);
+    result.appendMarkdown(`\n\nDefined in \`${source}:${symbol.line + 1}\``);
+  } else if (symbol.path) {
+    result.appendMarkdown(`\n\nModule: \`${symbol.path}\``);
+  }
+  return result;
+}
+
+function normalizedFilePath(value) {
+  const resolved = path.resolve(value || '');
+  return process.platform === 'win32' ? resolved.toLowerCase() : resolved;
+}
+
+function sameFile(left, right) {
+  return Boolean(left && right) && normalizedFilePath(left.fsPath || left) === normalizedFilePath(right.fsPath || right);
+}
+
+function compilerInstallationPaths(executable, cwd) {
+  return new Promise((resolve) => {
+    let stdout = '';
+    let stderr = '';
+    let settled = false;
+    const child = spawn(executable, ['paths', '--json'], {
+      cwd,
+      windowsHide: true,
+      shell: false,
+      stdio: ['ignore', 'pipe', 'pipe']
+    });
+    const finish = (value) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve(value);
+    };
+    const append = (target, chunk) => {
+      const next = target + chunk.toString('utf8');
+      if (Buffer.byteLength(next, 'utf8') > MAX_PATH_OUTPUT_BYTES) {
+        child.kill();
+        finish(undefined);
+        return target;
+      }
+      return next;
+    };
+    child.stdout.on('data', (chunk) => { stdout = append(stdout, chunk); });
+    child.stderr.on('data', (chunk) => { stderr = append(stderr, chunk); });
+    child.on('error', () => finish(undefined));
+    child.on('close', (code) => {
+      if (code !== 0 || stderr.length > MAX_PATH_OUTPUT_BYTES) return finish(undefined);
+      try {
+        const value = JSON.parse(stdout);
+        finish(value && typeof value.stdlib === 'string' ? value : undefined);
+      } catch (_) {
+        finish(undefined);
+      }
+    });
+    const timer = setTimeout(() => {
+      child.kill();
+      finish(undefined);
+    }, 3000);
+  });
+}
+
 class WorkspaceIndex {
   constructor() {
     this.documents = new Map();
+    this.nativeTemplates = new Map();
     this.workspaceLoaded = false;
+    this.stdlibRoots = new Map();
   }
 
   parse(document) {
@@ -95,6 +236,10 @@ class WorkspaceIndex {
     }
   }
 
+  invalidateConfiguration() {
+    this.stdlibRoots.clear();
+  }
+
   all() {
     return [...this.documents.values()];
   }
@@ -121,36 +266,120 @@ class WorkspaceIndex {
     }
   }
 
-  async moduleFor(document, importPath) {
-    const currentProject = this.projectFor(document);
-    const exact = projectTools.importFile(importPath, document.uri.fsPath, currentProject);
+
+  async standardLibraryRoots(uri) {
+    const project = projectTools.loadProject(uri.fsPath);
+    const root = path.resolve(project?.root || path.dirname(uri.fsPath));
+    const config = vscode.workspace.getConfiguration('zyenlang', uri);
+    const compiler = config.get('compilerPath', 'zy');
+    const configured = config.get('stdlibPath', '').trim();
+    const key = `${compiler}\0${configured}\0${root}\0${vscode.workspace.isTrusted}`;
+    if (this.stdlibRoots.has(key)) return this.stdlibRoots.get(key);
+
+    const pending = (async () => {
+      const candidates = [
+        path.join(root, 'zyenlang', 'compiler', 'std'),
+        path.join(root, 'compiler', 'std')
+      ];
+      for (const folder of vscode.workspace.workspaceFolders || []) {
+        candidates.push(path.join(folder.uri.fsPath, 'zyenlang', 'compiler', 'std'));
+        candidates.push(path.join(folder.uri.fsPath, 'compiler', 'std'));
+      }
+      if (vscode.workspace.isTrusted && configured) {
+        candidates.unshift(path.isAbsolute(configured) ? configured : path.resolve(root, configured));
+      }
+      if (vscode.workspace.isTrusted) {
+        const installed = await compilerInstallationPaths(compiler, root);
+        if (installed?.stdlib) candidates.unshift(installed.stdlib);
+      }
+      return [...new Set(candidates.map((item) => normalizedFilePath(item)))];
+    })();
+    this.stdlibRoots.set(key, pending);
+    return pending;
+  }
+
+  async moduleForUri(uri, importPath) {
+    const currentProject = projectTools.loadProject(uri.fsPath);
+    const exact = projectTools.importFile(importPath, uri.fsPath, currentProject);
     if (exact) return this.loadFile(exact);
     if (importPath.startsWith('std::')) {
+      const relative = `${importPath.slice(5).replace(/::/g, path.sep)}.zy`;
+      for (const root of await this.standardLibraryRoots(uri)) {
+        const target = path.resolve(root, relative);
+        const inside = path.relative(root, target);
+        if (inside.startsWith('..') || path.isAbsolute(inside)) continue;
+        const loaded = await this.loadFile(target);
+        if (loaded) return loaded;
+      }
       const suffix = `/std/${importPath.slice(5).replace(/::/g, '/')}.zy`;
       return this.all().find((item) => item.uri.fsPath.replace(/\\/g, '/').endsWith(suffix));
     }
     return undefined;
   }
 
+  async moduleFor(document, importPath) {
+    return this.moduleForUri(document.uri, importPath);
+  }
+
   async moduleExports(document, imported) {
     const result = [];
     const moduleName = imported.path.split('::').pop();
-    for (const [name, detail] of language.BUILTINS[moduleName] || []) {
-      result.push({ symbol: { name, kind: 'function', detail, returnType: language.returnTypeFromDetail(detail), visibility: 'public', builtin: true } });
-    }
-    for (const [name, detail] of language.BUILTIN_TYPES[moduleName] || []) {
-      result.push({ symbol: { name, kind: 'class', detail, visibility: 'public', builtin: true } });
-    }
-    if (moduleName === 'c_module') {
-      result.push({ symbol: { name: 'load', kind: 'function', detail: 'fn load(path: str) c_module::Module', returnType: 'c_module::Module', visibility: 'public', builtin: true } });
-    }
     const module = await this.moduleFor(document, imported.path);
     if (module) {
       result.push(...module.parsed.exports
         .filter((symbol) => symbol.visibility !== 'private')
         .map((symbol) => ({ symbol, uri: module.uri })));
     }
+    const realNames = new Set(result.map((item) => item.symbol.name));
+    for (const [name, detail] of language.BUILTINS[moduleName] || []) {
+      if (!realNames.has(name)) result.push({ symbol: { name, kind: 'function', detail, returnType: language.returnTypeFromDetail(detail), visibility: 'public', builtin: true } });
+    }
+    for (const [name, detail] of language.BUILTIN_TYPES[moduleName] || []) {
+      if (!realNames.has(name)) result.push({ symbol: { name, kind: 'class', detail, visibility: 'public', builtin: true } });
+    }
+    if (moduleName === 'c_module' && !realNames.has('load')) {
+      result.push({ symbol: { name: 'load', kind: 'function', detail: 'fn load(path: str) c_module::Module', returnType: 'c_module::Module', visibility: 'public', builtin: true } });
+    }
     return result;
+  }
+
+  async nativeTemplateFor(document, nativeModule) {
+    const project = this.projectFor(document);
+    const root = path.resolve(project?.root || path.dirname(document.uri.fsPath));
+    const templatePath = path.resolve(path.dirname(document.uri.fsPath), nativeModule.templatePath);
+    const relative = path.relative(root, templatePath);
+    if (relative.startsWith('..') || path.isAbsolute(relative)) return undefined;
+    const uri = vscode.Uri.file(templatePath);
+    const key = uri.toString();
+    try {
+      const stat = await vscode.workspace.fs.stat(uri);
+      const cached = this.nativeTemplates.get(key);
+      if (cached && cached.mtime === stat.mtime && cached.size === stat.size) return cached;
+      if (stat.size > MAX_INDEX_FILE_BYTES) return undefined;
+      const bytes = await vscode.workspace.fs.readFile(uri);
+      const parsed = language.parseNativeTemplate(Buffer.from(bytes).toString('utf8'), key);
+      const item = { parsed, uri, mtime: stat.mtime, size: stat.size };
+      this.nativeTemplates.set(key, item);
+      return item;
+    } catch (_) {
+      return undefined;
+    }
+  }
+
+  async nativeModuleExports(document, nativeModule) {
+    const template = await this.nativeTemplateFor(document, nativeModule);
+    if (!template) return [];
+    return template.parsed.symbols
+      .filter((symbol) => !symbol.container)
+      .map((symbol) => ({ symbol, uri: template.uri }));
+  }
+
+  async nativeMembers(document, nativeModule, container) {
+    const template = await this.nativeTemplateFor(document, nativeModule);
+    if (!template) return [];
+    return template.parsed.symbols
+      .filter((symbol) => symbol.container === container)
+      .map((symbol) => ({ symbol, uri: template.uri }));
   }
 
   async membersOf(typeName, document) {
@@ -158,26 +387,46 @@ class WorkspaceIndex {
     const pathParts = normalized.split('::');
     const canonicalType = language.baseType(pathParts.pop());
     const found = [];
-    for (const symbol of language.BUILTIN_MEMBERS[canonicalType] || []) {
-      found.push({ symbol: { ...symbol, visibility: 'public', builtin: true } });
-    }
     let sources = this.all();
+    let importedSource = false;
     if (pathParts.length && document) {
       const parsed = this.parse(document);
       const imported = parsed.imports.find((item) => item.name === pathParts[0]);
       const module = imported ? await this.moduleFor(document, imported.path) : undefined;
-      if (module) sources = [module];
+      if (module) {
+        sources = [module];
+        importedSource = !sameFile(module.uri, document.uri);
+      }
     } else if (document) {
       const current = this.documents.get(document.uri.toString());
       const ownType = current?.parsed.symbols.some((item) => item.name === canonicalType && ['class', 'struct'].includes(item.kind));
-      if (ownType) sources = [current];
+      if (ownType) {
+        sources = [current];
+      } else {
+        const importedTypes = [];
+        for (const imported of this.parse(document).imports) {
+          const module = await this.moduleFor(document, imported.path);
+          if (module?.parsed.symbols.some((item) => item.name === canonicalType && ['class', 'struct'].includes(item.kind))) {
+            importedTypes.push(module);
+          }
+        }
+        if (importedTypes.length) {
+          sources = importedTypes;
+          importedSource = true;
+        }
+      }
     }
     for (const item of sources) {
       for (const symbol of item.parsed.exports) {
         if (symbol.container === canonicalType || symbol.receiverType === canonicalType) {
+          if (importedSource && symbol.visibility === 'private') continue;
           found.push({ symbol, uri: item.uri });
         }
       }
+    }
+    const realNames = new Set(found.map((item) => item.symbol.name));
+    for (const symbol of language.BUILTIN_MEMBERS[canonicalType] || []) {
+      if (!realNames.has(symbol.name)) found.push({ symbol: { ...symbol, visibility: 'public', builtin: true } });
     }
     return [...new Map(found.map((item) => [item.symbol.name, item])).values()];
   }
@@ -185,8 +434,10 @@ class WorkspaceIndex {
   visibleLocal(parsed, name, line) {
     const active = parsed.functions.find((item) => item.startLine <= line && line <= item.endLine);
     return [...parsed.symbols].reverse().find((symbol) =>
-      symbol.name === name && symbol.line <= line &&
-      (!['variable', 'parameter'].includes(symbol.kind) || !symbol.container || symbol.container === active?.name)
+      symbol.name === name &&
+      (!['variable', 'parameter'].includes(symbol.kind) || (
+        symbol.line <= line && (!symbol.container || symbol.container === active?.name)
+      ))
     );
   }
 
@@ -220,6 +471,13 @@ class WorkspaceIndex {
       const ownerPath = owner[1];
       if (owner[2] === '::') {
         const segments = ownerPath.split('::');
+        const nativeModule = parsed.nativeModules.find((item) => item.name === segments[0]);
+        if (nativeModule) {
+          if (segments.length === 1) {
+            return (await this.nativeModuleExports(document, nativeModule)).find((item) => item.symbol.name === word.value);
+          }
+          return (await this.nativeMembers(document, nativeModule, segments[1])).find((item) => item.symbol.name === word.value);
+        }
         const imported = parsed.imports.find((item) => item.name === segments[0]);
         if (imported) {
           if (segments.length === 1) {
@@ -239,8 +497,45 @@ class WorkspaceIndex {
     }
     const imported = parsed.imports.find((item) => item.name === word.value);
     if (imported) return { symbol: imported, module: await this.moduleFor(document, imported.path), uri: document.uri };
+    const nativeModule = parsed.nativeModules.find((item) => item.name === word.value);
+    if (nativeModule) {
+      const template = await this.nativeTemplateFor(document, nativeModule);
+      return { symbol: nativeModule, module: template, uri: document.uri };
+    }
     const local = this.visibleLocal(parsed, word.value, position.line);
     return local ? { symbol: local, uri: document.uri } : undefined;
+  }
+
+  async referencesFor(document, resolved, includeDeclaration) {
+    const symbol = resolved.symbol;
+    const parsed = this.parse(document);
+    if (['variable', 'parameter', 'import', 'nativeModule'].includes(symbol.kind) || !resolved.uri || symbol.builtin) {
+      const fn = activeFunction(parsed, symbol.line);
+      const local = wordLocations({ parsed, uri: document.uri }, symbol.name).filter((location) => {
+        if (!['variable', 'parameter'].includes(symbol.kind) || !fn) return true;
+        return fn.startLine <= location.range.start.line && location.range.start.line <= fn.endLine;
+      });
+      return local.filter((location) => includeDeclaration ||
+        !sameFile(location.uri, resolved.uri) || !location.range.isEqual(symbolRange(symbol)));
+    }
+
+    await this.ensureWorkspace();
+    const locations = [];
+    const target = this.documents.get(resolved.uri.toString()) || await this.loadFile(resolved.uri.fsPath);
+    if (target) locations.push(...wordLocations(target, symbol.name));
+
+    for (const item of this.all()) {
+      if (sameFile(item.uri, resolved.uri)) continue;
+      for (const imported of item.parsed.imports) {
+        const importedModule = await this.moduleForUri(item.uri, imported.path);
+        if (!importedModule || !sameFile(importedModule.uri, resolved.uri)) continue;
+        const qualifier = symbol.container ? `${imported.name}::${symbol.container}` : imported.name;
+        locations.push(...qualifiedLocations(item, qualifier, symbol.name));
+      }
+    }
+
+    return distinctLocations(locations).filter((location) => includeDeclaration ||
+      !sameFile(location.uri, resolved.uri) || !location.range.isEqual(symbolRange(symbol)));
   }
 }
 
@@ -279,6 +574,33 @@ function wordLocations(item, name) {
     }
   }
   return result;
+}
+
+function qualifiedLocations(item, qualifier, name) {
+  const result = [];
+  const escapedQualifier = qualifier.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/::/g, '\\s*::\\s*');
+  const escapedName = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const pattern = new RegExp(`\\b${escapedQualifier}\\s*::\\s*(${escapedName})\\b`, 'g');
+  for (let lineNumber = 0; lineNumber < item.parsed.maskedLines.length; lineNumber += 1) {
+    const line = item.parsed.maskedLines[lineNumber];
+    pattern.lastIndex = 0;
+    let match;
+    while ((match = pattern.exec(line)) !== null) {
+      const start = match.index + match[0].lastIndexOf(match[1]);
+      result.push(new vscode.Location(item.uri, new vscode.Range(lineNumber, start, lineNumber, start + name.length)));
+    }
+  }
+  return result;
+}
+
+function distinctLocations(locations) {
+  const seen = new Set();
+  return locations.filter((location) => {
+    const key = `${location.uri.toString()}:${location.range.start.line}:${location.range.start.character}:${location.range.end.character}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }
 
 function dedupeCompletions(items) {
@@ -355,6 +677,14 @@ function registerLanguageFeatures(context, index) {
       const qualified = language.accessPathAt(line, position.character);
       if (qualified) {
         const root = qualified.path.split(/::|\./)[0];
+        const nativeModule = parsed.nativeModules.find((item) => item.name === root);
+        if (nativeModule && qualified.separator === '::') {
+          if (!qualified.path.includes('::')) {
+            return dedupeCompletions((await index.nativeModuleExports(document, nativeModule)).map((item) => completionFromSymbol(item.symbol)));
+          }
+          const container = qualified.path.split('::')[1];
+          return dedupeCompletions((await index.nativeMembers(document, nativeModule, container)).map((item) => completionFromSymbol(item.symbol)));
+        }
         const imported = parsed.imports.find((item) => item.name === root);
         if (imported && qualified.separator === '::') {
           if (!qualified.path.includes('::')) {
@@ -412,7 +742,7 @@ function registerLanguageFeatures(context, index) {
       index.parse(document);
       await index.ensureWorkspace();
       const resolved = await index.resolve(document, position);
-      if (resolved) return new vscode.Hover(markdownFor(resolved.symbol));
+      if (resolved) return new vscode.Hover(await hoverMarkdownFor(resolved, index, document));
       const special = language.SPECIAL_FORMS.find((item) => item.name === word.value);
       if (special) {
         return new vscode.Hover(new vscode.MarkdownString(special.documentation).appendCodeblock(special.detail, 'zyen'));
@@ -492,8 +822,10 @@ function registerLanguageFeatures(context, index) {
       let detail;
       if (call.path.includes('::')) {
         const parts = call.path.split('::');
+        const nativeModule = parsed.nativeModules.find((item) => item.name === parts[0]);
         const imported = parsed.imports.find((item) => item.name === parts[0]);
-        if (imported && parts.length === 2) detail = (await index.moduleExports(document, imported)).find((item) => item.symbol.name === call.name)?.symbol.detail;
+        if (nativeModule && parts.length === 2) detail = (await index.nativeModuleExports(document, nativeModule)).find((item) => item.symbol.name === call.name)?.symbol.detail;
+        else if (imported && parts.length === 2) detail = (await index.moduleExports(document, imported)).find((item) => item.symbol.name === call.name)?.symbol.detail;
         else if (parts.length > 2) detail = (await index.membersOf(parts.slice(0, -1).join('::'), document)).find((item) => item.symbol.name === call.name)?.symbol.detail;
       } else if (call.path.includes('.')) {
         const receiver = call.path.slice(0, call.path.lastIndexOf('.'));
@@ -526,17 +858,11 @@ function registerLanguageFeatures(context, index) {
 
   context.subscriptions.push(vscode.languages.registerReferenceProvider(selector, {
     async provideReferences(document, position, options) {
-      const word = language.wordAt(document.lineAt(position.line).text, position.character);
-      if (!word) return [];
-      const parsed = index.parse(document);
+      index.parse(document);
+      await index.ensureWorkspace();
       const resolved = await index.resolve(document, position);
       if (!resolved) return [];
-      const fn = activeFunction(parsed, position.line);
-      const locations = wordLocations({ parsed, uri: document.uri }, word.value).filter((location) => {
-        if (!['variable', 'parameter'].includes(resolved.symbol.kind) || !fn) return true;
-        return fn.startLine <= location.range.start.line && location.range.start.line <= fn.endLine;
-      });
-      return locations.filter((location) => options.includeDeclaration || !location.range.isEqual(symbolRange(resolved.symbol)));
+      return index.referencesFor(document, resolved, options.includeDeclaration);
     }
   }));
 
@@ -593,13 +919,26 @@ function registerLanguageFeatures(context, index) {
   context.subscriptions.push(vscode.languages.registerTypeDefinitionProvider(selector, {
     async provideTypeDefinition(document, position) {
       const resolved = await index.resolve(document, position);
-      if (!resolved?.symbol.type) return undefined;
-      const typeName = language.baseType(resolved.symbol.type);
+      if (!resolved) return undefined;
+      if (['struct', 'class', 'nativeHandle', 'nativeEnum'].includes(resolved.symbol.kind) && resolved.uri && !resolved.symbol.builtin) {
+        return new vscode.Location(resolved.uri, symbolRange(resolved.symbol));
+      }
+      if (!resolved.symbol.type) return undefined;
+      const normalizedType = language.normalizeType(resolved.symbol.type);
+      const parts = normalizedType.split('::');
+      const typeName = language.baseType(parts.at(-1));
       const parsed = index.parse(document);
       const own = parsed.symbols.find((item) => ['struct', 'class'].includes(item.kind) && item.name === typeName);
       if (own) return new vscode.Location(document.uri, symbolRange(own));
-      const parts = language.normalizeType(resolved.symbol.type).split('::');
       if (parts.length > 1) {
+        const nativeModule = parsed.nativeModules.find((item) => item.name === parts[0]);
+        if (nativeModule) {
+          const template = await index.nativeTemplateFor(document, nativeModule);
+          const target = template?.parsed.symbols.find((item) =>
+            ['nativeHandle', 'nativeEnum', 'struct'].includes(item.kind) && item.name === language.baseType(parts.at(-1))
+          );
+          if (template && target) return new vscode.Location(template.uri, symbolRange(target));
+        }
         const imported = parsed.imports.find((item) => item.name === parts[0]);
         const module = imported ? await index.moduleFor(document, imported.path) : undefined;
         const target = module?.parsed.symbols.find((item) => ['struct', 'class'].includes(item.kind) && item.name === language.baseType(parts.at(-1)));
@@ -609,6 +948,13 @@ function registerLanguageFeatures(context, index) {
         const module = await index.moduleFor(document, imported.path);
         const target = module?.parsed.symbols.find((item) => ['struct', 'class'].includes(item.kind) && item.name === typeName);
         if (module && target) return new vscode.Location(module.uri, symbolRange(target));
+      }
+      for (const nativeModule of parsed.nativeModules) {
+        const template = await index.nativeTemplateFor(document, nativeModule);
+        const target = template?.parsed.symbols.find((item) =>
+          ['nativeHandle', 'nativeEnum', 'struct'].includes(item.kind) && item.name === typeName
+        );
+        if (template && target) return new vscode.Location(template.uri, symbolRange(target));
       }
       return undefined;
     }
@@ -816,7 +1162,8 @@ class DiagnosticsController {
       }
       this.targets.set(key, next);
       const count = [...groups.values()].reduce((total, values) => total + values.length, 0);
-      this.status.text = count ? `$(error) ZyenLang ${count}` : '$(check) ZyenLang';
+      const hasErrors = [...groups.values()].some((values) => values.some((item) => item.severity === vscode.DiagnosticSeverity.Error));
+      this.status.text = count ? `${hasErrors ? '$(error)' : '$(warning)'} ZyenLang ${count}` : '$(check) ZyenLang';
       this.status.tooltip = count ? `${count} compiler diagnostic(s)` : 'No compiler errors';
     });
     child.stdin.on('error', () => {});
@@ -827,7 +1174,7 @@ class DiagnosticsController {
     const groups = new Map();
     const seen = new Set();
     for (const raw of output.split(/\r?\n/)) {
-      const match = raw.match(/^(.+?):(\d+):(\d+):\s*(.+)$/);
+      const match = raw.match(/^(.*):(\d+):(\d+):\s*(?:(warning|error):\s*)?(.+)$/);
       if (!match) continue;
       const sourceName = match[1].trim();
       let uri = document.uri;
@@ -844,16 +1191,38 @@ class DiagnosticsController {
         const word = document.getWordRangeAtPosition(new vscode.Position(line, safeColumn));
         end = Math.max(safeColumn + 1, word?.end.character || text.length);
       }
-      const signature = `${uri}:${line}:${column}:${match[4]}`;
+      const message = match[5];
+      const signature = `${uri}:${line}:${column}:${match[4]}:${message}`;
       if (seen.has(signature)) continue;
       seen.add(signature);
-      const diagnostic = new vscode.Diagnostic(new vscode.Range(line, column, line, end), match[4], vscode.DiagnosticSeverity.Error);
+      const severity = match[4] === 'warning' ? vscode.DiagnosticSeverity.Warning : vscode.DiagnosticSeverity.Error;
+      const diagnostic = new vscode.Diagnostic(new vscode.Range(line, column, line, end), message, severity);
       diagnostic.source = 'zy';
       const uriString = uri.toString();
       if (!groups.has(uriString)) groups.set(uriString, []);
       groups.get(uriString).push(diagnostic);
     }
-    if (!groups.size && output.trim() && !/^OK:/m.test(output)) {
+    const parsed = this.index.parse(document);
+    const legacy = parsed.lines.findIndex((line) => /:\s*[A-Za-z_]\w*::Module\s*=\s*[A-Za-z_]\w*::load\s*\(/.test(line));
+    if (legacy >= 0) {
+      const diagnostic = new vscode.Diagnostic(document.lineAt(legacy).range, 'c_module::Module is deprecated; use a top-level native module declaration.', vscode.DiagnosticSeverity.Warning);
+      diagnostic.source = 'zy';
+      if (!groups.has(document.uri.toString())) groups.set(document.uri.toString(), []);
+      groups.get(document.uri.toString()).push(diagnostic);
+    }
+    for (const nativeModule of parsed.nativeModules) {
+      const template = await this.index.nativeTemplateFor(document, nativeModule);
+      if (!template) continue;
+      for (const todo of template.parsed.todos) {
+        const diagnostic = new vscode.Diagnostic(new vscode.Range(todo.line, todo.column, todo.line, todo.column + 4), `Bindgen left an unreviewed ${todo.message}`, vscode.DiagnosticSeverity.Warning);
+        diagnostic.source = 'zy bindgen';
+        const key = template.uri.toString();
+        if (!groups.has(key)) groups.set(key, []);
+        groups.get(key).push(diagnostic);
+      }
+    }
+    const nonWarningOutput = output.split(/\r?\n/).filter((line) => line.trim() && !/^warning:\s*/.test(line) && !/^OK:/.test(line)).join('\n');
+    if (!groups.size && nonWarningOutput.trim()) {
       const diagnostic = new vscode.Diagnostic(new vscode.Range(0, 0, 0, Math.max(1, document.lineAt(0).text.length)), output.trim(), vscode.DiagnosticSeverity.Error);
       diagnostic.source = 'zy';
       groups.set(document.uri.toString(), [diagnostic]);
@@ -1051,8 +1420,14 @@ function activate(context) {
     else diagnostics.status.hide();
   }));
   context.subscriptions.push(vscode.workspace.onDidGrantWorkspaceTrust(() => {
+    index.invalidateConfiguration();
     for (const document of vscode.workspace.textDocuments) {
       if (document.languageId === 'zyen') diagnostics.schedule(document, true);
+    }
+  }));
+  context.subscriptions.push(vscode.workspace.onDidChangeConfiguration((event) => {
+    if (event.affectsConfiguration('zyenlang.compilerPath') || event.affectsConfiguration('zyenlang.stdlibPath')) {
+      index.invalidateConfiguration();
     }
   }));
   const watcher = vscode.workspace.createFileSystemWatcher('**/*.zy');
@@ -1076,4 +1451,8 @@ function activate(context) {
 
 function deactivate() {}
 
-module.exports = { activate, deactivate };
+module.exports = {
+  activate,
+  deactivate,
+  _test: { WorkspaceIndex, signatureParameters }
+};

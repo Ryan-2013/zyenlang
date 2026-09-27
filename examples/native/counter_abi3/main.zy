@@ -1,0 +1,15 @@
+import std::c_module as c
+import std::io as io
+
+native module counter = c::load("counter.zlcm.h")
+
+fn main() i32 {
+    let value: counter::Counter = counter::create(40) catch err {
+        io::eprint(err.message)
+        return 1
+    }
+    let bytes: List<u8> = [1, 1]
+    counter::add_bytes(value, c::slice(&bytes))
+    io::print((str)counter::get(value))
+    return 0
+}

@@ -55,7 +55,7 @@ jobs:
           python -m zyenlang check --project .ci-smoke
           python -m zyenlang run --project .ci-smoke
           python -m zyenlang build --project .ci-smoke --release --out-dir .ci-output
-          python -m zyenlang emit --file examples/v2_language_tour.zy --kind c --out-dir .ci-emit
+          python -m zyenlang emit --file examples/language_tour.zy --kind c --out-dir .ci-emit
 
   sanitizers:
     timeout-minutes: 20
@@ -76,7 +76,7 @@ jobs:
       - name: Install ZyenLang
         run: python -m pip install --disable-pip-version-check --no-build-isolation -e .
       - name: Run ownership smoke under ASan and UBSan
-        run: python -m zyenlang run --project tests/fixtures/v3_sanitizer_project app
+        run: python -m zyenlang run --project tests/fixtures/sanitizer_project app
 
   vscode:
     timeout-minutes: 10

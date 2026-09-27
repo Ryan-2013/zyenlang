@@ -1,0 +1,8 @@
+native source "time_native.c"
+
+public native fn unix_seconds() i64 = "zy3_time_unix_seconds"
+public native fn unix_milliseconds() i64 = "zy3_time_unix_milliseconds"
+public native fn monotonic_milliseconds() i64 = "zy3_time_monotonic_milliseconds"
+public native fn utc_iso8601() str = "zy3_time_utc_iso8601"
+public native fn local_iso8601() str = "zy3_time_local_iso8601"
+public native fn sleep_ms(milliseconds: i32) i32 = "zy3_time_sleep_ms"

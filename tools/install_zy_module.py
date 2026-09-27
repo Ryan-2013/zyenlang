@@ -5,8 +5,8 @@ Run from the project root:
     python tools/install_zy_module.py
 
 After install:
-    zy check --file examples/v2_language_tour.zy
-    zy emit --file examples/v2_language_tour.zy --kind c --out-dir generated
+    zy check --file examples/language_tour.zy
+    zy emit --file examples/language_tour.zy --kind c --out-dir generated
     zy new hello
     zy run --project hello
 """
@@ -32,7 +32,7 @@ def main() -> int:
 
     print("\nInstalled. Try:")
     print("  zy --help")
-    print("  zy check --file examples/v2_language_tour.zy")
+    print("  zy check --file examples/language_tour.zy")
     print("  zy new hello")
     print("  zy run --project hello")
     return 0

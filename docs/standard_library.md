@@ -28,7 +28,10 @@ is_empty<T>(values: List<T>) bool
 Mutation remains explicit through `LIST_*__()` intrinsics so compiler
 ownership/COW analysis sees the receiver operation.
 
-`LIST_SHAPE__(values)` is a compiler intrinsic that returns `List<usize>`.
+`List<T, Rank>` gives nested Lists a static rank while keeping every dimension
+length dynamic. `List<T>` is rank 1. `LIST_FILLED__(shape, value)` creates a
+rectangular ranked List and `values[index]` is the canonical checked read syntax.
+`LIST_SHAPE__(values)` returns `List<usize>`.
 For example, a rectangular `List<List<f64>>` with two rows and three columns
 returns `[2, 3]`; ragged nested Lists throw `Error`.
 

@@ -209,19 +209,28 @@ public class World {
 
 ## List、函式值與 Error
 
-`List<T>` 是編譯器內建的強型別、ARC backing buffer、copy-on-write 容器：
+`List<T, Rank>` 是編譯器內建的強型別、ARC backing buffer、copy-on-write
+容器；`List<T>` 是 rank 1 的簡寫：
 
 ```zy
 let values: List<i32> = [10, 20]
 LIST_PUSH__(values, 30)
 let count: usize = LIST_LEN__(values)
 let shape: List<usize> = LIST_SHAPE__(values) catch err { recover [] }
-let first: i32 = LIST_GET__(values, 0) catch err {
+let first: i32 = values[0] catch err {
     recover 0
 }
 LIST_SET__(values, 1, 42) catch err {
     recover
 }
+```
+
+執行期 shape 使用 `LIST_FILLED__()`，讀取一律優先使用 `[]`：
+
+```zy
+let shape: List<usize> = [2, 3]
+let matrix: List<f32, 2> = LIST_FILLED__(shape, 0.0)
+let value: f32 = matrix[1][2]
 ```
 
 大量 sprite、vertex、pixel 或 command 應先收集到 `List<T>`，再用 Slice 一次

@@ -67,6 +67,7 @@ assert.deepStrictEqual(language.splitTopLevel('List<i32>, fn(i32, str), i32 | nu
 assert(language.KEYWORDS.includes('TYPEOF__'));
 assert(language.KEYWORDS.includes('LIST_LEN__'));
 assert(language.KEYWORDS.includes('LIST_SHAPE__'));
+assert(language.KEYWORDS.includes('LIST_FILLED__'));
 assert(language.KEYWORDS.includes('LIST_PUSH__'));
 assert(language.KEYWORDS.includes('LIST_SET__'));
 assert(language.KEYWORDS.includes('PRINT_CMD__'));
@@ -78,6 +79,7 @@ assert(!language.KEYWORDS.includes('typeof'));
 assert.deepStrictEqual(language.SPECIAL_VALUES, []);
 assert(language.SPECIAL_FORMS.some((item) => item.name === 'LIST_PUSH__' && item.snippet.includes('${2:value}')));
 assert(language.SPECIAL_FORMS.some((item) => item.name === 'LIST_SHAPE__' && item.detail.includes('List<usize> throws Error')));
+assert(language.SPECIAL_FORMS.some((item) => item.name === 'LIST_FILLED__' && item.detail.includes('List<T, Rank>')));
 assert(language.SPECIAL_FORMS.some((item) => item.name === 'PRINT_CMD__' && item.documentation.includes('#RRGGBB')));
 assert(language.SPECIAL_FORMS.some((item) => item.name === 'STR_TO_LIST__' && item.detail.endsWith('List<str>')));
 assert(language.SPECIAL_FORMS.some((item) => item.name === 'DROP__' && item.detail === 'DROP__(local) void'));
@@ -125,6 +127,10 @@ assert.strictEqual(inferred.symbols.find((item) => item.name === 'cache').type, 
 assert.strictEqual(inferred.symbols.find((item) => item.name === 'app').type, 'Application');
 assert.strictEqual(inferred.symbols.find((item) => item.name === 'button').type, 'Button');
 assert.strictEqual(language.inferExpressionType('LIST_SHAPE__(names)', inferred, 20), 'List<usize>');
+assert.strictEqual(language.inferExpressionType('LIST_FILLED__([2, 3], 0)', inferred, 20), 'List<i32, 2>');
+inferred.symbols.push({ name: 'cube', type: 'List<i32, 3>', line: 1 });
+assert.strictEqual(language.inferExpressionType('cube[0]', inferred, 20), 'List<i32, 2>');
+assert.strictEqual(language.inferExpressionType('cube[0][1][2]', inferred, 20), 'i32');
 assert.strictEqual(language.normalizeType('&mut tools::Cache<i32> | null'), 'tools::Cache<i32>');
 assert.strictEqual(language.baseType('tools::Cache<i32>'), 'tools::Cache');
 assert.strictEqual(language.returnTypeFromDetail('fn get(path: str) Response throws Error'), 'Response');

@@ -1335,6 +1335,14 @@ def test_list_uses_builtin_len_and_checked_index_syntax(tmp_path: Path) -> None:
             "LIST_SHAPE__ expects exactly one List<T> value",
         ),
         (
+            "fn main() i32 {\n    let shape: List<usize> = [2, 3]\n    let values = LIST_FILLED__(shape, 0)\n    return 0\n}\n",
+            "LIST_FILLED__ with a runtime shape needs an explicit ranked target",
+        ),
+        (
+            "fn main() i32 throws Error {\n    let values: List<i32, 2> = LIST_FILLED__([2], 0)\n    return 0\n}\n",
+            "LIST_FILLED__ shape has 1 dimensions but the target List has rank 2",
+        ),
+        (
             'fn main() i32 {\n    let value = "hello"[0]\n    return 0\n}\n',
             "indexing with `\\[\\]` requires `List<T>`, got `str`",
         ),
@@ -1373,6 +1381,20 @@ def test_list_uses_builtin_len_and_checked_index_syntax(tmp_path: Path) -> None:
     ],
 )
 def test_list_builtin_syntax_rejects_invalid_operands(source: str, message: str) -> None:
+    with pytest.raises(CompileError, match=message):
+        Compiler().check_source(source)
+
+
+@pytest.mark.parametrize(
+    ("rank", "message"),
+    [
+        ("0", "List rank must be between 1 and 16"),
+        ("17", "List rank must be between 1 and 16"),
+        ("T", "List rank must be a positive integer literal"),
+    ],
+)
+def test_ranked_list_rejects_invalid_rank(rank: str, message: str) -> None:
+    source = f"fn main() i32 {{\n    let values: List<i32, {rank}> = []\n    return 0\n}}\n"
     with pytest.raises(CompileError, match=message):
         Compiler().check_source(source)
 

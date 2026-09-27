@@ -481,7 +481,7 @@ let values: List<i32> = [10, 20, 30]
 LIST_PUSH__(values, 40)
 LIST_SET__(values, 0, 11) catch err { recover }
 
-let first: i32 = LIST_GET__(values, 0) catch err { recover 0 }
+let first: i32 = values[0] catch err { recover 0 }
 let also_first: i32 = values[0] catch err { recover 0 }
 let last: i32 = LIST_POP__(values) catch err { recover 0 }
 let count: usize = LIST_LEN__(values)
@@ -716,7 +716,7 @@ CLONE__(value) -> T
 CLONE_REF__(reference) -> T
 REF_SET__(reference, value) -> void
 DROP__(local) -> void
-LIST_LEN__/LIST_SHAPE__/LIST_GET__/LIST_SET__/LIST_PUSH__/LIST_POP__/LIST_CLEAR__
+LIST_LEN__/LIST_SHAPE__/LIST_FILLED__/LIST_SET__/LIST_PUSH__/LIST_POP__/LIST_CLEAR__
 STR_TO_LIST__/STR_LEN__/STR_BYTE_LEN__/STR_GET__/STR_SLICE__
 PRINT_CMD__(text, "#RRGGBB") -> void
 ```

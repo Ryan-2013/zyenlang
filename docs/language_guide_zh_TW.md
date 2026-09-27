@@ -177,26 +177,45 @@ cache.set(Cache<i32>::same(42))
 
 ## List
 
-`List<T>` 是強型別、managed、copy-on-write 容器，可以放在 struct/class field。
+`List<T, Rank>` 是強型別、managed、copy-on-write 容器，可以放在 struct/class
+field。`Rank` 是 1 到 16 的編譯期整數；省略時為 1，所以 `List<i32>` 等同
+`List<i32, 1>`。每一維的長度仍可在執行期決定。
 
 ```zy
 let values: List<i32> = [10, 20]
 LIST_PUSH__(values, 30)
 LIST_SET__(values, 0, 11) catch err { recover }
-let first: i32 = LIST_GET__(values, 0) catch err { recover 0 }
+let first: i32 = values[0] catch err { recover 0 }
 let last: i32 = LIST_POP__(values) catch err { recover 0 }
 let count: usize = LIST_LEN__(values)
 let shape: List<usize> = LIST_SHAPE__(values) catch err { recover [] }
 LIST_CLEAR__(values)
 ```
 
-`values[index]` 是 `LIST_GET__()` 的語法糖並進行 bounds check。List clone 先共用
-backing storage，第一次 mutation 才 detach。Managed element 會正確 retain/release，
-`LIST_POP__()` 將該 element 的 ownership 轉移給 caller。
+`values[index]` 是正式的 checked 讀取語法；`LIST_GET__()` 僅保留相容性。List
+clone 先共用 backing storage，第一次 mutation 才 detach。Managed element 會正確
+retain/release，`LIST_POP__()` 將該 element 的 ownership 轉移給 caller。
+
+shape 可在執行期取得，rank 則像泛型參數一樣屬於靜態型別：
+
+```zy
+fn make_plane<T>(shape: List<usize>, value: T) List<T, 2> throws Error {
+    return LIST_FILLED__(shape, value)
+}
+
+let shape: List<usize> = [2, 3]
+let matrix: List<i32, 2> = make_plane<i32>(shape, 0)
+let value: i32 = matrix[1][2]
+```
+
+shape 是常值時可直接推導 rank，例如 `LIST_FILLED__([2, 3, 4], 0)` 的型別是
+`List<i32, 3>`。shape 是變數時必須由宣告或函式回傳型別提供 rank；長度不符會
+拋出可由 `catch` 處理的 `Error`。最多支援 16 維與 100,000,000 個 leaf elements。
 
 `LIST_SHAPE__()` 回傳每一層 `List` 的長度。例如
 `[[1, 2, 3], [4, 5, 6]]` 回傳 `[2, 3]`；一維 List 回傳 `[元素數]`，
-型別為 `List<List<T>>` 的空值回傳 `[0, 0]`。巢狀 List 必須是矩形，
+型別為 `List<T, 2>` 的空值回傳 `[0, 0]`。舊寫法 `List<List<T>>` 仍相容。
+巢狀 List 必須是矩形，
 不規則資料會拋出可由 `catch` 處理的 `Error`。
 
 List 作為函式參數時，三種寫法有明確差異：

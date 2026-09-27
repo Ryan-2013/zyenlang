@@ -1932,7 +1932,7 @@ class Lowerer:
         if isinstance(expression, ast.StructExpr):
             return self.coerce(self.lower_struct_expr(expression), expected, expression.span)
         if isinstance(expression, ast.CatchExpr):
-            value = self.lower_expr(expression.value)
+            value = self.lower_expr(expression.value, None if discard_result else expected)
             if not isinstance(value, ir.IRCall) or value.throws is None:
                 raise self.error("catch must be attached directly to a throwing function or method call", expression.value.span)
             self.push_scope()
@@ -2282,6 +2282,46 @@ class Lowerer:
                     raise self.error("LIST_LEN__ expects exactly one List<T> value", expression.span)
                 value = self.lower_list_receiver(expression.args[0], "LIST_LEN__")
                 return ir.IRCall(PrimitiveType("usize"), expression.span, "zy2_list_len", (value,))
+            if name == "LIST_FILLED__":
+                if len(expression.args) != 2:
+                    raise self.error("LIST_FILLED__ expects a shape and one fill value", expression.span)
+                shape_type = NamedType("List", (PrimitiveType("usize"),))
+                shape = self.lower_expr(expression.args[0], shape_type)
+
+                expected_rank = 0
+                expected_leaf = expected
+                while is_list(expected_leaf):
+                    assert isinstance(expected_leaf, NamedType)
+                    expected_rank += 1
+                    expected_leaf = expected_leaf.args[0]
+
+                literal_rank = len(expression.args[0].items) if isinstance(expression.args[0], ast.ListExpr) else None
+                if expected_rank:
+                    rank = expected_rank
+                    if literal_rank is not None and literal_rank != rank:
+                        raise self.error(
+                            f"LIST_FILLED__ shape has {literal_rank} dimensions but the target List has rank {rank}",
+                            expression.args[0].span,
+                        )
+                elif literal_rank is not None:
+                    rank = literal_rank
+                    expected_leaf = None
+                else:
+                    raise self.error(
+                        "LIST_FILLED__ with a runtime shape needs an explicit ranked target such as `List<i32, 3>`",
+                        expression.span,
+                    )
+                if rank < 1:
+                    raise self.error("LIST_FILLED__ shape must contain at least one dimension", expression.args[0].span)
+                if rank > 16:
+                    raise self.error("LIST_FILLED__ supports at most 16 dimensions", expression.args[0].span)
+
+                value = self.lower_expr(expression.args[1], expected_leaf)
+                result_type: Type = value.typ
+                for _ in range(rank):
+                    self.validate_list_element(result_type, expression.span)
+                    result_type = NamedType("List", (result_type,))
+                return ir.IRCall(result_type, expression.span, "__zy3_list_filled", (shape, value), ERROR)
             if name == "LIST_SHAPE__":
                 if len(expression.args) != 1:
                     raise self.error("LIST_SHAPE__ expects exactly one List<T> value", expression.span)

@@ -28,6 +28,7 @@ KEYWORDS = {
     "init",
     "let",
     "LIST_CLEAR__",
+    "LIST_FILLED__",
     "LIST_GET__",
     "LIST_LEN__",
     "LIST_POP__",

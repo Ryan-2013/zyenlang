@@ -1,4 +1,4 @@
-# ZyenLang 0.3.4
+# ZyenLang 0.3.5
 
 **繁體中文** | [English](README.md)
 
@@ -11,9 +11,10 @@ ZyenLang 是一門精簡、強型別並以 C11 為第一個後端的原生語言
 
 ## 版本狀態
 
-0.3.4 在官方套件、系統庫與 C Interop ABI v3 上加入跨行 postfix chain
-與矩形巢狀 List shape 查詢。本輪不建立 tag、GitHub Release、MSI 或
-portable 壓縮包；安裝資產會在各平台個別驗證後再發布。
+0.3.5 在官方套件、系統庫與 C Interop ABI v3 上加入 `List<T, Rank>`、
+執行期 shape 的 `LIST_FILLED__()`、跨行 postfix chain 與矩形 List shape
+查詢。本輪不建立 tag、GitHub Release、MSI 或 portable 壓縮包；安裝資產會在
+各平台個別驗證後再發布。
 
 ZyenLang 仍是實驗性語言，適合驗證語言設計與撰寫小型原生程式，但目前不承諾
 長期語法相容或 Rust 等級的安全性。

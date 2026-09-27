@@ -1918,6 +1918,92 @@ class CBackend:
             prelude.append(f"uintptr_t {result_value} = {self.type_name(expression.args[0].typ)}_len({args[0]});")
             prelude.extend(owned_arg_releases)
             return CExpr(result_value, prelude)
+        if expression.target == "__zy3_list_filled":
+            list_levels: list[NamedType] = []
+            current_type = expression.typ
+            while is_list(current_type):
+                assert isinstance(current_type, NamedType)
+                list_levels.append(current_type)
+                current_type = current_type.args[0]
+
+            shape_type = expression.args[0].typ
+            shape_name = self.type_name(shape_type)
+            shape_value = self.temp("filled_shape")
+            fill_value = self.temp("filled_value")
+            rank_valid = self.temp("filled_rank_valid")
+            size_valid = self.temp("filled_size_valid")
+            total_size = self.temp("filled_total_size")
+            dimensions = [self.temp("filled_dimension") for _ in list_levels]
+            prelude.extend(
+                [
+                    f"{self.c_type(shape_type)} {shape_value} = {args[0]};",
+                    f"{self.c_type(current_type)} {fill_value} = {args[1]};",
+                    f"bool {rank_valid} = {shape_name}_len({shape_value}) == {len(list_levels)};",
+                    f"bool {size_valid} = true;",
+                    f"uintptr_t {total_size} = 1;",
+                ]
+            )
+            for index, dimension in enumerate(dimensions):
+                prelude.append(
+                    f"uintptr_t {dimension} = {rank_valid} ? {shape_name}_items({shape_value})[{index}] : 0;"
+                )
+                prelude.append(
+                    f"if ({rank_valid} && ({dimension} > 100000000u || "
+                    f"({dimension} != 0 && {total_size} > 100000000u / {dimension}))) {size_valid} = false;"
+                )
+                prelude.append(f"if ({rank_valid} && {size_valid}) {total_size} *= {dimension};")
+
+            result = self.temp("result")
+            source_name = f"zl_string_borrow({self.c_string(expression.span.source_name)})"
+            prelude.extend(
+                [
+                    f"{self.result_type(expression.typ)} {result} = {{0}};",
+                    f"if (!{rank_valid}) {{",
+                    f"    {result}.ok = false;",
+                    f"    {result}.error = (zy2_Error){{ .message = zl_string_borrow(\"LIST_FILLED__ shape rank does not match its List type\"), .source_file = {source_name}, .line = {expression.span.line}, .column = {expression.span.column} }};",
+                    f"}} else if (!{size_valid}) {{",
+                    f"    {result}.ok = false;",
+                    f"    {result}.error = (zy2_Error){{ .message = zl_string_borrow(\"LIST_FILLED__ shape is too large\"), .source_file = {source_name}, .line = {expression.span.line}, .column = {expression.span.column} }};",
+                    "} else {",
+                    f"    {result}.value = {self.type_name(list_levels[0])}_new({dimensions[0]});",
+                ]
+            )
+
+            def emit_filled_level(
+                list_type: NamedType,
+                list_expression: str,
+                level: int,
+                indent: str,
+            ) -> None:
+                list_name = self.type_name(list_type)
+                element_type = list_type.args[0]
+                index = self.temp("filled_index")
+                prelude.append(
+                    f"{indent}for (uintptr_t {index} = 0; {index} < {dimensions[level]}; ++{index}) {{"
+                )
+                if is_list(element_type):
+                    assert isinstance(element_type, NamedType)
+                    child = self.temp("filled_child")
+                    child_name = self.type_name(element_type)
+                    prelude.append(
+                        f"{indent}    {self.c_type(element_type)} {child} = {child_name}_new({dimensions[level + 1]});"
+                    )
+                    emit_filled_level(element_type, child, level + 1, indent + "    ")
+                    prelude.append(f"{indent}    {list_name}_push_copy(&{list_expression}, {child});")
+                    prelude.append(f"{indent}    {child_name}_release({child});")
+                else:
+                    prelude.append(f"{indent}    {list_name}_push_copy(&{list_expression}, {fill_value});")
+                prelude.append(f"{indent}}}")
+
+            emit_filled_level(list_levels[0], f"{result}.value", 0, "    ")
+            prelude.extend(
+                [
+                    f"    {result}.ok = true;",
+                    "}",
+                ]
+            )
+            prelude.extend(owned_arg_releases)
+            return self.finish_throwing_result(expression, result, prelude, propagate)
         if expression.target == "__zy3_list_shape":
             source_type = expression.args[0].typ
             list_levels: list[NamedType] = []

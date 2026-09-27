@@ -1,4 +1,4 @@
-# ZyenLang 0.3.4
+# ZyenLang 0.3.5
 
 [繁體中文](README.zh-TW.md) | **English**
 
@@ -12,8 +12,9 @@ and VS Code support all ship through the `zy` command.
 
 ## Status
 
-Version 0.3.4 adds multiline postfix chains and rectangular nested-List shape
-introspection on top of the official package ecosystem and C Interop ABI v3.
+Version 0.3.5 adds ranked `List<T, Rank>`, runtime-shaped `LIST_FILLED__()`,
+multiline postfix chains, and rectangular List shape introspection on top of
+the official package ecosystem and C Interop ABI v3.
 This delivery does not create a tag, GitHub Release, MSI, or portable archive;
 binary packaging follows only after those artifacts are independently verified
 on each platform.

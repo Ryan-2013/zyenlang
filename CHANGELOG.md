@@ -1,5 +1,21 @@
 # Changelog
 
+## v0.3.5 - 2026-09-27
+
+### Added
+
+- `List<T, Rank>` expresses a statically typed rank from 1 through 16 while
+  retaining runtime-sized dimensions; `List<T>` remains the rank-1 shorthand.
+- `LIST_FILLED__(shape, value)` builds rectangular ranked Lists, infers rank
+  from shape literals, and reports runtime rank/size errors through `catch`.
+- VS Code understands ranked List indexing and infers literal
+  `LIST_FILLED__()` result types.
+
+### Changed
+
+- Bracket indexing (`values[index]`) is now documented as the canonical List
+  read syntax. `LIST_GET__()` remains source-compatible.
+
 ## v0.3.4 - 2026-09-27
 
 ### Added

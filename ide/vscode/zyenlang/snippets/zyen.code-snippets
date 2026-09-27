@@ -109,6 +109,11 @@
     "body": "LIST_SHAPE__(${1:list})",
     "description": "Read all rectangular nested List dimensions"
   },
+  "Ranked List filled": {
+    "prefix": "LIST_FILLED__",
+    "body": "let ${1:values}: List<${2:i32}, ${3:2}> = LIST_FILLED__(${4:shape}, ${5:0})",
+    "description": "Create a runtime-shaped List with a statically known rank"
+  },
   "List push": {
     "prefix": "LIST_PUSH__",
     "body": "LIST_PUSH__(${1:list}, ${2:value})",

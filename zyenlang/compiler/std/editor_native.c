@@ -241,7 +241,7 @@ static void editor_refresh_completion(void) {
     static const char* language_words[] = {
         "as", "await", "bool", "break", "catch", "class", "continue", "defer", "deinit", "else", "Error", "export", "f32", "f64",
         "false", "FILE__", "fn", "GET_ARGS__", "GET_EXE__", "i8", "i16", "i32", "i64", "if", "import", "init", "isize", "let", "List",
-        "CLONE__", "CLONE_REF__", "DROP__", "LIST_CLEAR__", "LIST_GET__", "LIST_LEN__", "LIST_POP__", "LIST_PUSH__", "LIST_SHAPE__", "LIST_SET__",
+        "CLONE__", "CLONE_REF__", "DROP__", "LIST_CLEAR__", "LIST_FILLED__", "LIST_GET__", "LIST_LEN__", "LIST_POP__", "LIST_PUSH__", "LIST_SHAPE__", "LIST_SET__",
         "mut", "native", "null", "PRINT_CMD__", "private", "public", "recover", "REF_SET__", "return", "spawn", "static", "stop", "str",
         "struct", "STR_BYTE_LEN__", "STR_GET__", "STR_LEN__", "STR_SLICE__", "STR_TO_LIST__", "throws", "true", "TYPEOF__", "u8", "u16", "u32", "u64", "usize", "void", "while",
         "application", "begin_frame", "button", "close", "column", "eprint", "get", "label", "next_event", "open", "panel", "present", "print", "save", "window"

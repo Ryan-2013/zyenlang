@@ -5,7 +5,7 @@ const KEYWORDS = [
   'export', 'false', 'fn', 'if', 'import', 'init', 'let', 'mut', 'native', 'null',
   'private', 'public', 'recover', 'return', 'source', 'spawn', 'static', 'stop',
   'struct', 'throws', 'true', 'while', 'TYPEOF__', 'CLONE__', 'CLONE_REF__',
-  'DROP__', 'REF_SET__', 'LIST_LEN__', 'LIST_SHAPE__', 'LIST_GET__', 'LIST_PUSH__', 'LIST_SET__',
+  'DROP__', 'REF_SET__', 'LIST_LEN__', 'LIST_SHAPE__', 'LIST_FILLED__', 'LIST_GET__', 'LIST_PUSH__', 'LIST_SET__',
   'LIST_POP__', 'LIST_CLEAR__', 'PRINT_CMD__', 'STR_TO_LIST__', 'STR_LEN__',
   'STR_BYTE_LEN__', 'STR_GET__', 'STR_SLICE__', 'FILE__', 'GET_ARGS__', 'GET_EXE__'
 ];
@@ -54,6 +54,12 @@ const SPECIAL_FORMS = [
     detail: 'LIST_SHAPE__(list: List<T> | &List<T> | &mut List<T>) List<usize> throws Error',
     snippet: 'LIST_SHAPE__(${1:list})',
     documentation: 'Return every statically known List dimension. Ragged nested Lists throw Error.'
+  },
+  {
+    name: 'LIST_FILLED__',
+    detail: 'LIST_FILLED__(shape: List<usize>, value: T) List<T, Rank> throws Error',
+    snippet: 'LIST_FILLED__(${1:shape}, ${2:value})',
+    documentation: 'Create a ranked List filled with clones of one value. Rank is inferred from a shape literal or the target List<T, Rank> type.'
   },
   {
     name: 'LIST_PUSH__',
@@ -894,11 +900,27 @@ function inferExpressionType(expression, parsed, lineNumber = Number.MAX_SAFE_IN
     const elementTypes = elements.map((item) => inferExpressionType(item, parsed, lineNumber)).filter(Boolean);
     return elementTypes.length && elementTypes.every((item) => item === elementTypes[0]) ? `List<${elementTypes[0]}>` : 'List';
   }
+  const filled = value.match(/^LIST_FILLED__\s*\(([\s\S]*)\)$/);
+  if (filled) {
+    const args = splitTopLevel(filled[1]);
+    if (args.length === 2 && args[0].trim().startsWith('[') && args[0].trim().endsWith(']')) {
+      const rank = splitTopLevel(args[0].trim().slice(1, -1)).length;
+      const leaf = inferExpressionType(args[1], parsed, lineNumber);
+      if (rank > 0 && leaf) return rank === 1 ? `List<${leaf}>` : `List<${leaf}, ${rank}>`;
+    }
+  }
   const indexed = value.match(/^(.+)\[[^\]]+\]$/);
   if (indexed) {
     const receiverType = normalizeType(inferExpressionType(indexed[1], parsed, lineNumber));
-    const list = receiverType.match(/^List\s*<(.+)>$/);
-    if (list) return list[1].trim();
+    const list = receiverType.match(/^List\s*<([\s\S]+)>$/);
+    if (list) {
+      const args = splitTopLevel(list[1]);
+      if (args.length === 2 && /^\d+$/.test(args[1].trim())) {
+        const rank = Number(args[1].trim());
+        return rank > 2 ? `List<${args[0].trim()}, ${rank - 1}>` : rank === 2 ? `List<${args[0].trim()}>` : args[0].trim();
+      }
+      if (args.length === 1) return args[0].trim();
+    }
   }
   const member = value.match(/^([A-Za-z_]\w*)\.([A-Za-z_]\w*)$/);
   if (member) {

@@ -647,6 +647,52 @@ def test_list_shape_rejects_ragged_nested_lists(tmp_path: Path) -> None:
     assert result.returncode == 0, result.stdout + result.stderr
 
 
+def test_ranked_list_filled_uses_dynamic_shape_and_bracket_indexing(tmp_path: Path) -> None:
+    result = run_source(
+        tmp_path,
+        """fn runtime_shape() List<usize> {
+    return [2, 3, 4]
+}
+
+fn main() i32 throws Error {
+    let cube: List<i32, 3> = LIST_FILLED__(runtime_shape(), 7)
+    let inferred = LIST_FILLED__([2, 2], "hello")
+    if cube[1][2][3] != 7 { return 1 }
+    if inferred[1][1] != "hello" { return 2 }
+
+    let shape = LIST_SHAPE__(cube)
+    if shape[0] != 2 || shape[1] != 3 || shape[2] != 4 { return 3 }
+    return 0
+}
+""",
+        name="ranked_list_filled",
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_ranked_list_filled_reports_runtime_rank_mismatch(tmp_path: Path) -> None:
+    result = run_source(
+        tmp_path,
+        """fn main() i32 {
+    let shape: List<usize> = [2]
+    let matrix: List<i32, 2> = LIST_FILLED__(shape, 0) catch err {
+        if err.message == "LIST_FILLED__ shape rank does not match its List type" {
+            recover []
+        } else {
+            return 2
+        }
+    }
+    if LIST_LEN__(matrix) != 0 { return 3 }
+    return 0
+}
+""",
+        name="ranked_list_rank_error",
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
 def test_postfix_method_chain_continues_after_newline_without_significant_indentation(tmp_path: Path) -> None:
     result = run_source(
         tmp_path,

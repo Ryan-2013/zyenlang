@@ -39,6 +39,7 @@ CAST_OPERAND_STARTS = {
     "LIST_GET__",
     "LIST_POP__",
     "LIST_CLEAR__",
+    "LIST_FILLED__",
     "LIST_PUSH__",
     "LIST_SHAPE__",
     "LIST_SET__",
@@ -582,7 +583,11 @@ class Parser:
             if self.match("<"):
                 self.skip_newlines()
                 while not self.at(">"):
-                    args.append(self.parse_type())
+                    if "::".join(name_parts) == "List" and len(args) == 1 and self.at("INT"):
+                        rank = self.advance()
+                        args.append(ast.NamedTypeNode(rank.span, f"__list_rank_{rank.value.replace('_', '')}"))
+                    else:
+                        args.append(self.parse_type())
                     self.skip_newlines()
                     if not self.match(","):
                         break
@@ -944,6 +949,7 @@ class Parser:
             return ast.NullExpr(token.span)
         if token := self.match(
             "LIST_LEN__",
+            "LIST_FILLED__",
             "LIST_GET__",
             "LIST_PUSH__",
             "LIST_SHAPE__",

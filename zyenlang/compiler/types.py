@@ -224,11 +224,30 @@ def resolve_type_node(
         if node.args:
             raise CompileError(f"builtin type `{node.name}` is not generic", node.span, source_name)
         return PrimitiveType(node.name)
-    args = tuple(resolve_type_node(item, known_structs, type_vars, source_name) for item in node.args)
     if node.name == "List":
-        if len(args) != 1:
-            raise CompileError("List requires exactly one element type", node.span, source_name)
-        return NamedType("List", args)
+        if len(node.args) not in {1, 2}:
+            raise CompileError("List requires an element type and optional rank, such as `List<i32, 3>`", node.span, source_name)
+        element = resolve_type_node(node.args[0], known_structs, type_vars, source_name)
+        rank = 1
+        if len(node.args) == 2:
+            rank_node = node.args[1]
+            if (
+                not isinstance(rank_node, ast.NamedTypeNode)
+                or not rank_node.name.startswith("__list_rank_")
+                or rank_node.args
+            ):
+                raise CompileError("List rank must be a positive integer literal", rank_node.span, source_name)
+            try:
+                rank = int(rank_node.name.removeprefix("__list_rank_"))
+            except ValueError as exc:
+                raise CompileError("List rank must be a positive integer literal", rank_node.span, source_name) from exc
+            if rank < 1 or rank > 16:
+                raise CompileError("List rank must be between 1 and 16", rank_node.span, source_name)
+        result = element
+        for _ in range(rank):
+            result = NamedType("List", (result,))
+        return result
+    args = tuple(resolve_type_node(item, known_structs, type_vars, source_name) for item in node.args)
     if node.name in {"__zl_slice", "__zl_mut_slice"}:
         if len(args) != 1:
             raise CompileError("native Slice requires exactly one element type", node.span, source_name)

@@ -32,6 +32,7 @@ KEYWORDS = {
     "LIST_LEN__",
     "LIST_POP__",
     "LIST_PUSH__",
+    "LIST_SHAPE__",
     "LIST_SET__",
     "mut",
     "native",

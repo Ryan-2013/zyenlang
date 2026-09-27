@@ -1,4 +1,4 @@
-# ZyenLang 0.3.2
+# ZyenLang 0.3.3
 
 [繁體中文](README.zh-TW.md) | **English**
 
@@ -12,10 +12,11 @@ and VS Code support all ship through the `zy` command.
 
 ## Status
 
-Version 0.3.2 adds the first official package ecosystem, system libraries, and
-C++17 native adapters on top of C Interop ABI v3. This delivery does not
-create a tag, GitHub Release, MSI, or portable archive; binary packaging follows
-only after those artifacts are independently verified on each platform.
+Version 0.3.3 adds rectangular nested-List shape introspection on top of the
+official package ecosystem, system libraries, and C Interop ABI v3. This
+delivery does not create a tag, GitHub Release, MSI, or portable archive;
+binary packaging follows only after those artifacts are independently verified
+on each platform.
 
 ZyenLang remains experimental. It is ready for testing the design and building
 small native programs, but compatibility and Rust-equivalent safety are not

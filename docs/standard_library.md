@@ -28,6 +28,10 @@ is_empty<T>(values: List<T>) bool
 Mutation remains explicit through `LIST_*__()` intrinsics so compiler
 ownership/COW analysis sees the receiver operation.
 
+`LIST_SHAPE__(values)` is a compiler intrinsic that returns `List<usize>`.
+For example, a rectangular `List<List<f64>>` with two rows and three columns
+returns `[2, 3]`; ragged nested Lists throw `Error`.
+
 ## `std::option`
 
 ```text

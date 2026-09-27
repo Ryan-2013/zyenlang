@@ -578,6 +578,75 @@ fn main() i32 {
     assert result.returncode == 0, result.stdout + result.stderr
 
 
+def test_list_shape_reports_static_rank_and_rectangular_dimensions(tmp_path: Path) -> None:
+    result = run_source(
+        tmp_path,
+        """class ShapeFactory {
+    public calls: i32 = 0
+    public mut fn build() List<List<i32>> {
+        this.calls = this.calls + 1
+        return [[10, 20]]
+    }
+}
+
+fn shape_of(values: &List<List<i32>>) List<usize> throws Error {
+    return LIST_SHAPE__(values)
+}
+
+fn mutable_shape(values: &mut List<i32>) List<usize> throws Error {
+    return LIST_SHAPE__(values)
+}
+
+fn main() i32 throws Error {
+    let flat: List<i32> = [1, 2, 3]
+    let matrix: List<List<i32>> = [[1, 2, 3], [4, 5, 6]]
+    let cube: List<List<List<i32>>> = [[[1, 2], [3, 4]], [[5, 6], [7, 8]]]
+    let empty: List<List<i32>> = []
+
+    let flat_shape = LIST_SHAPE__(flat)
+    let matrix_shape = shape_of(&matrix)
+    let cube_shape = LIST_SHAPE__(cube)
+    let empty_shape = LIST_SHAPE__(empty)
+    let mutable_values: List<i32> = [10, 20, 30, 40]
+    let mutable_values_shape = mutable_shape(&mut mutable_values)
+    let factory = ShapeFactory()
+    let generated_shape = LIST_SHAPE__(factory.build())
+
+    if LIST_LEN__(flat_shape) != 1 || flat_shape[0] != 3 { return 1 }
+    if LIST_LEN__(matrix_shape) != 2 || matrix_shape[0] != 2 || matrix_shape[1] != 3 { return 2 }
+    if LIST_LEN__(cube_shape) != 3 || cube_shape[0] != 2 || cube_shape[1] != 2 || cube_shape[2] != 2 { return 3 }
+    if LIST_LEN__(empty_shape) != 2 || empty_shape[0] != 0 || empty_shape[1] != 0 { return 4 }
+    if mutable_values_shape[0] != 4 { return 5 }
+    if factory.calls != 1 || generated_shape[0] != 1 || generated_shape[1] != 2 { return 6 }
+    return 0
+}
+""",
+        name="list_shape",
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_list_shape_rejects_ragged_nested_lists(tmp_path: Path) -> None:
+    result = run_source(
+        tmp_path,
+        """fn main() i32 {
+    let ragged: List<List<i32>> = [[1], [2, 3]]
+    LIST_SHAPE__(ragged) catch err {
+        if err.message == "LIST_SHAPE__ requires a rectangular nested List" {
+            return 0
+        }
+        return 2
+    }
+    return 1
+}
+""",
+        name="ragged_list_shape",
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
 def test_list_element_references_write_and_pin_cow_storage(tmp_path: Path) -> None:
     result = run_source(
         tmp_path,

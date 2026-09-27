@@ -104,6 +104,11 @@
     "body": "LIST_LEN__(${1:list})",
     "description": "Read a built-in List length"
   },
+  "List shape": {
+    "prefix": "LIST_SHAPE__",
+    "body": "LIST_SHAPE__(${1:list})",
+    "description": "Read all rectangular nested List dimensions"
+  },
   "List push": {
     "prefix": "LIST_PUSH__",
     "body": "LIST_PUSH__(${1:list}, ${2:value})",

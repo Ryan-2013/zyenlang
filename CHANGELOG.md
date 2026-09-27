@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.3.3 - 2026-09-27
+
+### Added
+
+- `LIST_SHAPE__(list)` returns `List<usize>` dimensions for flat or nested
+  Lists and supports readonly/mutable List references.
+- Rectangular validation reports a catchable `Error` for ragged nested Lists.
+- VS Code and the native editor now complete, highlight, hover, and infer the
+  result type of `LIST_SHAPE__()`.
+
 ## v0.3.2 - 2026-09-27
 
 ### Added

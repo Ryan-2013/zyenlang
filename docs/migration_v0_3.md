@@ -69,7 +69,7 @@ become `FILE__()`, `GET_ARGS__()`, and `GET_EXE__()`.
 List operations are:
 
 ```text
-LIST_LEN__ LIST_GET__ LIST_SET__ LIST_PUSH__ LIST_POP__ LIST_CLEAR__
+LIST_LEN__ LIST_SHAPE__ LIST_GET__ LIST_SET__ LIST_PUSH__ LIST_POP__ LIST_CLEAR__
 ```
 
 ## Package commands

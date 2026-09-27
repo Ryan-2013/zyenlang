@@ -63,10 +63,10 @@ The editor title also shows Run and Check buttons for `.zy` files.
 ## Install a VSIX
 
 In VS Code, choose **Extensions: Install from VSIX...** and select the packaged
-`zyenlang-0.3.6.vsix`, or run:
+`zyenlang-0.3.7.vsix`, or run:
 
 ```powershell
-code --install-extension zyenlang-0.3.6.vsix --force
+code --install-extension zyenlang-0.3.7.vsix --force
 ```
 
 From a ZyenLang source checkout, the preferred command is:

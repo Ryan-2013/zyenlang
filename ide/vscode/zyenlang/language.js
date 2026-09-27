@@ -5,7 +5,7 @@ const KEYWORDS = [
   'export', 'false', 'fn', 'if', 'import', 'init', 'let', 'mut', 'native', 'null',
   'private', 'public', 'recover', 'return', 'source', 'spawn', 'static', 'stop',
   'struct', 'throws', 'true', 'while', 'TYPEOF__', 'CLONE__', 'CLONE_REF__',
-  'DROP__', 'REF_SET__', 'LIST_LEN__', 'LIST_GET__', 'LIST_PUSH__', 'LIST_SET__',
+  'DROP__', 'REF_SET__', 'LIST_LEN__', 'LIST_SHAPE__', 'LIST_GET__', 'LIST_PUSH__', 'LIST_SET__',
   'LIST_POP__', 'LIST_CLEAR__', 'PRINT_CMD__', 'STR_TO_LIST__', 'STR_LEN__',
   'STR_BYTE_LEN__', 'STR_GET__', 'STR_SLICE__', 'FILE__', 'GET_ARGS__', 'GET_EXE__'
 ];
@@ -48,6 +48,12 @@ const SPECIAL_FORMS = [
     detail: 'LIST_LEN__(list: List<T> | &List<T> | &mut List<T>) usize',
     snippet: 'LIST_LEN__(${1:list})',
     documentation: 'Return the number of elements without cloning List storage.'
+  },
+  {
+    name: 'LIST_SHAPE__',
+    detail: 'LIST_SHAPE__(list: List<T> | &List<T> | &mut List<T>) List<usize> throws Error',
+    snippet: 'LIST_SHAPE__(${1:list})',
+    documentation: 'Return every statically known List dimension. Ragged nested Lists throw Error.'
   },
   {
     name: 'LIST_PUSH__',
@@ -908,6 +914,8 @@ function inferExpressionType(expression, parsed, lineNumber = Number.MAX_SAFE_IN
   const call = value.match(/^((?:[A-Za-z_]\w*(?:::|\.))*[A-Za-z_]\w*)\s*\(/);
   if (call) {
     const name = call[1].split(/::|\./).pop();
+    const special = SPECIAL_FORMS.find((item) => item.name === name);
+    if (special) return returnTypeFromDetail(special.detail);
     const symbol = parsed.symbols.find((item) => item.name === name && ['function', 'method', 'native'].includes(item.kind));
     if (symbol) return symbol.returnType || returnTypeFromDetail(symbol.detail);
     const memberCall = call[1].match(/^([A-Za-z_]\w*)\.([A-Za-z_]\w*)$/);

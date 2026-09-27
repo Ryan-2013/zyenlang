@@ -216,7 +216,7 @@
         { "name": "keyword.declaration.zyen", "match": "\\b(let|fn|struct|class|init|deinit|import|as|native|source|export)\\b" },
         { "name": "storage.modifier.mutable.zyen", "match": "\\bmut\\b" },
         { "name": "storage.modifier.zyen", "match": "\\b(public|private|static)\\b" },
-        { "name": "keyword.operator.special-form.zyen", "match": "\\b(TYPEOF__|CLONE__|CLONE_REF__|DROP__|REF_SET__|LIST_LEN__|LIST_GET__|LIST_PUSH__|LIST_SET__|LIST_POP__|LIST_CLEAR__|PRINT_CMD__|STR_TO_LIST__|STR_LEN__|STR_BYTE_LEN__|STR_GET__|STR_SLICE__|FILE__|GET_ARGS__|GET_EXE__)\\b" }
+        { "name": "keyword.operator.special-form.zyen", "match": "\\b(TYPEOF__|CLONE__|CLONE_REF__|DROP__|REF_SET__|LIST_LEN__|LIST_SHAPE__|LIST_GET__|LIST_PUSH__|LIST_SET__|LIST_POP__|LIST_CLEAR__|PRINT_CMD__|STR_TO_LIST__|STR_LEN__|STR_BYTE_LEN__|STR_GET__|STR_SLICE__|FILE__|GET_ARGS__|GET_EXE__)\\b" }
       ]
     },
     "types": {

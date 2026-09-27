@@ -186,12 +186,18 @@ LIST_SET__(values, 0, 11) catch err { recover }
 let first: i32 = LIST_GET__(values, 0) catch err { recover 0 }
 let last: i32 = LIST_POP__(values) catch err { recover 0 }
 let count: usize = LIST_LEN__(values)
+let shape: List<usize> = LIST_SHAPE__(values) catch err { recover [] }
 LIST_CLEAR__(values)
 ```
 
 `values[index]` 是 `LIST_GET__()` 的語法糖並進行 bounds check。List clone 先共用
 backing storage，第一次 mutation 才 detach。Managed element 會正確 retain/release，
 `LIST_POP__()` 將該 element 的 ownership 轉移給 caller。
+
+`LIST_SHAPE__()` 回傳每一層 `List` 的長度。例如
+`[[1, 2, 3], [4, 5, 6]]` 回傳 `[2, 3]`；一維 List 回傳 `[元素數]`，
+型別為 `List<List<T>>` 的空值回傳 `[0, 0]`。巢狀 List 必須是矩形，
+不規則資料會拋出可由 `catch` 處理的 `Error`。
 
 List 作為函式參數時，三種寫法有明確差異：
 
@@ -426,7 +432,7 @@ CLONE__(value) -> T
 CLONE_REF__(reference) -> T
 REF_SET__(reference, value) -> void
 DROP__(local) -> void
-LIST_LEN__/GET__/SET__/PUSH__/POP__/CLEAR__
+LIST_LEN__/SHAPE__/GET__/SET__/PUSH__/POP__/CLEAR__
 STR_TO_LIST__/LEN__/BYTE_LEN__/GET__/SLICE__
 PRINT_CMD__(text, "#RRGGBB") -> void
 ```

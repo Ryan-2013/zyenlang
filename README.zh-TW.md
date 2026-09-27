@@ -1,4 +1,4 @@
-# ZyenLang 0.3.2
+# ZyenLang 0.3.3
 
 **繁體中文** | [English](README.md)
 
@@ -11,8 +11,8 @@ ZyenLang 是一門精簡、強型別並以 C11 為第一個後端的原生語言
 
 ## 版本狀態
 
-0.3.2 在 C Interop ABI v3 上加入第一批官方套件、系統庫與 C++17 native
-adapter。本輪不建立 tag、GitHub Release、MSI 或
+0.3.3 在第一批官方套件、系統庫與 C Interop ABI v3 上加入矩形巢狀 List
+shape 查詢。本輪不建立 tag、GitHub Release、MSI 或
 portable 壓縮包；安裝資產會在各平台個別驗證後再發布。
 
 ZyenLang 仍是實驗性語言，適合驗證語言設計與撰寫小型原生程式，但目前不承諾

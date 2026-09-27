@@ -215,6 +215,7 @@ public class World {
 let values: List<i32> = [10, 20]
 LIST_PUSH__(values, 30)
 let count: usize = LIST_LEN__(values)
+let shape: List<usize> = LIST_SHAPE__(values) catch err { recover [] }
 let first: i32 = LIST_GET__(values, 0) catch err {
     recover 0
 }

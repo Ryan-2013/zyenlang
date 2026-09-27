@@ -1918,6 +1918,89 @@ class CBackend:
             prelude.append(f"uintptr_t {result_value} = {self.type_name(expression.args[0].typ)}_len({args[0]});")
             prelude.extend(owned_arg_releases)
             return CExpr(result_value, prelude)
+        if expression.target == "__zy3_list_shape":
+            source_type = expression.args[0].typ
+            list_levels: list[NamedType] = []
+            current_type = source_type
+            while is_list(current_type):
+                assert isinstance(current_type, NamedType)
+                list_levels.append(current_type)
+                current_type = current_type.args[0]
+
+            source_value = self.temp("shape_source")
+            rectangular = self.temp("shape_rectangular")
+            dimensions = [self.temp("shape_dimension") for _ in list_levels]
+            prelude.append(f"{self.c_type(source_type)} {source_value} = {args[0]};")
+            prelude.append(f"bool {rectangular} = true;")
+
+            root_name = self.type_name(list_levels[0])
+            prelude.append(f"uintptr_t {dimensions[0]} = {root_name}_len({source_value});")
+            path_expression = source_value
+            path_conditions: list[str] = []
+            for level in range(1, len(list_levels)):
+                parent_name = self.type_name(list_levels[level - 1])
+                path_conditions.append(f"{dimensions[level - 1]} > 0")
+                path_expression = f"{parent_name}_items({path_expression})[0]"
+                list_name = self.type_name(list_levels[level])
+                condition = " && ".join(path_conditions)
+                prelude.append(
+                    f"uintptr_t {dimensions[level]} = ({condition}) ? {list_name}_len({path_expression}) : 0;"
+                )
+
+            def emit_rectangular_check(
+                level: int,
+                parent_expression: str,
+                indent: str = "",
+            ) -> None:
+                if level + 1 >= len(list_levels):
+                    return
+                parent_name = self.type_name(list_levels[level])
+                child_type = list_levels[level + 1]
+                child_name = self.type_name(child_type)
+                index = self.temp("shape_index")
+                child = self.temp("shape_child")
+                prelude.append(
+                    f"{indent}for (uintptr_t {index} = 0; {rectangular} && {index} < "
+                    f"{parent_name}_len({parent_expression}); ++{index}) {{"
+                )
+                prelude.append(
+                    f"{indent}    {self.c_type(child_type)} {child} = "
+                    f"{parent_name}_items({parent_expression})[{index}];"
+                )
+                prelude.append(
+                    f"{indent}    if ({child_name}_len({child}) != {dimensions[level + 1]}) {{"
+                )
+                prelude.append(f"{indent}        {rectangular} = false;")
+                prelude.append(f"{indent}    }} else {{")
+                emit_rectangular_check(level + 1, child, indent + "        ")
+                prelude.append(f"{indent}    }}")
+                prelude.append(f"{indent}}}")
+
+            emit_rectangular_check(0, source_value)
+
+            result = self.temp("result")
+            result_list_name = self.type_name(expression.typ)
+            source_name = f"zl_string_borrow({self.c_string(expression.span.source_name)})"
+            prelude.extend(
+                [
+                    f"{self.result_type(expression.typ)} {result} = {{0}};",
+                    f"if (!{rectangular}) {{",
+                    f"    {result}.ok = false;",
+                    f"    {result}.error = (zy2_Error){{ .message = zl_string_borrow(\"LIST_SHAPE__ requires a rectangular nested List\"), .source_file = {source_name}, .line = {expression.span.line}, .column = {expression.span.column} }};",
+                    "} else {",
+                    f"    {result}.value = {result_list_name}_new({len(list_levels)});",
+                ]
+            )
+            for dimension in dimensions:
+                prelude.append(f"    {result_list_name}_push_copy(&{result}.value, {dimension});")
+            prelude.extend(
+                [
+                    f"    {result}.ok = true;",
+                    "}",
+                ]
+            )
+            prelude.extend(owned_arg_releases)
+            return self.finish_throwing_result(expression, result, prelude, propagate)
         if expression.target == "zy2_list_capacity":
             result_value = self.temp("list_capacity")
             list_name = self.type_name(expression.args[0].typ)

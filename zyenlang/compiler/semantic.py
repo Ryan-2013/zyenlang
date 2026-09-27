@@ -2282,6 +2282,12 @@ class Lowerer:
                     raise self.error("LIST_LEN__ expects exactly one List<T> value", expression.span)
                 value = self.lower_list_receiver(expression.args[0], "LIST_LEN__")
                 return ir.IRCall(PrimitiveType("usize"), expression.span, "zy2_list_len", (value,))
+            if name == "LIST_SHAPE__":
+                if len(expression.args) != 1:
+                    raise self.error("LIST_SHAPE__ expects exactly one List<T> value", expression.span)
+                value = self.lower_list_receiver(expression.args[0], "LIST_SHAPE__")
+                shape_type = NamedType("List", (PrimitiveType("usize"),))
+                return ir.IRCall(shape_type, expression.span, "__zy3_list_shape", (value,), ERROR)
             if name == "LIST_GET__":
                 if len(expression.args) != 2:
                     raise self.error("LIST_GET__ expects a List<T> and i32 index", expression.span)

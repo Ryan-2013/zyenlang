@@ -1327,6 +1327,14 @@ def test_list_uses_builtin_len_and_checked_index_syntax(tmp_path: Path) -> None:
             "LIST_LEN__ expects `List<T>`, got `str`",
         ),
         (
+            'fn main() i32 {\n    let shape = LIST_SHAPE__("hello")\n    return 0\n}\n',
+            "LIST_SHAPE__ expects `List<T>`, got `str`",
+        ),
+        (
+            "fn main() i32 {\n    let shape = LIST_SHAPE__()\n    return 0\n}\n",
+            "LIST_SHAPE__ expects exactly one List<T> value",
+        ),
+        (
             'fn main() i32 {\n    let value = "hello"[0]\n    return 0\n}\n',
             "indexing with `\\[\\]` requires `List<T>`, got `str`",
         ),

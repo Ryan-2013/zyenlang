@@ -716,7 +716,7 @@ CLONE__(value) -> T
 CLONE_REF__(reference) -> T
 REF_SET__(reference, value) -> void
 DROP__(local) -> void
-LIST_LEN__/LIST_GET__/LIST_SET__/LIST_PUSH__/LIST_POP__/LIST_CLEAR__
+LIST_LEN__/LIST_SHAPE__/LIST_GET__/LIST_SET__/LIST_PUSH__/LIST_POP__/LIST_CLEAR__
 STR_TO_LIST__/STR_LEN__/STR_BYTE_LEN__/STR_GET__/STR_SLICE__
 PRINT_CMD__(text, "#RRGGBB") -> void
 ```

@@ -204,7 +204,7 @@ fn make_plane<T>(shape: List<usize>, value: T) List<T, 2> throws Error {
 }
 
 let shape: List<usize> = [2, 3]
-let matrix: List<i32, 2> = make_plane<i32>(shape, 0)
+let matrix: List<i32, 2> = make_plane(shape, 0)
 let value: i32 = matrix[1][2]
 ```
 

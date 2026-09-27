@@ -241,7 +241,7 @@ def _metadata_document(
     has_cxx = any(path.suffix.lower() in {".cc", ".cpp", ".cxx"} for path in sources)
     return {
         "schema_version": 1,
-        "language_version": "0.3.3",
+        "language_version": "0.3.4",
         "target": target.name,
         "kind": target.kind,
         "output_name": output_name,

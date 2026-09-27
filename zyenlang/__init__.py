@@ -2,6 +2,6 @@
 
 from .compiler import CompileError, Compiler, CompilerOptions
 
-__version__ = "0.3.3"
+__version__ = "0.3.4"
 
 __all__ = ["CompileError", "Compiler", "CompilerOptions", "__version__"]

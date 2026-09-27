@@ -647,6 +647,30 @@ def test_list_shape_rejects_ragged_nested_lists(tmp_path: Path) -> None:
     assert result.returncode == 0, result.stdout + result.stderr
 
 
+def test_postfix_method_chain_continues_after_newline_without_significant_indentation(tmp_path: Path) -> None:
+    result = run_source(
+        tmp_path,
+        """public class Number {
+    private value: i32
+    public init(value: i32) { this.value = value }
+    public fn add(value: i32) Number { return Number(this.value + value) }
+    public fn get() i32 { return this.value }
+}
+
+fn main() i32 {
+    let start = Number(10)
+    let result = start
+.add(5)
+        .add(7)
+    return result.get() - 22
+}
+""",
+        name="multiline_method_chain",
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
 def test_list_element_references_write_and_pin_cow_storage(tmp_path: Path) -> None:
     result = run_source(
         tmp_path,

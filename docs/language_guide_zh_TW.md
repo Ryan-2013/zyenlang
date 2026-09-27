@@ -213,6 +213,18 @@ fn append(values: &mut List<i32>) void { values.push(42) } // 修改呼叫端
 
 ## 函式、泛型與多回傳值
 
+Method chain 可以在 `.` 之前換行。縮排只影響排版，不影響語意；下一行第一個
+token 是 `.` 時，該行會延續上一個 expression：
+
+```zy
+let result = matrix
+    .transpose()
+    .reshape(1, 4)
+    .scale(2.0)
+```
+
+`.transpose()` 前面即使沒有空白也能編譯，但建議縮排四格以方便閱讀。
+
 ```zy
 fn add<T>(left: T, right: T) T {
     return left + right

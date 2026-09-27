@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.3.4 - 2026-09-27
+
+### Added
+
+- Postfix method chains may continue on the next physical line when that line
+  starts with `.`, independent of indentation width.
+
 ## v0.3.3 - 2026-09-27
 
 ### Added

@@ -872,6 +872,13 @@ class Parser:
                 handler = self.parse_block()
                 expression = ast.CatchExpr(token.span, expression, error.value, handler)
                 continue
+            if (
+                self.at("NEWLINE")
+                and self.index + 1 < len(self.tokens)
+                and self.tokens[self.index + 1].kind == "."
+            ):
+                self.advance()
+                continue
             break
         return expression
 

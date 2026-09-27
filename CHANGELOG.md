@@ -9,6 +9,11 @@
 - The official registry now publishes numpy 0.3.0 with dynamic-rank contiguous
   Arrays while retaining rank-2 matrix conveniences.
 
+### Changed
+
+- The default registry URL uses an explicit `refs/heads/main` path to avoid
+  stale responses from GitHub's abbreviated raw branch URL.
+
 ## v0.3.3 - 2026-09-27
 
 ### Added

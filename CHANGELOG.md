@@ -6,6 +6,8 @@
 
 - Postfix method chains may continue on the next physical line when that line
   starts with `.`, independent of indentation width.
+- The official registry now publishes numpy 0.3.0 with dynamic-rank contiguous
+  Arrays while retaining rank-2 matrix conveniences.
 
 ## v0.3.3 - 2026-09-27
 

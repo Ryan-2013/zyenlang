@@ -103,8 +103,9 @@ zy install numpy
 zy install opencv
 ```
 
-- `numpy` provides dependency-free, ARC-owned `f64` arrays, indexing,
-  reductions, element-wise addition, scaling, and matrix multiplication.
+- `numpy` provides dependency-free, ARC-owned two-dimensional `f64` arrays,
+  rectangular nested-List conversion, reshape/transpose, checked indexing,
+  reductions, element-wise arithmetic, scaling, and matrix multiplication.
 - `opencv` provides ARC-owned OpenCV 4 image handles, file I/O, resizing,
   grayscale conversion, Gaussian blur, crop, and byte-buffer conversion.
   Installing the source package is platform-independent; building a program

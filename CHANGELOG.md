@@ -9,6 +9,8 @@
 - Rectangular validation reports a catchable `Error` for ragged nested Lists.
 - VS Code and the native editor now complete, highlight, hover, and infer the
   result type of `LIST_SHAPE__()`.
+- The official registry now publishes numpy 0.2.0 with nested-List conversion,
+  layout transforms, element-wise arithmetic, and min/max reductions.
 
 ## v0.3.2 - 2026-09-27
 

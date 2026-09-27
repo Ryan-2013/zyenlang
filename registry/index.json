@@ -2,11 +2,15 @@
   "schema": 1,
   "packages": {
     "numpy": {
-      "latest": "0.1.0",
+      "latest": "0.2.0",
       "versions": {
         "0.1.0": {
           "git": "https://github.com/Ryan-2013/zyenlang-numpy.git",
           "rev": "b69e2db8650592c6a29221287c403c6ba9f669de"
+        },
+        "0.2.0": {
+          "git": "https://github.com/Ryan-2013/zyenlang-numpy.git",
+          "rev": "cd7bf1170bff0fb480ccdc67b96f1925a6fc48be"
         }
       }
     },

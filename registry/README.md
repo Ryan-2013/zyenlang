@@ -32,6 +32,7 @@ a private or offline registry.
 
 ## Official packages
 
-- `numpy`: dependency-free contiguous `f64` arrays and matrix operations.
+- `numpy`: dependency-free contiguous `f64` arrays, nested-List conversion,
+  layout transforms, reductions, element-wise arithmetic, and matrix operations.
 - `opencv`: ARC-safe OpenCV 4 image handles and common image transforms. The
   build machine must provide compatible OpenCV development files.

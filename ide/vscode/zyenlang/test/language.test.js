@@ -136,6 +136,38 @@ assert.strictEqual(language.baseType('tools::Cache<i32>'), 'tools::Cache');
 assert.strictEqual(language.returnTypeFromDetail('fn get(path: str) Response throws Error'), 'Response');
 assert(inferred.functions.some((item) => item.name === 'main'));
 
+const genericClasses = language.parseDocument(`public class Box<T> {
+    private value: T
+    public init(value: T) { this.value = value }
+    public fn get() T { return this.value }
+}
+fn make_box() Box<i32> { return Box<i32>(10) }
+fn main() i32 {
+    let box: Box<str> = Box<str>("value")
+    let text = box.get()
+    let number = make_box().get()
+    return 0
+}`, 'generic-classes.zy');
+const boxDeclaration = genericClasses.exports.find((item) => item.kind === 'class' && item.name === 'Box');
+assert.deepStrictEqual(boxDeclaration.typeParameters, ['T']);
+assert(genericClasses.exports.some((item) => item.kind === 'constructor' && item.container === 'Box' && item.parameters === 'value: T'));
+assert.strictEqual(genericClasses.symbols.find((item) => item.kind === 'variable' && item.name === 'text').type, 'str');
+assert.strictEqual(genericClasses.symbols.find((item) => item.kind === 'variable' && item.name === 'number').type, 'i32');
+assert.deepStrictEqual(language.parseTypeReference('crate::store::Box<List<i32>>'), {
+  raw: 'crate::store::Box<List<i32>>',
+  path: 'crate::store::Box',
+  name: 'Box',
+  namespace: 'crate::store',
+  arguments: ['List<i32>']
+});
+assert.strictEqual(language.substituteType('fn set(value: T) List<T>', { T: 'i32' }), 'fn set(value: i32) List<i32>');
+assert.deepStrictEqual(language.memberAccessAt('    let value = make_box().ge', 29), {
+  expression: 'make_box()', prefix: 'ge', separator: '.'
+});
+assert.deepStrictEqual(language.callExpressionAt('    make_box().get(10, ', 23), {
+  callee: 'make_box().get', path: 'make_box().get', name: 'get', activeParameter: 1
+});
+
 const references = language.parseDocument(`class Bag {
     public items: List<i32> = [1]
 }

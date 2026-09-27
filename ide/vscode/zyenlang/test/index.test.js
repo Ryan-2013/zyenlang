@@ -150,6 +150,79 @@ fn helper() i32 {
       'callback: fn(i32) str',
       'value: i32'
     ]);
+
+    const projectRoot = path.join(root, 'generic-project');
+    const sourceRoot = path.join(projectRoot, 'src');
+    fs.mkdirSync(sourceRoot, { recursive: true });
+    fs.writeFileSync(path.join(projectRoot, 'zyproject.toml'), `[package]
+name = "generic-project"
+version = "0.3.0"
+
+[build]
+default-target = "app"
+
+[targets.app]
+kind = "bin"
+entry = "src/main.zy"
+`);
+    const modelPath = path.join(sourceRoot, 'model.zy');
+    fs.writeFileSync(modelPath, `public class Box<T> {
+    private value: T
+    public init(value: T) { this.value = value }
+    public fn get() T { return this.value }
+    public mut fn set(value: T) void { this.value = value }
+}
+public fn make_box() Box<i32> { return Box<i32>(10) }
+`);
+    const genericPath = path.join(sourceRoot, 'main.zy');
+    const genericSource = `import crate::model as model
+fn main() i32 {
+    let box: model::Box<i32> = model::Box<i32>(10)
+    let first = box.get()
+    let second = model::make_box().get()
+    let text = model::Box<str>("hello").get()
+    let inferred_box = model::make_box()
+    let inferred_value = inferred_box.get()
+    let third = model::make_box()
+        .get()
+    return first + second
+}
+`;
+    fs.writeFileSync(genericPath, genericSource);
+    const genericDocument = documentFor(genericPath, genericSource);
+    index.parse(genericDocument);
+
+    const boxMembers = await index.membersOf('model::Box<i32>', genericDocument);
+    const genericGet = boxMembers.find((item) => item.symbol.name === 'get');
+    const genericSet = boxMembers.find((item) => item.symbol.name === 'set');
+    assert.strictEqual(genericGet.symbol.returnType, 'i32');
+    assert.strictEqual(genericSet.symbol.parameters, 'value: i32');
+    assert(boxMembers.some((item) => item.symbol.kind === 'constructor' && item.symbol.parameters === 'value: i32'));
+    assert(!boxMembers.some((item) => item.symbol.name === 'value'), 'private fields from imported classes stay hidden');
+    assert.strictEqual(await index.typeOfExpression(genericDocument, 'box.get()', 3), 'i32');
+    assert.strictEqual(await index.typeOfExpression(genericDocument, 'model::make_box().get()', 4), 'i32');
+    assert.strictEqual(await index.typeOfExpression(genericDocument, 'model::Box<str>("hello").get()', 5), 'str');
+    assert.strictEqual(await index.typeOfExpression(genericDocument, 'inferred_box', 7), 'model::Box<i32>');
+    assert.strictEqual(await index.typeOfExpression(genericDocument, 'inferred_box.get()', 7), 'i32');
+
+    const genericLines = genericSource.split(/\r?\n/);
+    const chainedLine = genericLines.findIndex((line) => line.includes('make_box'));
+    const chainedResolved = await index.resolve(
+      genericDocument,
+      new Position(chainedLine, genericLines[chainedLine].lastIndexOf('get') + 1)
+    );
+    assert(chainedResolved && chainedResolved.symbol.name === 'get');
+    assert.strictEqual(chainedResolved.symbol.returnType, 'i32');
+    assert.strictEqual(chainedResolved.uri.fsPath, modelPath);
+
+    const continuationLine = genericLines.findIndex((line) => line.trim() === '.get()');
+    assert.strictEqual(index.continuationReceiver(genericDocument, continuationLine), 'model::make_box()');
+    const continuationResolved = await index.resolve(
+      genericDocument,
+      new Position(continuationLine, genericLines[continuationLine].indexOf('get') + 1)
+    );
+    assert(continuationResolved && continuationResolved.symbol.name === 'get');
+    assert.strictEqual(continuationResolved.symbol.returnType, 'i32');
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }

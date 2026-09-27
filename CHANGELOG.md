@@ -10,6 +10,9 @@
   from shape literals, and reports runtime rank/size errors through `catch`.
 - VS Code understands ranked List indexing and infers literal
   `LIST_FILLED__()` result types.
+- VS Code 0.3.9 indexes class constructors and generic parameters, specializes
+  class fields and method signatures, and preserves completion, hover,
+  signature help, and definition navigation through chained method calls.
 
 ### Changed
 

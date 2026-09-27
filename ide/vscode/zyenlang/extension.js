@@ -15,6 +15,7 @@ function symbolKind(kind) {
   return {
     struct: vscode.SymbolKind.Struct,
     class: vscode.SymbolKind.Class,
+    constructor: vscode.SymbolKind.Constructor,
     function: vscode.SymbolKind.Function,
     native: vscode.SymbolKind.Function,
     method: vscode.SymbolKind.Method,
@@ -33,6 +34,7 @@ function completionKind(kind) {
   return {
     struct: vscode.CompletionItemKind.Struct,
     class: vscode.CompletionItemKind.Class,
+    constructor: vscode.CompletionItemKind.Constructor,
     function: vscode.CompletionItemKind.Function,
     native: vscode.CompletionItemKind.Function,
     method: vscode.CompletionItemKind.Method,
@@ -92,7 +94,7 @@ async function hoverMarkdownFor(resolved, index, document) {
   const attributes = symbolAttributes(symbol);
   if (attributes.length) result.appendMarkdown(`\n${attributes.map((item) => `\`${item}\``).join('  ')}`);
 
-  if (['function', 'native', 'method'].includes(symbol.kind)) {
+  if (['constructor', 'function', 'native', 'method'].includes(symbol.kind)) {
     const parameters = signatureParameters(symbol);
     if (parameters.length) {
       result.appendMarkdown('\n\n**Parameters**\n');
@@ -106,16 +108,18 @@ async function hoverMarkdownFor(resolved, index, document) {
 
   let members = [];
   if (['class', 'struct'].includes(symbol.kind) && resolved.uri && !symbol.builtin) {
-    const source = index.documents.get(resolved.uri.toString());
-    members = (source?.parsed.exports || [])
-      .filter((item) => (item.container === symbol.name || item.receiverType === symbol.name) &&
-        (sameFile(resolved.uri, document.uri) || item.visibility !== 'private'))
-      .map((item) => ({ symbol: item, uri: source.uri }));
+    const typeName = `${symbol.name}${symbol.typeParameters?.length ? `<${symbol.typeParameters.join(', ')}>` : ''}`;
+    members = await index.membersOf(typeName, document);
   } else if (symbol.type) {
     members = await index.membersOf(symbol.type, document);
   }
   const fields = members.filter((item) => item.symbol.kind === 'field').slice(0, 20);
   const methods = members.filter((item) => item.symbol.kind === 'method').slice(0, 20);
+  const constructors = members.filter((item) => item.symbol.kind === 'constructor').slice(0, 5);
+  if (constructors.length) {
+    result.appendMarkdown('\n\n**Constructors**\n');
+    for (const item of constructors) result.appendMarkdown(`\n- \`${item.symbol.detail || item.symbol.name}\``);
+  }
   if (fields.length) {
     result.appendMarkdown('\n\n**Properties**\n');
     for (const item of fields) result.appendMarkdown(`\n- \`${item.symbol.detail || `${item.symbol.name}: ${item.symbol.type || '?'}`}\``);
@@ -383,44 +387,51 @@ class WorkspaceIndex {
   }
 
   async membersOf(typeName, document) {
-    const normalized = language.normalizeType(typeName);
-    const pathParts = normalized.split('::');
-    const canonicalType = language.baseType(pathParts.pop());
+    const reference = language.parseTypeReference(typeName);
+    const pathParts = reference.path.split('::').filter(Boolean);
+    const canonicalType = pathParts.pop() || '';
+    const namespace = pathParts.join('::');
     const found = [];
-    let sources = this.all();
-    let importedSource = false;
-    if (pathParts.length && document) {
+    let sources = this.all().map((item) => ({ item, imported: document ? !sameFile(item.uri, document.uri) : false }));
+    if (namespace && document) {
       const parsed = this.parse(document);
-      const imported = parsed.imports.find((item) => item.name === pathParts[0]);
+      const imported = parsed.imports.find((item) => item.name === namespace || item.name === namespace.split('::')[0] || item.path === namespace);
       const module = imported ? await this.moduleFor(document, imported.path) : undefined;
       if (module) {
-        sources = [module];
-        importedSource = !sameFile(module.uri, document.uri);
+        sources = [{ item: module, imported: !sameFile(module.uri, document.uri) }];
       }
     } else if (document) {
       const current = this.documents.get(document.uri.toString());
       const ownType = current?.parsed.symbols.some((item) => item.name === canonicalType && ['class', 'struct'].includes(item.kind));
       if (ownType) {
-        sources = [current];
+        sources = [{ item: current, imported: false }];
       } else {
         const importedTypes = [];
         for (const imported of this.parse(document).imports) {
           const module = await this.moduleFor(document, imported.path);
           if (module?.parsed.symbols.some((item) => item.name === canonicalType && ['class', 'struct'].includes(item.kind))) {
-            importedTypes.push(module);
+            importedTypes.push({ item: module, imported: !sameFile(module.uri, document.uri) });
           }
         }
         if (importedTypes.length) {
           sources = importedTypes;
-          importedSource = true;
         }
       }
     }
-    for (const item of sources) {
-      for (const symbol of item.parsed.exports) {
-        if (symbol.container === canonicalType || symbol.receiverType === canonicalType) {
-          if (importedSource && symbol.visibility === 'private') continue;
-          found.push({ symbol, uri: item.uri });
+    for (const source of sources) {
+      const declaration = source.item.parsed.symbols.find(
+        (item) => item.name === canonicalType && ['class', 'struct'].includes(item.kind)
+      );
+      const typeParameters = declaration?.typeParameters || [];
+      for (const symbol of source.item.parsed.exports) {
+        const receiverType = language.parseTypeReference(symbol.receiverType || '').name;
+        if (symbol.container === canonicalType || receiverType === canonicalType) {
+          if (source.imported && symbol.visibility === 'private') continue;
+          found.push({
+            symbol: language.specializeSymbol(symbol, reference.arguments, typeParameters),
+            uri: source.item.uri,
+            namespace
+          });
         }
       }
     }
@@ -441,23 +452,148 @@ class WorkspaceIndex {
     );
   }
 
-  async typeOfPath(document, accessPath, line) {
+  classTypeForThis(parsed, line) {
+    const fn = activeFunction(parsed, line);
+    if (!fn?.container) return '';
+    const declaration = parsed.exports.find((item) => ['class', 'struct'].includes(item.kind) && item.name === fn.container);
+    return `${fn.container}${declaration?.typeParameters?.length ? `<${declaration.typeParameters.join(', ')}>` : ''}`;
+  }
+
+  continuationReceiver(document, line) {
+    const segments = [];
+    let cursor = line - 1;
+    while (cursor >= 0) {
+      const value = document.lineAt(cursor).text.trim();
+      if (!value.startsWith('.')) break;
+      segments.unshift(value);
+      cursor -= 1;
+    }
+    if (cursor < 0) return '';
+    let base = document.lineAt(cursor).text.trim();
+    const assignment = base.lastIndexOf('=');
+    if (assignment >= 0) base = base.slice(assignment + 1).trim();
+    base = base.replace(/^(?:return|recover|defer)\s+/, '').trim();
+    return `${base}${segments.join('')}`;
+  }
+
+  memberAccessAt(document, line, column) {
+    const current = language.memberAccessAt(document.lineAt(line).text, column);
+    if (current) return current;
+    const before = document.lineAt(line).text.slice(0, column);
+    const continuation = before.match(/^\s*\.\s*([A-Za-z_]\w*)?\s*$/);
+    if (!continuation) return null;
+    const expression = this.continuationReceiver(document, line);
+    return expression ? { expression, prefix: continuation[1] || '', separator: '.' } : null;
+  }
+
+  async callableSymbol(document, callee, line, resolving = new Set()) {
     const parsed = this.parse(document);
-    const segments = accessPath.split('.');
-    const root = segments.shift();
-    let typeName;
-    if (root === 'this') {
-      const fn = activeFunction(parsed, line);
-      typeName = parsed.exports.find((item) => item.kind === 'method' && item.name === fn?.name)?.container;
-    } else {
-      typeName = this.visibleLocal(parsed, root, line)?.type;
+    const member = language.splitMemberExpression(callee);
+    if (member) {
+      const receiverType = await this.typeOfExpression(document, member.receiver, line, resolving);
+      if (!receiverType) return undefined;
+      return (await this.membersOf(receiverType, document))
+        .find((item) => item.symbol.name === member.member && !item.symbol.static);
     }
-    for (const segment of segments) {
-      if (!typeName) return '';
-      const member = (await this.membersOf(typeName, document)).find((item) => item.symbol.name === segment && !item.symbol.static)?.symbol;
-      typeName = member?.type || member?.returnType || language.returnTypeFromDetail(member?.detail);
+
+    const typeReference = language.parseTypeReference(callee);
+    const parts = typeReference.path.split('::').filter(Boolean);
+    if (parts.length > 1) {
+      const nativeModule = parsed.nativeModules.find((item) => item.name === parts[0]);
+      if (nativeModule && parts.length === 2) {
+        return (await this.nativeModuleExports(document, nativeModule)).find((item) => item.symbol.name === parts[1]);
+      }
+      const imported = parsed.imports.find((item) => item.name === parts[0]);
+      if (imported && parts.length === 2) {
+        const exported = (await this.moduleExports(document, imported)).find((item) => item.symbol.name === parts[1]);
+        if (exported?.symbol.kind === 'class') {
+          return (await this.membersOf(callee, document)).find((item) => item.symbol.kind === 'constructor') || exported;
+        }
+        return exported;
+      }
+      const ownerType = parts.slice(0, -1).join('::');
+      return (await this.membersOf(ownerType, document))
+        .find((item) => item.symbol.name === parts.at(-1) && item.symbol.static);
     }
-    return typeName || '';
+
+    const local = this.visibleLocal(parsed, typeReference.name, line);
+    if (local && ['function', 'native'].includes(local.kind)) return { symbol: local, uri: document.uri };
+    if (local?.type && language.functionValueReturnType(local.type)) return { symbol: local, uri: document.uri };
+    const declaration = parsed.exports.find((item) => ['class', 'struct'].includes(item.kind) && item.name === typeReference.name);
+    if (declaration) {
+      return (await this.membersOf(callee, document)).find((item) => item.symbol.kind === 'constructor') ||
+        { symbol: declaration, uri: document.uri };
+    }
+    return undefined;
+  }
+
+  qualifyMemberType(typeName, ownerType, member, fallbackNamespace = '') {
+    const value = typeName || member?.symbol?.returnType || language.returnTypeFromDetail(member?.symbol?.detail);
+    if (!value) return '';
+    const owner = language.parseTypeReference(ownerType);
+    const memberType = language.parseTypeReference(value);
+    const namespace = owner.namespace || fallbackNamespace;
+    if (!namespace || memberType.namespace || !member?.uri) return value;
+    const source = this.documents.get(member.uri.toString());
+    const declaredInSource = source?.parsed.exports.some(
+      (item) => ['class', 'struct'].includes(item.kind) && item.name === memberType.name
+    );
+    if (!declaredInSource) return value;
+    return value.replace(memberType.path, `${namespace}::${memberType.path}`);
+  }
+
+  async typeOfExpression(document, expression, line, resolving = new Set()) {
+    const parsed = this.parse(document);
+    let value = String(expression || '').trim().replace(/\s+catch\b[\s\S]*$/, '').trim();
+    value = language.stripOuterParentheses(value);
+    if (!value) return '';
+
+    const callee = language.invocationCallee(value);
+    if (callee) {
+      const callable = await this.callableSymbol(document, callee, line, resolving);
+      if (callable) {
+        if (['class', 'struct'].includes(callable.symbol.kind)) return callee;
+        const owner = language.splitMemberExpression(callee);
+        const ownerType = owner ? await this.typeOfExpression(document, owner.receiver, line, resolving) : '';
+        return this.qualifyMemberType(
+          callable.symbol.returnType || language.returnTypeFromDetail(callable.symbol.detail),
+          ownerType,
+          callable,
+          callee.includes('::') ? callee.split('::')[0] : ''
+        );
+      }
+      const callableType = await this.typeOfExpression(document, callee, line, resolving);
+      const functionReturn = language.functionValueReturnType(callableType);
+      if (functionReturn) return functionReturn;
+    }
+
+    const member = language.splitMemberExpression(value);
+    if (member && /^[A-Za-z_]\w*$/.test(member.member)) {
+      const receiverType = await this.typeOfExpression(document, member.receiver, line, resolving);
+      if (receiverType) {
+        const resolved = (await this.membersOf(receiverType, document))
+          .find((item) => item.symbol.name === member.member && !item.symbol.static);
+        if (resolved) return this.qualifyMemberType(resolved.symbol.type || resolved.symbol.returnType, receiverType, resolved);
+      }
+    }
+
+    if (value === 'this') return this.classTypeForThis(parsed, line);
+    const local = this.visibleLocal(parsed, value, line);
+    if (local?.type && (local.explicitType || !local.initializer)) return local.type;
+    if (local?.initializer) {
+      const key = `${local.line}:${local.name}`;
+      if (!resolving.has(key)) {
+        const next = new Set(resolving);
+        next.add(key);
+        const inferred = await this.typeOfExpression(document, local.initializer, local.line, next);
+        if (inferred) return inferred;
+      }
+    }
+    return language.inferExpressionType(value, parsed, line);
+  }
+
+  async typeOfPath(document, accessPath, line) {
+    return this.typeOfExpression(document, accessPath, line);
   }
 
   async resolve(document, position) {
@@ -465,6 +601,15 @@ class WorkspaceIndex {
     const word = language.wordAt(lineText, position.character);
     if (!word) return undefined;
     const parsed = this.parse(document);
+    const memberAccess = this.memberAccessAt(document, position.line, word.end);
+    if (memberAccess && memberAccess.prefix === word.value) {
+      const typeName = await this.typeOfExpression(document, memberAccess.expression, position.line);
+      if (typeName) {
+        const members = await this.membersOf(typeName, document);
+        const resolved = members.find((item) => item.symbol.name === word.value && !item.symbol.static && item.symbol.kind !== 'constructor');
+        if (resolved) return resolved;
+      }
+    }
     const prefix = lineText.slice(0, word.start);
     const owner = prefix.match(/([A-Za-z_]\w*(?:(?:::|\.)[A-Za-z_]\w*)*)(::|\.)\s*$/);
     if (owner) {
@@ -503,7 +648,12 @@ class WorkspaceIndex {
       return { symbol: nativeModule, module: template, uri: document.uri };
     }
     const local = this.visibleLocal(parsed, word.value, position.line);
-    return local ? { symbol: local, uri: document.uri } : undefined;
+    if (!local) return undefined;
+    if (!local.explicitType && local.initializer) {
+      const inferred = await this.typeOfExpression(document, local.initializer, local.line);
+      if (inferred) return { symbol: { ...local, type: inferred, detail: `${local.name}: ${inferred}` }, uri: document.uri };
+    }
+    return { symbol: local, uri: document.uri };
   }
 
   async referencesFor(document, resolved, includeDeclaration) {
@@ -543,7 +693,7 @@ function completionFromSymbol(symbol) {
   const item = new vscode.CompletionItem(symbol.name, completionKind(symbol.kind));
   item.detail = symbol.detail;
   item.documentation = markdownFor(symbol);
-  if (['function', 'native', 'method'].includes(symbol.kind)) {
+  if (['constructor', 'function', 'native', 'method'].includes(symbol.kind)) {
     item.insertText = new vscode.SnippetString(`${symbol.name}($0)`);
     item.command = { command: 'editor.action.triggerParameterHints', title: 'Parameter hints' };
   }
@@ -673,6 +823,15 @@ function registerLanguageFeatures(context, index) {
           }
         }
         return dedupeCompletions(candidates.map((item) => moduleCompletion(item, importPath.prefix)).filter(Boolean));
+      }
+      const memberAccess = index.memberAccessAt(document, position.line, position.character);
+      if (memberAccess) {
+        const typeName = await index.typeOfExpression(document, memberAccess.expression, position.line);
+        if (typeName) {
+          return dedupeCompletions((await index.membersOf(typeName, document))
+            .filter((item) => !item.symbol.static && item.symbol.kind !== 'constructor')
+            .map((item) => completionFromSymbol(item.symbol)));
+        }
       }
       const qualified = language.accessPathAt(line, position.character);
       if (qualified) {
@@ -815,23 +974,30 @@ function registerLanguageFeatures(context, index) {
 
   context.subscriptions.push(vscode.languages.registerSignatureHelpProvider(selector, {
     async provideSignatureHelp(document, position) {
-      const call = language.callPathAt(document.lineAt(position.line).text, position.character);
+      const line = document.lineAt(position.line).text;
+      const call = language.callExpressionAt(line, position.character) || language.callPathAt(line, position.character);
       if (!call) return undefined;
       const parsed = index.parse(document);
       await index.ensureWorkspace();
-      let detail;
-      if (call.path.includes('::')) {
-        const parts = call.path.split('::');
+      let callPath = call.callee || call.path;
+      if (callPath.startsWith('.')) {
+        const receiver = index.continuationReceiver(document, position.line);
+        if (receiver) callPath = `${receiver}${callPath}`;
+      }
+      const callable = await index.callableSymbol(document, callPath, position.line);
+      let detail = callable?.symbol?.detail;
+      if (!detail && callPath.includes('::')) {
+        const parts = callPath.split('::');
         const nativeModule = parsed.nativeModules.find((item) => item.name === parts[0]);
         const imported = parsed.imports.find((item) => item.name === parts[0]);
         if (nativeModule && parts.length === 2) detail = (await index.nativeModuleExports(document, nativeModule)).find((item) => item.symbol.name === call.name)?.symbol.detail;
         else if (imported && parts.length === 2) detail = (await index.moduleExports(document, imported)).find((item) => item.symbol.name === call.name)?.symbol.detail;
         else if (parts.length > 2) detail = (await index.membersOf(parts.slice(0, -1).join('::'), document)).find((item) => item.symbol.name === call.name)?.symbol.detail;
-      } else if (call.path.includes('.')) {
-        const receiver = call.path.slice(0, call.path.lastIndexOf('.'));
+      } else if (!detail && callPath.includes('.')) {
+        const receiver = callPath.slice(0, callPath.lastIndexOf('.'));
         const typeName = await index.typeOfPath(document, receiver, position.line);
         if (typeName) detail = (await index.membersOf(typeName, document)).find((item) => item.symbol.name === call.name)?.symbol.detail;
-      } else {
+      } else if (!detail) {
         detail = index.visibleLocal(parsed, call.name, position.line)?.detail;
       }
       if (!detail) {

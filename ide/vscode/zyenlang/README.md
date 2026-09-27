@@ -6,6 +6,7 @@ The official project-aware editor extension for ZyenLang 0.3.
 
 - ZyenLang 0.3 highlighting for `::` paths, pure structs, classes, references, intrinsics, and native declarations
 - project-aware completion for `std::`, `crate::`, locked path/Git dependencies, package entry imports, imported module symbols, static functions, class methods, and fields
+- generic-aware class APIs: `Box<i32>` specializes fields, method parameters, and return types, while chained calls such as `factory.make().run()` retain completion, hover, parameter hints, and definition links
 - inferred-type completion for locals such as `let app = gui::application(...)`,
   `let item = &values[0]`, and `let field = &object.value`
 - cross-file Go to Definition and Find References across `crate::`, dependency, and `std::` imports
@@ -63,10 +64,10 @@ The editor title also shows Run and Check buttons for `.zy` files.
 ## Install a VSIX
 
 In VS Code, choose **Extensions: Install from VSIX...** and select the packaged
-`zyenlang-0.3.8.vsix`, or run:
+`zyenlang-0.3.9.vsix`, or run:
 
 ```powershell
-code --install-extension zyenlang-0.3.8.vsix --force
+code --install-extension zyenlang-0.3.9.vsix --force
 ```
 
 From a ZyenLang source checkout, the preferred command is:

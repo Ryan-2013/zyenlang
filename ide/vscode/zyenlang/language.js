@@ -421,6 +421,23 @@ function parseFunctionHeader(line) {
   };
 }
 
+function parseInitializerHeader(line) {
+  const prefix = line.match(/^\s*(?:(public|private)\s+)?init\s*/);
+  if (!prefix) return null;
+  let cursor = prefix[0].length;
+  if (line[cursor] !== '(') return null;
+  const parameterStart = cursor + 1;
+  const parameterEnd = closingDelimiter(line, cursor, '(', ')');
+  if (parameterEnd < 0) return null;
+  return {
+    visibility: prefix[1] || 'private',
+    name: 'init',
+    nameStart: line.indexOf('init'),
+    parameterStart,
+    parameters: line.slice(parameterStart, parameterEnd)
+  };
+}
+
 function precedingDocs(lines, lineNumber) {
   const docs = [];
   for (let index = lineNumber - 1; index >= 0; index -= 1) {
@@ -433,7 +450,7 @@ function precedingDocs(lines, lineNumber) {
 
 function addSymbol(result, symbol) {
   result.symbols.push(symbol);
-  if (['struct', 'class', 'function', 'method', 'field', 'native'].includes(symbol.kind)) {
+  if (['struct', 'class', 'constructor', 'function', 'method', 'field', 'native'].includes(symbol.kind)) {
     result.exports.push(symbol);
   }
 }
@@ -630,16 +647,18 @@ function parseDocument(text, uri = '') {
       result.symbols.push(symbol);
     }
 
-    const typeMatch = line.match(/^\s*(?:(public|private)\s+)?(struct|class)\s+([A-Za-z_]\w*)(?:\s*<[^>]+>)?/);
+    const typeMatch = line.match(/^\s*(?:(public|private)\s+)?(struct|class)\s+([A-Za-z_]\w*)(?:\s*<([^>{}]*)>)?/);
     if (typeMatch) {
       const name = typeMatch[3];
+      const typeParameters = typeMatch[4] ? splitTopLevel(typeMatch[4]).map((item) => item.trim()).filter(Boolean) : [];
       const column = original.indexOf(name);
-      activeType = { name, kind: typeMatch[2], depth: depth + 1 };
+      activeType = { name, kind: typeMatch[2], typeParameters, depth: depth + 1 };
       addSymbol(result, {
         name,
         kind: typeMatch[2],
+        typeParameters,
         visibility: typeMatch[1] || 'private',
-        detail: `${typeMatch[1] ? `${typeMatch[1]} ` : ''}${typeMatch[2]} ${name}`,
+        detail: `${typeMatch[1] ? `${typeMatch[1]} ` : ''}${typeMatch[2]} ${name}${typeParameters.length ? `<${typeParameters.join(', ')}>` : ''}`,
         documentation: precedingDocs(lines, lineNumber),
         line: lineNumber,
         column,
@@ -648,6 +667,9 @@ function parseDocument(text, uri = '') {
     }
 
     const functionMatch = parseFunctionHeader(line);
+    const initializerMatch = activeType && activeType.kind === 'class' && depth === activeType.depth
+      ? parseInitializerHeader(line)
+      : null;
     if (functionMatch) {
       const { receiverName, receiverType, name, parameters, returnAndThrows } = functionMatch;
       const column = functionMatch.nameStart;
@@ -669,6 +691,7 @@ function parseDocument(text, uri = '') {
         column,
         endColumn: column + name.length,
         container: classMethod ? activeType.name : receiverType || undefined,
+        containerTypeParameters: classMethod ? activeType.typeParameters : [],
         static: functionMatch.modifier === 'static',
         mutable: functionMatch.modifier === 'mut',
         exported: functionMatch.exported,
@@ -676,7 +699,12 @@ function parseDocument(text, uri = '') {
       };
       addSymbol(result, symbol);
       pendingCExport = null;
-      activeFunction = line.includes('{') ? { name, depth: depth + 1, startLine: lineNumber } : null;
+      activeFunction = line.includes('{') ? {
+        name,
+        container: classMethod ? activeType.name : receiverType || undefined,
+        depth: depth + 1,
+        startLine: lineNumber
+      } : null;
       if (activeFunction) result.functions.push(activeFunction);
       if (receiverName) {
         result.symbols.push({
@@ -691,9 +719,34 @@ function parseDocument(text, uri = '') {
         });
       }
       result.symbols.push(...parameterSymbols(parameters, lineNumber, functionMatch.parameterStart, name));
+    } else if (initializerMatch) {
+      const signature = original.trim().replace(/\s*\{\s*$/, '');
+      const symbol = {
+        name: 'init',
+        kind: 'constructor',
+        visibility: initializerMatch.visibility,
+        parameters: initializerMatch.parameters,
+        returnType: `${activeType.name}${activeType.typeParameters.length ? `<${activeType.typeParameters.join(', ')}>` : ''}`,
+        detail: signature,
+        documentation: precedingDocs(lines, lineNumber),
+        line: lineNumber,
+        column: initializerMatch.nameStart,
+        endColumn: initializerMatch.nameStart + 4,
+        container: activeType.name,
+        containerTypeParameters: activeType.typeParameters
+      };
+      addSymbol(result, symbol);
+      activeFunction = line.includes('{') ? {
+        name: 'init',
+        container: activeType.name,
+        depth: depth + 1,
+        startLine: lineNumber
+      } : null;
+      if (activeFunction) result.functions.push(activeFunction);
+      result.symbols.push(...parameterSymbols(initializerMatch.parameters, lineNumber, initializerMatch.parameterStart, 'init'));
     }
 
-    if (activeType && depth === activeType.depth && !functionMatch) {
+    if (activeType && depth === activeType.depth && !functionMatch && !initializerMatch) {
       const fieldMatch = line.match(/^\s*(?:(public|private)\s+)?(?:let\s+(?:this\.)?)?([A-Za-z_]\w*)\s*:\s*([^=\n]+?)(?:\s*=.*)?$/);
       if (fieldMatch && !/^(let|fn|struct|import)\b/.test(trimmed)) {
         const name = fieldMatch[2];
@@ -708,7 +761,8 @@ function parseDocument(text, uri = '') {
           line: lineNumber,
           column,
           endColumn: column + name.length,
-          container: activeType.name
+          container: activeType.name,
+          containerTypeParameters: activeType.typeParameters
         });
       }
     }
@@ -722,6 +776,7 @@ function parseDocument(text, uri = '') {
         const column = original.indexOf(match[1], tupleStart);
         result.symbols.push({
           name: match[1], kind: 'variable', type: match[2] || '',
+          explicitType: Boolean(match[2]),
           detail: match[2] ? `${match[1]}: ${match[2]}` : match[1],
           line: lineNumber, column, endColumn: column + match[1].length,
           container: activeFunction && activeFunction.name
@@ -735,6 +790,7 @@ function parseDocument(text, uri = '') {
         const assignment = original.indexOf('=', column + name.length);
         result.symbols.push({
           name, kind: 'variable', type: (letMatch[2] || '').trim(), initializer: assignment >= 0 ? original.slice(assignment + 1).trim() : letMatch[3].trim(),
+          explicitType: Boolean(letMatch[2]),
           detail: letMatch[2] ? `${name}: ${letMatch[2].trim()}` : name,
           line: lineNumber, column, endColumn: column + name.length,
           container: activeFunction && activeFunction.name
@@ -799,6 +855,41 @@ function accessPathAt(line, column) {
   };
 }
 
+function expressionEndingAt(line, end) {
+  let round = 0;
+  let square = 0;
+  let angle = 0;
+  let start = end;
+  for (let index = end - 1; index >= 0; index -= 1) {
+    const char = line[index];
+    if (char === ')') round += 1;
+    else if (char === '(') {
+      if (round === 0 && square === 0 && angle === 0) break;
+      round = Math.max(0, round - 1);
+    } else if (char === ']') square += 1;
+    else if (char === '[') {
+      if (square === 0 && round === 0 && angle === 0) break;
+      square = Math.max(0, square - 1);
+    } else if (char === '>') angle += 1;
+    else if (char === '<' && angle > 0) angle -= 1;
+    else if (round === 0 && square === 0 && angle === 0 && '=,;{}'.includes(char)) break;
+    start = index;
+  }
+  return line.slice(start, end).trim().replace(/^(?:return|recover|defer|stop)\s+/, '').trim();
+}
+
+function memberAccessAt(line, column) {
+  const source = maskLine(line);
+  const before = source.slice(0, column);
+  const prefixMatch = before.match(/([A-Za-z_]\w*)?\s*$/);
+  const prefix = prefixMatch?.[1] || '';
+  let cursor = before.length - (prefixMatch?.[0].length || 0) - 1;
+  while (cursor >= 0 && /\s/.test(source[cursor])) cursor -= 1;
+  if (source[cursor] !== '.') return null;
+  const expression = expressionEndingAt(source, cursor);
+  return expression ? { expression, prefix, separator: '.' } : null;
+}
+
 function callAt(line, column) {
   const before = line.slice(0, column);
   let depth = 0;
@@ -835,6 +926,26 @@ function callPathAt(line, column) {
   return null;
 }
 
+function callExpressionAt(line, column) {
+  const source = maskLine(line);
+  const before = source.slice(0, column);
+  let depth = 0;
+  let comma = 0;
+  for (let index = before.length - 1; index >= 0; index -= 1) {
+    const char = before[index];
+    if (char === ')') depth += 1;
+    else if (char === '(') {
+      if (depth > 0) depth -= 1;
+      else {
+        const callee = expressionEndingAt(source, index);
+        const name = callee.match(/([A-Za-z_]\w*)\s*$/)?.[1] || '';
+        return callee && name ? { callee, path: callee, name, activeParameter: comma } : null;
+      }
+    } else if (char === ',' && depth === 0) comma += 1;
+  }
+  return null;
+}
+
 function importPathAt(line, column) {
   const before = line.slice(0, column);
   const imported = before.match(/^\s*import\s+(std|crate|[A-Za-z_]\w*)::([A-Za-z_]\w*(?:::[A-Za-z_]\w*)*)?$/);
@@ -854,16 +965,59 @@ function normalizeType(typeName) {
   return value;
 }
 
-function baseType(typeName) {
+function parseTypeReference(typeName) {
   const value = normalizeType(typeName);
+  let genericStart = -1;
   let depth = 0;
   for (let index = 0; index < value.length; index += 1) {
     if (value[index] === '<') {
-      if (depth === 0) return value.slice(0, index).trim();
+      if (depth === 0 && genericStart < 0) genericStart = index;
       depth += 1;
-    } else if (value[index] === '>') depth = Math.max(0, depth - 1);
+    } else if (value[index] === '>') {
+      depth = Math.max(0, depth - 1);
+    }
   }
-  return value;
+  const path = (genericStart < 0 ? value : value.slice(0, genericStart)).trim();
+  const argumentsValue = genericStart < 0 ? '' : value.slice(genericStart + 1, value.lastIndexOf('>'));
+  const parts = path.split('::').filter(Boolean);
+  return {
+    raw: value,
+    path,
+    name: parts.pop() || '',
+    namespace: parts.join('::'),
+    arguments: argumentsValue ? splitTopLevel(argumentsValue) : []
+  };
+}
+
+function baseType(typeName) {
+  return parseTypeReference(typeName).path;
+}
+
+function substituteType(typeName, substitutions) {
+  let result = String(typeName || '');
+  for (const [name, replacement] of Object.entries(substitutions || {})) {
+    if (!name || !replacement) continue;
+    const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    result = result.replace(new RegExp(`\\b${escaped}\\b`, 'g'), replacement);
+  }
+  return result;
+}
+
+function specializeSymbol(symbol, typeArguments = [], typeParameters = symbol.containerTypeParameters || []) {
+  if (!typeArguments.length || !typeParameters.length) return symbol;
+  const substitutions = {};
+  typeParameters.forEach((name, index) => {
+    if (typeArguments[index]) substitutions[name] = typeArguments[index];
+  });
+  if (!Object.keys(substitutions).length) return symbol;
+  return {
+    ...symbol,
+    type: substituteType(symbol.type, substitutions),
+    returnType: substituteType(symbol.returnType, substitutions),
+    parameters: substituteType(symbol.parameters, substitutions),
+    detail: substituteType(symbol.detail, substitutions),
+    substitutions
+  };
 }
 
 function returnTypeFromDetail(detail) {
@@ -879,9 +1033,76 @@ function returnTypeFromDetail(detail) {
   return '';
 }
 
+function stripOuterParentheses(value) {
+  let result = String(value || '').trim();
+  while (result.startsWith('(') && closingDelimiter(result, 0, '(', ')') === result.length - 1) {
+    result = result.slice(1, -1).trim();
+  }
+  return result;
+}
+
+function openingDelimiter(value, end, open, close) {
+  let depth = 0;
+  for (let index = end; index >= 0; index -= 1) {
+    if (value[index] === close) depth += 1;
+    else if (value[index] === open) {
+      depth -= 1;
+      if (depth === 0) return index;
+    }
+  }
+  return -1;
+}
+
+function invocationCallee(value) {
+  const input = String(value || '').trim();
+  if (!input.endsWith(')')) return '';
+  const open = openingDelimiter(input, input.length - 1, '(', ')');
+  if (open <= 0) return '';
+  return input.slice(0, open).trim();
+}
+
+function splitMemberExpression(value) {
+  const input = String(value || '').trim();
+  let round = 0;
+  let square = 0;
+  let angle = 0;
+  for (let index = input.length - 1; index >= 0; index -= 1) {
+    const char = input[index];
+    if (char === ')') round += 1;
+    else if (char === '(') round -= 1;
+    else if (char === ']') square += 1;
+    else if (char === '[') square -= 1;
+    else if (char === '>') angle += 1;
+    else if (char === '<') angle = Math.max(0, angle - 1);
+    else if (char === '.' && round === 0 && square === 0 && angle === 0) {
+      return { receiver: input.slice(0, index).trim(), member: input.slice(index + 1).trim() };
+    }
+  }
+  return null;
+}
+
+function localMembersForType(parsed, typeName) {
+  const reference = parseTypeReference(typeName);
+  const declaration = parsed.symbols.find(
+    (item) => ['class', 'struct'].includes(item.kind) && item.name === reference.name
+  );
+  const parameters = declaration?.typeParameters || [];
+  return parsed.symbols
+    .filter((item) => (item.container === reference.name || baseType(item.receiverType || '').split('::').pop() === reference.name))
+    .map((item) => specializeSymbol(item, reference.arguments, parameters));
+}
+
+function functionValueReturnType(typeName) {
+  const value = normalizeType(typeName);
+  if (!value.startsWith('fn(')) return '';
+  const close = closingDelimiter(value, 2, '(', ')');
+  return close < 0 ? '' : value.slice(close + 1).trim();
+}
+
 function inferExpressionType(expression, parsed, lineNumber = Number.MAX_SAFE_INTEGER) {
   let value = String(expression || '').trim().replace(/\s+catch\b[\s\S]*$/, '').trim();
   if (!value) return '';
+  value = stripOuterParentheses(value);
   if (/^f?"(?:\\.|[^"])*"$/.test(value)) return 'str';
   if (/^(?:true|false)$/.test(value)) return 'bool';
   if (/^[-+]?\d+[uU]?$/.test(value)) return 'i32';
@@ -922,40 +1143,39 @@ function inferExpressionType(expression, parsed, lineNumber = Number.MAX_SAFE_IN
       if (args.length === 1) return args[0].trim();
     }
   }
-  const member = value.match(/^([A-Za-z_]\w*)\.([A-Za-z_]\w*)$/);
-  if (member) {
-    const receiver = [...parsed.symbols].reverse().find(
-      (item) => item.name === member[1] && item.line <= lineNumber
-    );
-    const container = receiver?.type ? baseType(receiver.type).split('::').pop() : '';
-    const field = [...parsed.symbols].reverse().find(
-      (item) => item.kind === 'field' && item.container === container && item.name === member[2]
-    );
-    if (field?.type) return field.type;
-  }
-  const call = value.match(/^((?:[A-Za-z_]\w*(?:::|\.))*[A-Za-z_]\w*)\s*\(/);
-  if (call) {
-    const name = call[1].split(/::|\./).pop();
-    const special = SPECIAL_FORMS.find((item) => item.name === name);
-    if (special) return returnTypeFromDetail(special.detail);
-    const symbol = parsed.symbols.find((item) => item.name === name && ['function', 'method', 'native'].includes(item.kind));
-    if (symbol) return symbol.returnType || returnTypeFromDetail(symbol.detail);
-    const memberCall = call[1].match(/^([A-Za-z_]\w*)\.([A-Za-z_]\w*)$/);
+  const callee = invocationCallee(value);
+  if (callee) {
+    const memberCall = splitMemberExpression(callee);
     if (memberCall) {
-      const receiver = [...parsed.symbols].reverse().find(
-        (item) => item.name === memberCall[1] && item.line <= lineNumber
-      );
-      const receiverType = receiver?.type ? baseType(receiver.type).split('::').pop() : '';
-      const member = (BUILTIN_MEMBERS[receiverType] || []).find((item) => item.name === memberCall[2]);
+      const receiverType = inferExpressionType(memberCall.receiver, parsed, lineNumber);
+      const member = localMembersForType(parsed, receiverType).find((item) => item.name === memberCall.member && !item.static) ||
+        (BUILTIN_MEMBERS[parseTypeReference(receiverType).name] || []).find((item) => item.name === memberCall.member);
       if (member) return member.returnType || returnTypeFromDetail(member.detail);
     }
-    const imported = call[1].split('::');
+    const name = callee.split(/::|\./).pop();
+    const special = SPECIAL_FORMS.find((item) => item.name === name);
+    if (special) return returnTypeFromDetail(special.detail);
+    const callableType = inferExpressionType(callee, parsed, lineNumber);
+    const functionReturn = functionValueReturnType(callableType);
+    if (functionReturn) return functionReturn;
+    const symbol = parsed.symbols.find((item) => item.name === name && ['function', 'native'].includes(item.kind));
+    if (symbol) return symbol.returnType || returnTypeFromDetail(symbol.detail);
+    const imported = callee.split('::');
     if (imported.length === 2) {
       const moduleImport = parsed.imports.find((item) => item.name === imported[0]);
       const moduleName = moduleImport?.path.split('::').pop();
       const builtin = (BUILTINS[moduleName] || []).find(([item]) => item === imported[1]);
       if (builtin) return returnTypeFromDetail(builtin[1]);
     }
+    const constructedType = parseTypeReference(callee);
+    const declaration = parsed.symbols.find((item) => ['class', 'struct'].includes(item.kind) && item.name === constructedType.name);
+    if (declaration) return callee;
+  }
+  const member = splitMemberExpression(value);
+  if (member && /^[A-Za-z_]\w*$/.test(member.member)) {
+    const receiverType = inferExpressionType(member.receiver, parsed, lineNumber);
+    const field = localMembersForType(parsed, receiverType).find((item) => item.name === member.member && item.kind === 'field');
+    if (field?.type) return field.type;
   }
   const constructed = value.match(/^((?:[A-Za-z_]\w*::)*[A-Za-z_]\w*(?:<[^>]+>)?)\s*(?:\(|\{)/);
   if (constructed) return constructed[1];
@@ -975,16 +1195,25 @@ module.exports = {
   accessPathAt,
   baseType,
   callAt,
+  callExpressionAt,
   callPathAt,
   inferExpressionType,
   importPathAt,
   importRootAt,
   maskLine,
+  memberAccessAt,
   normalizeType,
+  parseTypeReference,
   parseDocument,
   parseNativeTemplate,
   qualifierAt,
   returnTypeFromDetail,
+  functionValueReturnType,
+  invocationCallee,
+  splitMemberExpression,
+  stripOuterParentheses,
+  specializeSymbol,
+  substituteType,
   splitTopLevel,
   wordAt
 };

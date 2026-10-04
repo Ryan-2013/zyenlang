@@ -1,0 +1,196 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
+  <meta name="description" content="ZyenLang is a small, statically typed native language with explicit value semantics, ARC identity classes, and a C11 backend.">
+  <meta name="theme-color" content="#20201F">
+  <meta property="og:title" content="ZyenLang">
+  <meta property="og:description" content="Small rules. Explicit ownership. Native output.">
+  <meta property="og:type" content="website">
+  <meta property="og:url" content="https://ryan-2013.github.io/zyenlang/">
+  <meta property="og:image" content="https://ryan-2013.github.io/zyenlang/assets/social-preview.png">
+  <meta name="twitter:card" content="summary_large_image">
+  <title>ZyenLang | Small rules, native output</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+
+  <header class="site-header">
+    <a class="brand" href="#top" aria-label="ZyenLang home">ZyenLang</a>
+    <nav aria-label="Primary navigation">
+      <a href="#model">Language</a>
+      <a href="#quickstart">Quickstart</a>
+      <a href="https://github.com/Ryan-2013/zyenlang/tree/main/docs">Docs</a>
+      <a class="nav-github" href="https://github.com/Ryan-2013/zyenlang">GitHub</a>
+    </nav>
+  </header>
+
+  <main id="main">
+    <section class="hero" id="top" aria-labelledby="hero-title">
+      <div class="hero-background" aria-hidden="true"></div>
+      <div class="hero-inner">
+        <p class="kicker">Statically typed · C11 backend · Public alpha</p>
+        <h1 id="hero-title">ZyenLang</h1>
+        <p class="hero-statement">Small rules. Explicit ownership.<br>Native output.</p>
+        <p class="hero-copy">A compact systems language where structs are values, classes carry ARC identity, and C libraries remain within reach.</p>
+        <div class="hero-actions">
+          <a class="button primary" href="#quickstart">Get started</a>
+          <a class="button secondary" href="https://github.com/Ryan-2013/zyenlang">View source</a>
+        </div>
+        <dl class="hero-meta" aria-label="Project status">
+          <div><dt>Release</dt><dd>0.3.7</dd></div>
+          <div><dt>Backend</dt><dd>C11</dd></div>
+          <div><dt>Tests</dt><dd>322 passing</dd></div>
+        </dl>
+      </div>
+    </section>
+
+    <section class="principles band" id="model" aria-labelledby="model-title">
+      <div class="section-heading">
+        <p class="section-number">01 / Data model</p>
+        <h2 id="model-title">One ownership rule per kind of data.</h2>
+        <p>ZyenLang keeps value semantics and identity semantics separate, so function signatures say what they mean.</p>
+      </div>
+      <div class="principle-grid">
+        <article>
+          <span class="rule-mark value-mark">V</span>
+          <h3>Structs are values</h3>
+          <p>Pass a struct to copy it. Use <code>&amp;Struct</code> for a readonly borrow and <code>&amp;mut Struct</code> to update the caller.</p>
+        </article>
+        <article>
+          <span class="rule-mark identity-mark">I</span>
+          <h3>Classes have identity</h3>
+          <p>A class value is already an ARC handle. Pass it directly; wrapping it in another reference is a compile error.</p>
+        </article>
+        <article>
+          <span class="rule-mark native-mark">C</span>
+          <h3>Native stays close</h3>
+          <p>The C11 backend and typed ABI v3 let adapters expose handles, slices, callbacks, enums, flags, and errors.</p>
+        </article>
+      </div>
+    </section>
+
+    <section class="language-showcase band" aria-labelledby="showcase-title">
+      <div class="section-heading compact">
+        <p class="section-number">02 / Language</p>
+        <h2 id="showcase-title">A small surface with real structure.</h2>
+      </div>
+
+      <div class="code-workbench">
+        <div class="code-tabs" role="tablist" aria-label="Language examples">
+          <button id="tab-values" class="code-tab active" type="button" role="tab" aria-selected="true" aria-controls="panel-values" data-panel="values">Values</button>
+          <button id="tab-identity" class="code-tab" type="button" role="tab" aria-selected="false" aria-controls="panel-identity" data-panel="identity">Identity</button>
+          <button id="tab-native" class="code-tab" type="button" role="tab" aria-selected="false" aria-controls="panel-native" data-panel="native">C interop</button>
+        </div>
+
+        <div class="code-panel active" id="panel-values" role="tabpanel" aria-labelledby="tab-values" data-code-panel="values">
+          <pre aria-label="Struct reference example"><code><span class="syn-keyword">struct</span> <span class="syn-type">Point</span> {
+    x: <span class="syn-type">i32</span>
+    y: <span class="syn-type">i32</span>
+}
+
+<span class="syn-keyword">fn</span> <span class="syn-fn">replace</span>(point: &amp;<span class="syn-keyword">mut</span> <span class="syn-type">Point</span>) <span class="syn-type">void</span> {
+    <span class="syn-macro">REF_SET__</span>(point, <span class="syn-type">Point</span>{x: <span class="syn-number">20</span>, y: <span class="syn-number">22</span>})
+}</code></pre>
+          <div class="code-note"><strong>Value by default.</strong><span>Borrow only when the function needs the caller's storage.</span></div>
+        </div>
+
+        <div class="code-panel" id="panel-identity" role="tabpanel" aria-labelledby="tab-identity" data-code-panel="identity" hidden>
+          <pre aria-label="ARC class example"><code><span class="syn-keyword">class</span> <span class="syn-type">Player</span> {
+    health: <span class="syn-type">i32</span> = <span class="syn-number">100</span>
+
+    <span class="syn-keyword">init</span>(health: <span class="syn-type">i32</span>) {
+        this.health = health
+    }
+
+    <span class="syn-keyword">public mut fn</span> <span class="syn-fn">damage</span>(amount: <span class="syn-type">i32</span>) <span class="syn-type">void</span> {
+        this.health -= amount
+    }
+}</code></pre>
+          <div class="code-note"><strong>Shared identity.</strong><span>Passing <code>Player</code> retains the same ARC-managed instance.</span></div>
+        </div>
+
+        <div class="code-panel" id="panel-native" role="tabpanel" aria-labelledby="tab-native" data-code-panel="native" hidden>
+          <pre aria-label="Native module example"><code><span class="syn-keyword">import</span> std::c_module <span class="syn-keyword">as</span> c
+
+<span class="syn-keyword">native module</span> graphics = c::load(<span class="syn-string">"native/graphics.zlcm.h"</span>)
+
+<span class="syn-keyword">fn</span> <span class="syn-fn">main</span>() <span class="syn-type">i32</span> {
+    <span class="syn-keyword">let</span> window = graphics::open(<span class="syn-string">"Demo"</span>, <span class="syn-number">800</span>, <span class="syn-number">480</span>) <span class="syn-keyword">catch</span> err {
+        <span class="syn-keyword">return</span> <span class="syn-number">1</span>
+    }
+    <span class="syn-keyword">return</span> <span class="syn-number">0</span>
+}</code></pre>
+          <div class="code-note"><strong>Typed boundary.</strong><span>Native namespaces expose reviewed C adapters without raw pointers in ordinary code.</span></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="quickstart band" id="quickstart" aria-labelledby="quickstart-title">
+      <div class="section-heading">
+        <p class="section-number">03 / Quickstart</p>
+        <h2 id="quickstart-title">From clone to native executable.</h2>
+        <p>The current public alpha installs from source and uses the compiler available on your machine.</p>
+      </div>
+
+      <ol class="steps">
+        <li>
+          <span class="step-index">1</span>
+          <div><h3>Install</h3><p>Clone the repository and install the CLI in editable mode.</p></div>
+          <div class="command-row"><code>python -m pip install -e .</code><button type="button" class="copy-button" data-copy="python -m pip install -e .">Copy</button></div>
+        </li>
+        <li>
+          <span class="step-index">2</span>
+          <div><h3>Create</h3><p>Generate a project with a manifest and source tree.</p></div>
+          <div class="command-row"><code>zy new hello</code><button type="button" class="copy-button" data-copy="zy new hello">Copy</button></div>
+        </li>
+        <li>
+          <span class="step-index">3</span>
+          <div><h3>Run</h3><p>Check, compile, link, and launch the default target.</p></div>
+          <div class="command-row"><code>cd hello &amp;&amp; zy run</code><button type="button" class="copy-button" data-copy="cd hello &amp;&amp; zy run">Copy</button></div>
+        </li>
+      </ol>
+      <p class="install-note">Windows PowerShell users can run the final commands on separate lines. Binary releases are planned after platform packaging is independently verified.</p>
+    </section>
+
+    <section class="toolchain band" aria-labelledby="toolchain-title">
+      <div class="section-heading compact">
+        <p class="section-number">04 / Toolchain</p>
+        <h2 id="toolchain-title">One command for the whole project.</h2>
+      </div>
+      <div class="command-grid">
+        <div><code>zy check</code><span>Parse and type-check</span></div>
+        <div><code>zy run</code><span>Build and execute</span></div>
+        <div><code>zy test</code><span>Run project tests</span></div>
+        <div><code>zy add</code><span>Add a dependency</span></div>
+        <div><code>zy bindgen</code><span>Start a C adapter</span></div>
+        <div><code>zy doctor</code><span>Inspect the toolchain</span></div>
+      </div>
+    </section>
+
+    <section class="status band" aria-labelledby="status-title">
+      <div class="status-copy">
+        <p class="section-number">05 / Status</p>
+        <h2 id="status-title">Built in public, still experimental.</h2>
+        <p>ZyenLang can build native programs today, but syntax compatibility and Rust-equivalent safety are not promised yet. The useful feedback now is concrete: installation failures, unclear diagnostics, and programs the language cannot express.</p>
+      </div>
+      <div class="status-links">
+        <a href="https://github.com/Ryan-2013/zyenlang/issues">Report an issue <span aria-hidden="true">→</span></a>
+        <a href="https://github.com/Ryan-2013/zyenlang/blob/main/docs/language_guide_zh_TW.md">Read the language guide <span aria-hidden="true">→</span></a>
+        <a href="https://github.com/Ryan-2013/zyenlang/blob/main/CHANGELOG.md">See what changed <span aria-hidden="true">→</span></a>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <a class="brand footer-brand" href="#top">ZyenLang</a>
+    <p>Designed around explicit structure and native interoperability.</p>
+    <p><a href="https://github.com/Ryan-2013/zyenlang/blob/main/LICENSE">MIT License</a></p>
+  </footer>
+
+  <script src="script.js"></script>
+</body>
+</html>

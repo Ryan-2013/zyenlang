@@ -1,5 +1,22 @@
 # Changelog
 
+## v0.3.7 - 2026-10-04
+
+### Changed
+
+- Class fields now default to `public`; an explicit `private` modifier still
+  enforces class-only access. Method defaults are unchanged.
+- Initializers now use visibility-free `init(...) {}` semantics and are always
+  invoked through `Type(...)`. Legacy `public init` remains source-compatible;
+  `private init` reports a migration diagnostic.
+- User-defined class values can no longer be wrapped in `&Class` or
+  `&mut Class`; classes already carry shared ARC identity and should be passed
+  directly. References to value fields inside a class remain supported.
+- The language guide now makes the ownership split explicit: structs use value
+  copies or `&Struct`/`&mut Struct` borrows, while classes are passed directly.
+- VS Code 0.3.11 reports the effective public visibility of default class
+  fields and visibility-free initializers.
+
 ## v0.3.6 - 2026-09-27
 
 ### Added

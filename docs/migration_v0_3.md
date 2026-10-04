@@ -38,7 +38,7 @@ or methods.
 ```zy
 public class Counter {
     private value: i32
-    public init(value: i32) { this.value = value }
+    init(value: i32) { this.value = value }
     public mut fn increment() void { this.value += 1 }
     public fn get() i32 { return this.value }
 }

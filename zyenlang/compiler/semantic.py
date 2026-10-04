@@ -939,7 +939,14 @@ class Lowerer:
                 self.ensure_class_type(typ.return_type, span),
             )
         if isinstance(typ, ReferenceType):
-            return ReferenceType(self.ensure_class_type(typ.inner, span), typ.mutable)
+            inner = self.ensure_class_type(typ.inner, span)
+            if isinstance(inner, NamedType) and inner.name in self.classes:
+                raise self.error(
+                    f"`&{inner.display()}` is unnecessary because class values already use ARC reference semantics; "
+                    f"pass `{inner.display()}` directly",
+                    span,
+                )
+            return ReferenceType(inner, typ.mutable)
         return typ
 
     def instantiate_class(self, typ: NamedType, span: SourceSpan) -> ClassInstance:
@@ -1917,6 +1924,12 @@ class Lowerer:
             typ = value.typ
             if isinstance(typ, ReferenceType):
                 raise self.error("references cannot point to references", expression.span)
+            if isinstance(typ, NamedType) and typ.name in self.classes:
+                raise self.error(
+                    f"`&{typ.display()}` is unnecessary because class values already use ARC reference semantics; "
+                    f"pass `{typ.display()}` directly",
+                    expression.span,
+                )
             loan = self.register_borrow(place, expression.mutable, expression.span)
             reference_type = ReferenceType(typ, expression.mutable)
             result = self.coerce(
@@ -2563,23 +2576,11 @@ class Lowerer:
                 if expression.args:
                     raise self.error("List.clear takes no arguments", expression.span)
                 return ir.IRCall(VOID, expression.span, "__zy2_list_clear", (receiver,))
-            class_reference = receiver.typ if isinstance(receiver.typ, ReferenceType) else None
-            class_type = class_reference.inner if class_reference is not None else receiver.typ
-            if isinstance(class_type, NamedType) and class_type.name in self.classes:
-                instance = self.instantiate_class(class_type, expression.span)
+            if isinstance(receiver.typ, NamedType) and receiver.typ.name in self.classes:
+                instance = self.instantiate_class(receiver.typ, expression.span)
                 symbol = instance.methods.get(method_name)
                 if symbol is not None and symbol.receiver is not None and symbol.receiver[2]:
-                    if class_reference is not None and not class_reference.mutable:
-                        raise self.error(
-                            f"mutating method `{class_type.display()}.{method_name}` requires `&mut {class_type.display()}`",
-                            expression.callee.receiver.span,
-                        )
-                    if class_reference is None:
-                        self.require_mutable_receiver(expression.callee.receiver)
-                if class_reference is not None:
-                    receiver = self.autoderef_receiver(receiver, expression.callee.receiver, method_name)
-                assert isinstance(receiver.typ, NamedType)
-                instance = self.instantiate_class(receiver.typ, expression.span)
+                    self.require_mutable_receiver(expression.callee.receiver)
                 symbol = instance.methods.get(method_name)
                 if symbol is None:
                     field = instance.fields.get(method_name)
@@ -2629,8 +2630,6 @@ class Lowerer:
             lowered_args = ()
         else:
             initializer = instance.initializer
-            if initializer.visibility == "private" and self.current_receiver != typ.name:
-                raise self.error(f"initializer for `{typ.display()}` is private", span)
             bound = self.bind_call_arguments(initializer, args, span)
             lowered_args = tuple(
                 self.lower_expr(value, param_type)
@@ -3062,8 +3061,15 @@ class Lowerer:
                 indexed.receiver.span,
             )
         assert isinstance(receiver.typ, NamedType)
+        element_type = receiver.typ.args[0]
+        if isinstance(element_type, NamedType) and element_type.name in self.classes:
+            raise self.error(
+                f"`&{element_type.display()}` is unnecessary because class values already use ARC reference semantics; "
+                "read the class value directly",
+                expression.span,
+            )
         index = self.lower_expr(indexed.index, PrimitiveType("i32"))
-        reference_type = ReferenceType(receiver.typ.args[0], expression.mutable)
+        reference_type = ReferenceType(element_type, expression.mutable)
         loan = self.register_borrow(place, expression.mutable, expression.span)
         target = "__zy2_list_borrow_mut" if expression.mutable else "__zy2_list_borrow"
         result = self.coerce(

@@ -29,7 +29,7 @@ public class Application {
     public fps: i32 = 60
     private opened: bool = false
 
-    public init(title: str, width: i32, height: i32, background: str = "#20201F") {
+    init(title: str, width: i32, height: i32, background: str = "#20201F") {
         this.title = title
         this.width = width
         this.height = height
@@ -186,7 +186,7 @@ public class Panel {
     public background: str = "#292827"
     public border: str = "#494744"
 
-    public init(app: Application, x: i32, y: i32, width: i32, height: i32) {
+    init(app: Application, x: i32, y: i32, width: i32, height: i32) {
         this.app = app
         this.x = x
         this.y = y
@@ -211,7 +211,7 @@ public class Label {
     public color: str = "#F4F1EA"
     public size: i32 = 18
 
-    public init(app: Application, x: i32, y: i32, value: str) {
+    init(app: Application, x: i32, y: i32, value: str) {
         this.app = app
         this.x = x
         this.y = y
@@ -238,7 +238,7 @@ public class Button {
     public enabled: bool = true
     public on_click: fn() void
 
-    public init(app: Application, x: i32, y: i32, width: i32, height: i32, label: str, on_click: fn() void) {
+    init(app: Application, x: i32, y: i32, width: i32, height: i32, label: str, on_click: fn() void) {
         this.app = app
         this.x = x
         this.y = y
@@ -281,7 +281,7 @@ public class ButtonGroup {
     private app: Application
     public buttons: List<Button> = []
 
-    public init(app: Application) {
+    init(app: Application) {
         this.app = app
     }
 
@@ -324,7 +324,7 @@ public class Column {
     public row_height: i32 = 44
     public gap: i32 = 10
 
-    public init(app: Application, x: i32, y: i32, width: i32, row_height: i32, gap: i32) {
+    init(app: Application, x: i32, y: i32, width: i32, row_height: i32, gap: i32) {
         this.app = app
         this.x = x
         this.y = y

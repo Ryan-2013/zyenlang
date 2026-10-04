@@ -360,6 +360,74 @@ fn main() i32 {
     assert result.returncode == 0, result.stdout + result.stderr
 
 
+def test_class_fields_default_to_public(tmp_path: Path) -> None:
+    result = run_source(
+        tmp_path,
+        """class Counter {
+    value: i32 = 20
+}
+
+fn main() i32 {
+    let counter = Counter()
+    counter.value = 42
+    return counter.value - 42
+}
+""",
+        name="default_public_class_field",
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_init_has_no_visibility_and_is_callable_by_default(tmp_path: Path) -> None:
+    result = run_source(
+        tmp_path,
+        """class Counter {
+    value: i32
+
+    init(value: i32) {
+        this.value = value
+    }
+}
+
+fn main() i32 {
+    let counter = Counter(42)
+    return counter.value - 42
+}
+""",
+        name="visibility_free_init",
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_private_init_is_rejected() -> None:
+    source = """class Counter {
+    private init() {
+    }
+}
+fn main() i32 { return 0 }
+"""
+
+    with pytest.raises(CompileError, match=r"`init` has no visibility; remove `private`"):
+        Compiler().check_source(source)
+
+
+def test_explicit_private_class_field_remains_private() -> None:
+    source = """class Counter {
+    private value: i32 = 20
+}
+
+fn main() i32 {
+    let counter = Counter()
+    return counter.value
+}
+"""
+
+    with pytest.raises(CompileError, match=r"field `Counter\.value` is private"):
+        Compiler().check_source(source)
+
+
 @pytest.mark.parametrize(
     ("source", "message"),
     [
@@ -430,6 +498,36 @@ def test_references_clone_and_mutate_without_ownership(tmp_path: Path) -> None:
 }
 """,
         name="references",
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_struct_uses_references_for_zero_copy_read_and_caller_mutation(tmp_path: Path) -> None:
+    result = run_source(
+        tmp_path,
+        """struct Point {
+    public x: i32
+    public y: i32
+}
+
+fn sum(point: &Point) i32 {
+    let value: Point = CLONE_REF__(point)
+    return value.x + value.y
+}
+
+fn replace(point: &mut Point) void {
+    REF_SET__(point, Point{x: 20, y: 22})
+}
+
+fn main() i32 {
+    let point = Point{x: 1, y: 2}
+    if sum(&point) != 3 { return 1 }
+    replace(&mut point)
+    return point.x + point.y - 42
+}
+""",
+        name="struct_references",
     )
 
     assert result.returncode == 0, result.stdout + result.stderr
@@ -525,27 +623,27 @@ def test_reference_safety_diagnostics(source: str, message: str) -> None:
         Compiler().check_source(source)
 
 
-def test_class_references_dispatch_readonly_and_mutating_methods(tmp_path: Path) -> None:
+def test_class_values_pass_shared_arc_identity_to_functions(tmp_path: Path) -> None:
     result = run_source(
         tmp_path,
         """class Cache<T> {
     private value: T
-    public init(value: T) { this.value = value }
+    init(value: T) { this.value = value }
     public fn get() T { return CLONE__(this.value) }
     public mut fn set(value: T) void { this.value = value }
 }
 
-fn inspect(cache: &Cache<i32>) i32 { return cache.get() }
-fn update(cache: &mut Cache<i32>) void { cache.set(42) }
+fn inspect(cache: Cache<i32>) i32 { return cache.get() }
+fn update(cache: Cache<i32>) void { cache.set(42) }
 
 fn main() i32 {
     let cache = Cache<i32>(10)
-    if inspect(&cache) != 10 { return 1 }
-    update(&mut cache)
+    if inspect(cache) != 10 { return 1 }
+    update(cache)
     return cache.get() - 42
 }
 """,
-        name="class_references",
+        name="class_arc_parameters",
     )
 
     assert result.returncode == 0, result.stdout + result.stderr
@@ -793,14 +891,14 @@ fn main() i32 {
     assert result.returncode == 0, result.stdout + result.stderr
 
 
-def test_readonly_class_reference_rejects_mutating_method() -> None:
+def test_class_reference_parameter_is_rejected() -> None:
     source = """class Counter {
     public mut fn increment() void {}
 }
 fn bad(counter: &Counter) void { counter.increment() }
 fn main() i32 { return 0 }
 """
-    with pytest.raises(CompileError, match="requires `&mut Counter`"):
+    with pytest.raises(CompileError, match="class values already use ARC reference semantics"):
         Compiler().check_source(source)
 
 
@@ -870,25 +968,28 @@ fn main() i32 {
     assert result.returncode == 0, result.stdout + result.stderr
 
 
-def test_mutable_class_reference_can_replace_handle(tmp_path: Path) -> None:
-    result = run_source(
-        tmp_path,
-        """class Cache {
-    public value: i32
-    public init(value: i32) { this.value = value }
-    public fn get() i32 { return this.value }
-}
-fn replace(cache: &mut Cache) void { REF_SET__(cache, Cache(42)) }
+@pytest.mark.parametrize(
+    "source",
+    [
+        """class Cache {}
 fn main() i32 {
-    let cache = Cache(10)
-    replace(&mut cache)
-    return cache.get() - 42
+    let cache = Cache()
+    let reference = &cache
+    return 0
 }
 """,
-        name="replace_class_handle",
-    )
-
-    assert result.returncode == 0, result.stdout + result.stderr
+        """class Cache {}
+fn main() i32 {
+    let values: List<Cache> = [Cache()]
+    let reference = &values[0]
+    return 0
+}
+""",
+    ],
+)
+def test_class_value_borrows_are_rejected(source: str) -> None:
+    with pytest.raises(CompileError, match="class values already use ARC reference semantics"):
+        Compiler().check_source(source)
 
 
 def test_list_element_borrow_can_recover_from_bounds_error(tmp_path: Path) -> None:

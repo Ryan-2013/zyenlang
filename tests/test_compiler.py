@@ -1869,6 +1869,33 @@ def test_module_qualified_struct_literal_builds_and_runs(tmp_path: Path) -> None
     assert result.returncode == 0, result.stdout + result.stderr
 
 
+def test_imported_class_field_defaults_to_public(tmp_path: Path) -> None:
+    model = tmp_path / "model.zy"
+    model.write_text(
+        "public class Counter {\n"
+        "    value: i32 = 42\n"
+        "    public init() {}\n"
+        "}\n\n"
+        "public fn create() Counter { return Counter() }\n",
+        encoding="utf-8",
+    )
+    main = tmp_path / "main.zy"
+    main.write_text(
+        "import crate::model as model\n\n"
+        "fn main() i32 {\n"
+        "    let counter = model::create()\n"
+        "    return counter.value - 42\n"
+        "}\n",
+        encoding="utf-8",
+    )
+
+    executable = tmp_path / ("public-class-field.exe" if sys.platform.startswith("win") else "public-class-field")
+    Compiler().build_file(main, executable)
+    result = subprocess.run([str(executable)], capture_output=True, text=True, check=False)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
 def test_private_imported_struct_cannot_be_constructed(tmp_path: Path) -> None:
     model = tmp_path / "model.zy"
     model.write_text("private struct Secret {\n}\n", encoding="utf-8")

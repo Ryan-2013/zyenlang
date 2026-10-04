@@ -1,4 +1,4 @@
-# ZyenLang 0.3.6
+# ZyenLang 0.3.7
 
 [繁體中文](README.zh-TW.md) | **English**
 
@@ -12,7 +12,10 @@ and VS Code support all ship through the `zy` command.
 
 ## Status
 
-Version 0.3.6 completes typed multiple-result destructuring and assignment.
+Version 0.3.7 makes class fields public by default, gives `init` one
+visibility-free construction rule, and separates struct borrows from direct
+ARC class passing. Version 0.3.6 completed typed multiple-result destructuring
+and assignment.
 Version 0.3.5 added ranked `List<T, Rank>`, runtime-shaped `LIST_FILLED__()`,
 multiline postfix chains, and rectangular List shape introspection on top of
 the official package ecosystem and C Interop ABI v3.
@@ -58,7 +61,7 @@ public struct Point {
 public class Counter {
     private value: i32
 
-    public init(value: i32) {
+    init(value: i32) {
         this.value = value
     }
 
@@ -86,6 +89,14 @@ The separators are fixed:
 - `Cache<i32>::create()` calls a class static function.
 - `counter.get()` calls an instance method.
 - `point.x` reads an instance field.
+
+The ownership rule is deliberately split by data model:
+
+- `struct` is a value. Passing `Point` copies it; use `&Point` for a zero-copy
+  readonly borrow and `&mut Point` when a function must replace the caller's
+  value.
+- `class` is already an ARC identity handle. Pass `Counter` directly;
+  `&Counter` and `&mut Counter` are compile errors.
 
 ## Language overview
 

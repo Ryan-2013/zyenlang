@@ -136,6 +136,27 @@ public fn length_squared(point: Point) i32 {
 `List<T>`、class、closure 等 managed field 時，編譯器產生遞迴 retain/release。
 遞迴 by-value layout 會在編譯期拒絕。
 
+struct 的傳遞規則：
+
+```zy
+fn copied(point: Point) void {
+    // point 是值複本
+}
+
+fn inspect(point: &Point) Point {
+    return CLONE_REF__(point)
+}
+
+fn replace(point: &mut Point, value: Point) void {
+    REF_SET__(point, value)
+}
+```
+
+- 傳 `Point`：值語意複製。
+- 傳 `&Point`：零拷貝唯讀借用。
+- 傳 `&mut Point`：唯一可變借用；以 `REF_SET__()` 修改呼叫端的 struct 值。
+- reference 不會自動解引用 field；先用 `CLONE_REF__()` 取得明確值複本。
+
 ## Class 與泛型
 
 class 具有身份並由 atomic ARC 管理，不支援繼承或隱式 subtype。
@@ -144,7 +165,7 @@ class 具有身份並由 atomic ARC 管理，不支援繼承或隱式 subtype。
 public class Cache<T> {
     private value: T
 
-    public init(value: T) {
+    init(value: T) {
         this.value = value
     }
 
@@ -171,9 +192,13 @@ cache.set(Cache<i32>::same(42))
 
 - `fn` 的 `this` 唯讀；只有 `mut fn` 能修改 field 或呼叫 mut method。
 - `static fn` 沒有 `this`，以 `Type::method()` 呼叫。
+- class field 預設為 `public`；需要封裝時必須明確寫 `private`。
+- class method 預設為 `private`；公開 API 必須明確寫 `public`。
+- `init` 不分 public/private，使用 `init(...) {}` 宣告，並由 `Type(...)` 自動觸發。
 - 泛型 class 建構時必須明確寫 type argument。
 - `deinit` 無參數、不能手動呼叫、不能 `throws`。
 - ARC 不處理循環；互相持有的 class 可能洩漏，但不會提早釋放。
+- class 直接按型別傳遞同一個 ARC instance；禁止 `&Class` 與 `&mut Class`。
 
 ## List
 
@@ -322,18 +347,18 @@ REF_SET__(second, 42)
 - 禁止存入 struct/class/List、回傳、closure capture 或跨 thread 保存。
 - readonly reference 可複製；`&mut T` 不可複製，但可直接傳入函式。
 - `&mut T` 可暫時轉成 `&T`；反向轉換不允許。
+- class 值已是 ARC handle，禁止再包成 `&Class`／`&mut Class`；直接按值傳遞。
 
-class 維持 ARC shared identity。`&Class` 只能呼叫 readonly `fn`；`&mut Class`
-可呼叫 `fn`、`mut fn`，也可用 `REF_SET__()` 替換該 handle slot。這是 capability，
-不是全域唯一性保證：其他 class alias 仍可能修改同一個 instance。
+class 值本身就是 ARC shared-identity handle，因此不允許 `&Class` 或 `&mut Class`。
+函式直接接收 `Class`；傳遞時只保留同一個 instance，不會複製整個 object。
 
 ```zy
-fn inspect(cache: &Cache<i32>) i32 { return cache.get() }
-fn update(cache: &mut Cache<i32>) void { cache.set(42) }
+fn inspect(cache: Cache<i32>) i32 { return cache.get() }
+fn update(cache: Cache<i32>) void { cache.set(42) }
 ```
 
-receiver 位置會自動解引用，因此可以直接寫 `cache.get()` 和 `values.push(42)`；
-field access 不自動解引用。可以借用 local 或 local-rooted field。Readonly List element
+List reference 的 receiver 位置會自動解引用，因此可以直接寫 `values.push(42)`；
+一般 field access 不自動解引用。可以借用 local 或 local-rooted value field。Readonly List element
 borrow 可穿過 class field，因為 storage pin 會在 COW/reallocation 後保持舊元素有效；
 mutable List element borrow 只允許 owned local List 或 value-struct field。要處理 element
 bounds error，將 borrow 加括號後接 `catch`：`(&values[index]) catch err { recover }`。
@@ -345,7 +370,7 @@ List 使用 COW。一般 assignment 依型別語意保留有效 ownership。
 
 ```zy
 class Resource {
-    public init() {}
+    init() {}
     public fn close() void {}
 }
 

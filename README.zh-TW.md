@@ -1,4 +1,4 @@
-# ZyenLang 0.3.6
+# ZyenLang 0.3.7
 
 **繁體中文** | [English](README.md)
 
@@ -11,7 +11,9 @@ ZyenLang 是一門精簡、強型別並以 C11 為第一個後端的原生語言
 
 ## 版本狀態
 
-0.3.6 補完整體型別標註的多結果解構宣告與解構賦值。
+0.3.7 將 class 欄位改為預設 public、統一不分可見性的 `init` 建構規則，並明確
+區分 struct 借用與 class ARC handle 的直接傳遞。0.3.6 補完整體型別標註的
+多結果解構宣告與解構賦值。
 0.3.5 在官方套件、系統庫與 C Interop ABI v3 上加入 `List<T, Rank>`、
 執行期 shape 的 `LIST_FILLED__()`、跨行 postfix chain 與矩形 List shape
 查詢。本輪不建立 tag、GitHub Release、MSI 或 portable 壓縮包；安裝資產會在

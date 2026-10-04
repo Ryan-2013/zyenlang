@@ -24,11 +24,11 @@ fn checked(values: List<str>) i32 throws Error {
     return (i32)LIST_LEN__(values)
 }
 
-fn inspect(counter: &Counter) i32 {
+fn inspect(counter: Counter) i32 {
     return counter.get()
 }
 
-fn update(counter: &mut Counter) void {
+fn update(counter: Counter) void {
     counter.add(3)
 }
 
@@ -46,12 +46,12 @@ fn main() i32 {
     let number: &mut i32 = &mut numbers[0]
     REF_SET__(number, 42)
     let counter = Counter(39)
-    update(&mut counter)
+    update(counter)
     let add = make_adder(2)
     let size = checked(copy) catch err {
         recover 0
     }
-    if inspect(&counter) != 42 || add(40) != 42 || size != 3 || LIST_LEN__(&values) != 2 {
+    if inspect(counter) != 42 || add(40) != 42 || size != 3 || LIST_LEN__(&values) != 2 {
         return 1
     }
     if first_copy != "alpha" || numbers[0] != 42 {

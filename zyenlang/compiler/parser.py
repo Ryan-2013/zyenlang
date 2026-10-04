@@ -339,12 +339,19 @@ class Parser:
         deinitializer: ast.ClassDeinitDef | None = None
         self.skip_newlines()
         while not self.at("}"):
+            has_explicit_visibility = self.at("PUBLIC") or self.at("PRIVATE")
             member_visibility = self.parse_visibility()
             if token := self.match("INIT"):
+                if has_explicit_visibility and member_visibility == "private":
+                    raise CompileError(
+                        "`init` has no visibility; remove `private` and use `init(...)`",
+                        token.span,
+                        self.source_name,
+                    )
                 if initializer is not None:
                     raise CompileError("class can define only one init block", token.span, self.source_name)
                 params, throws, body = self.parse_callable_tail("init")
-                initializer = ast.ClassInitDef(tuple(params), body, member_visibility, token.span, throws)
+                initializer = ast.ClassInitDef(tuple(params), body, "public", token.span, throws)
                 self.skip_newlines()
                 continue
             if token := self.match("DEINIT"):
@@ -391,7 +398,8 @@ class Parser:
             default = None
             if self.match("="):
                 default = self.parse_expression()
-            fields.append(ast.FieldDef(field_token.value, type_node, member_visibility, field_token.span, default))
+            field_visibility: ast.Visibility = member_visibility if has_explicit_visibility else "public"
+            fields.append(ast.FieldDef(field_token.value, type_node, field_visibility, field_token.span, default))
             self.require_statement_end()
         self.expect("}")
         return ast.ClassDef(

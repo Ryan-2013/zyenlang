@@ -15,6 +15,7 @@ public struct Point {
 
 public class Counter {
     private value: i32 = 0
+    label: str = "counter"
 
     public init(value: i32) {
         this.value = value
@@ -42,6 +43,8 @@ assert.deepStrictEqual(parsed.imports.map((item) => [item.name, item.path]), [['
 assert(parsed.exports.some((item) => item.kind === 'struct' && item.name === 'Point'));
 assert(parsed.exports.some((item) => item.kind === 'class' && item.name === 'Counter'));
 assert(parsed.exports.some((item) => item.kind === 'field' && item.name === 'value' && item.container === 'Counter' && item.visibility === 'private'));
+assert(parsed.exports.some((item) => item.kind === 'field' && item.name === 'label' && item.container === 'Counter' && item.visibility === 'public'));
+assert(parsed.exports.some((item) => item.kind === 'constructor' && item.name === 'init' && item.container === 'Counter' && item.visibility === 'public'));
 assert(parsed.exports.some((item) => item.kind === 'method' && item.name === 'add' && item.container === 'Counter'));
 assert(parsed.exports.some((item) => item.kind === 'function' && item.name === 'pair' && item.returnType === '(i32, str)'));
 assert(parsed.symbols.some((item) => item.kind === 'parameter' && item.name === 'amount' && item.type === 'i32'));

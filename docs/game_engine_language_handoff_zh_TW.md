@@ -394,7 +394,7 @@ public class World {
     private transforms: List<Transform>
     private speed: f32 = 80.0
 
-    public init() {
+    init() {
         this.transforms = []
     }
 
@@ -441,7 +441,9 @@ class member 規則：
 - `static fn` 沒有 `this`，以 `Type::function()` 呼叫。
 - `init` 是 constructor body，使用 `Type(arguments)` 建立。
 - `deinit` 無參數、不能手動呼叫、不能 `throws`。
-- field 和 method 預設 private。
+- class field 預設 public；需要封裝時明確寫 `private`。
+- method 預設 private；公開 API 必須明確寫 `public`。
+- `init` 不分 public/private；使用 `init(...) {}`，建立物件時由 `Type(...)` 觸發。
 - class assignment 複製 ARC reference，不複製整個 object。
 - ARC 不會處理循環；兩個 class 互相強持有可能洩漏。
 
@@ -451,7 +453,7 @@ class member 規則：
 public class Cache<T> {
     private value: T
 
-    public init(value: T) {
+    init(value: T) {
         this.value = value
     }
 
@@ -566,6 +568,10 @@ public struct ButtonAction {
 
 ## 15. 安全引用 `&T` 與 `&mut T`
 
+型別分界是固定規則：struct 是值型別，零拷貝讀取用 `&Struct`，修改呼叫端值用
+`&mut Struct`；class 已是 ARC identity handle，直接傳 `Class`，禁止再寫
+`&Class` 或 `&mut Class`。
+
 ```zy
 let health: i32 = 100
 let read: &i32 = &health
@@ -584,7 +590,7 @@ REF_SET__(write, 80)
 - reference 不能放進 struct/class/List。
 - reference 不能從函式回傳、被 closure capture 或跨 thread 保存。
 - field 不會自動解引用。
-- receiver 位置會自動解引用，因此 `&Class` 可直接呼叫 readonly method。
+- class 值已是 ARC handle，禁止 `&Class`／`&mut Class`；函式直接接收 class 型別。
 
 List element 也可借用：
 
@@ -597,8 +603,8 @@ REF_SET__(item, 42)
 List element reference 會 pin backing storage。可變 element borrow 的 owner 必須是
 owned local List 或 value-struct field。
 
-對 class 而言，`&mut Class` 表示目前這個 handle slot 可呼叫 mut method，不保證
-整個 object 沒有其他 ARC alias。多執行緒同步仍由程式或引擎負責。
+class 參數傳遞的是同一個 ARC instance；不複製整個 object，mut method 的改動可由
+其他 alias 觀察。多執行緒同步仍由程式或引擎負責。
 
 ## 16. Ownership、ARC、clone、drop 與 defer
 
@@ -623,7 +629,7 @@ DROP__(second)
 
 ```zy
 class Resource {
-    public init() {
+    init() {
     }
 
     public fn close() void {

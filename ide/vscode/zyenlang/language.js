@@ -430,7 +430,8 @@ function parseInitializerHeader(line) {
   const parameterEnd = closingDelimiter(line, cursor, '(', ')');
   if (parameterEnd < 0) return null;
   return {
-    visibility: prefix[1] || 'private',
+    visibility: 'public',
+    sourceVisibility: prefix[1] || '',
     name: 'init',
     nameStart: line.indexOf('init'),
     parameterStart,
@@ -755,7 +756,7 @@ function parseDocument(text, uri = '') {
           name,
           kind: 'field',
           type: fieldMatch[3].trim(),
-          visibility: fieldMatch[1] || 'private',
+          visibility: fieldMatch[1] || (activeType.kind === 'class' ? 'public' : 'private'),
           detail: `${fieldMatch[1] ? `${fieldMatch[1]} ` : ''}${name}: ${fieldMatch[3].trim()}`,
           documentation: precedingDocs(lines, lineNumber),
           line: lineNumber,

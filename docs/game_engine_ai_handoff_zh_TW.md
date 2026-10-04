@@ -181,7 +181,7 @@ retain/release 與 cleanup。
 public class World {
     private transforms: List<Transform>
 
-    public init() {
+    init() {
         this.transforms = []
     }
 
@@ -279,6 +279,10 @@ let level: str = load_level("level01") catch err {
 `recover`。不要把 `Error` 直接 cast 成字串；使用 `err.message`。
 
 ## Reference 與生命週期
+
+先遵守固定的型別規則：struct 是值型別，需要零拷貝讀取或修改呼叫端時才使用
+`&Struct`／`&mut Struct`；class 本身已是 ARC handle，必須直接傳 `Class`，禁止
+`&Class`／`&mut Class`。
 
 ```zy
 let value: i32 = 10
